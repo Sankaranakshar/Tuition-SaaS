@@ -1,31 +1,29 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { 
-  LayoutDashboard, 
-  Users, 
-  UserPlus,
-  Calendar, 
-  FileText, 
-  Receipt, 
-  Settings, 
+import {
+  LayoutDashboard,
+  Users,
+  Calendar,
+  Settings,
   LogOut,
   Bell,
   Search,
   MessageSquare,
-  Shield,
-  GraduationCap,
   Wallet,
   BookOpen,
-  TrendingUp,
-  Plus,
-  ChevronDown
+  ChevronDown,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
+import CommandPalette from "./CommandPalette";
 
+// The shell (DEV_PLAN E5.2): a 56px icon rail with five workspaces plus
+// settings, and a topbar whose search box is a real command palette
+// trigger. Everything else lives one keystroke away (Cmd+K).
 export default function Layout() {
   const { user, logout, currentRole, setCurrentRole } = useAuth();
   const navigate = useNavigate();
   const [showRoleDropdown, setShowRoleDropdown] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,175 +41,132 @@ export default function Layout() {
     navigate("/login");
   };
 
-  const isStudent = currentRole === 'student';
+  const isStudent = currentRole === "student";
 
-  const tutorMainMenu = [
-    { to: "/app", label: "Dashboard", icon: LayoutDashboard },
-    { to: "/app/students", label: "Students", icon: Users },
-    { to: "/app/calendar", label: "Calendar", icon: Calendar },
-    { to: "/app/invoices", label: "Finances", icon: Wallet },
-    { to: "/app/messaging", label: "Messaging", icon: MessageSquare },
-    { to: "/app/leads", label: "Leads", icon: TrendingUp },
-    { to: "/app/settings", label: "Settings", icon: Settings },
-  ];
+  // Five workspaces. Leads, Documents, Admin are reachable via the palette;
+  // the rail stays furniture, not a table of contents.
+  const rail = isStudent
+    ? [
+        { to: "/app", label: "Today", icon: LayoutDashboard, end: true },
+        { to: "/app/timetable", label: "Schedule", icon: Calendar },
+        { to: "/app/study-material", label: "Learn", icon: BookOpen },
+        { to: "/app/wallet", label: "Money", icon: Wallet },
+        { to: "/app/messaging", label: "Inbox", icon: MessageSquare },
+      ]
+    : [
+        { to: "/app", label: "Today", icon: LayoutDashboard, end: true },
+        { to: "/app/students", label: "People", icon: Users },
+        { to: "/app/calendar", label: "Schedule", icon: Calendar },
+        { to: "/app/invoices", label: "Money", icon: Wallet },
+        { to: "/app/messaging", label: "Inbox", icon: MessageSquare },
+      ];
 
-  const tutorLibraryMenu = [
-    { to: "/app/documents", label: "Documents", icon: BookOpen },
-  ];
-
-  const studentMainMenu = [
-    { to: "/app", label: "Dashboard", icon: LayoutDashboard },
-    { to: "/app/notifications", label: "Notifications", icon: Bell },
-    { to: "/app/academic-progress", label: "Academic Progress", icon: GraduationCap },
-    { to: "/app/timetable", label: "Timetable", icon: Calendar },
-    { to: "/app/bookings", label: "Bookings", icon: Calendar },
-    { to: "/app/wallet", label: "Wallet", icon: Wallet },
-    { to: "/app/transactions", label: "Transactions", icon: Receipt },
-    { to: "/app/messaging", label: "Messaging", icon: MessageSquare },
-    { to: "/app/profile", label: "Profile", icon: Settings },
-    { to: "/app/preferences", label: "Preferences", icon: Settings },
-  ];
-
-  const studentLibraryMenu = [
-    { to: "/app/study-material", label: "Study Material", icon: BookOpen },
-  ];
-
-  const mainMenu = isStudent ? studentMainMenu : tutorMainMenu;
-  const libraryMenu = isStudent ? studentLibraryMenu : tutorLibraryMenu;
-
-  if (currentRole === 'admin') {
-    mainMenu.push({ to: "/app/admin", label: "Admin Panel", icon: Shield });
-  }
+  const settingsPath = isStudent ? "/app/preferences" : "/app/settings";
 
   return (
-    <div className="flex h-screen bg-gray-50 font-sans">
-      {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
-        <div className="h-16 flex items-center px-6 border-b border-gray-200">
-          <h1 className="text-xl font-bold text-indigo-600">classstackr</h1>
-        </div>
-        
-        <nav className="flex-1 overflow-y-auto py-4">
-          <div className="px-3 mb-8">
-            <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              Main Menu
-            </div>
-            <ul className="mt-2 space-y-1">
-              {mainMenu.map((item) => (
-                <li key={item.to}>
-                  <NavLink
-                    to={item.to}
-                    className={({ isActive }) =>
-                      `group flex items-center px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
-                        isActive
-                          ? "bg-indigo-50 text-indigo-700 shadow-sm"
-                          : "text-gray-700 hover:bg-gray-100 hover:text-gray-900 hover:translate-x-1"
-                      }`
-                    }
-                  >
-                    {({ isActive }) => (
-                      <>
-                        <item.icon className={`w-5 h-5 mr-3 transition-colors ${isActive ? 'text-indigo-600' : 'text-gray-400 group-hover:text-gray-600'}`} />
-                        {item.label}
-                      </>
-                    )}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          </div>
+    <div className="flex h-screen bg-[var(--cs-bg)] font-sans">
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
 
-          <div className="px-3 mb-6">
-            <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              Library
-            </div>
-            <ul className="mt-2 space-y-1">
-              {libraryMenu.map((item) => (
-                <li key={item.to}>
-                  <NavLink
-                    to={item.to}
-                    className={({ isActive }) =>
-                      `group flex items-center px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
-                        isActive
-                          ? "bg-indigo-50 text-indigo-700 shadow-sm"
-                          : "text-gray-700 hover:bg-gray-100 hover:text-gray-900 hover:translate-x-1"
-                      }`
-                    }
-                  >
-                    {({ isActive }) => (
-                      <>
-                        <item.icon className={`w-5 h-5 mr-3 transition-colors ${isActive ? 'text-indigo-600' : 'text-gray-400 group-hover:text-gray-600'}`} />
-                        {item.label}
-                      </>
-                    )}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          </div>
+      {/* Icon rail */}
+      <aside className="flex w-14 flex-col items-center border-r border-[var(--cs-border)] bg-[var(--cs-surface)] py-3">
+        <button
+          onClick={() => navigate("/app")}
+          className="mb-4 flex h-8 w-8 items-center justify-center rounded-[6px] bg-[var(--cs-accent)] text-sm font-semibold text-white"
+          title="ClassStackr"
+        >
+          c
+        </button>
+
+        <nav className="flex flex-1 flex-col items-center gap-1">
+          {rail.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={(item as any).end}
+              title={item.label}
+              className={({ isActive }) =>
+                `group relative flex h-10 w-10 items-center justify-center rounded-[6px] transition-colors ${
+                  isActive
+                    ? "bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]"
+                    : "text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]"
+                }`
+              }
+            >
+              <item.icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
+              <span className="pointer-events-none absolute left-12 z-20 hidden whitespace-nowrap rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] px-2 py-1 text-xs text-[var(--cs-text)] shadow-sm group-hover:block">
+                {item.label}
+              </span>
+            </NavLink>
+          ))}
         </nav>
 
-        <div className="p-4 border-t border-gray-200">
+        <div className="flex flex-col items-center gap-1">
+          <NavLink
+            to={settingsPath}
+            title="Settings"
+            className={({ isActive }) =>
+              `flex h-10 w-10 items-center justify-center rounded-[6px] transition-colors ${
+                isActive
+                  ? "bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]"
+                  : "text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]"
+              }`
+            }
+          >
+            <Settings className="h-[18px] w-[18px]" strokeWidth={1.75} />
+          </NavLink>
           <button
             onClick={handleLogout}
-            className="flex items-center w-full px-3 py-2 text-sm font-medium text-gray-700 rounded-md hover:bg-gray-100 transition-colors"
+            title="Log out"
+            className="flex h-10 w-10 items-center justify-center rounded-[6px] text-[var(--cs-text-muted)] transition-colors hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]"
           >
-            <LogOut className="w-5 h-5 mr-3" />
-            Logout
+            <LogOut className="h-[18px] w-[18px]" strokeWidth={1.75} />
           </button>
         </div>
       </aside>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Topbar */}
-        <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6">
-          <div className="flex-1 flex items-center">
-            <div className="relative w-64">
-              <span className="absolute inset-y-0 left-0 flex items-center pl-3">
-                <Search className="w-4 h-4 text-gray-400" />
-              </span>
-              <input
-                type="text"
-                placeholder="Search students, invoices..."
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
-              />
-            </div>
-          </div>
-          
-          <div className="flex items-center space-x-4">
-            <button 
-              onClick={() => navigate('/app/students')}
-              className="hidden md:flex items-center px-3 py-1.5 bg-indigo-50 text-indigo-600 text-sm font-medium rounded-md hover:bg-indigo-100 transition-colors"
+      {/* Main column */}
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <header className="flex h-14 items-center justify-between border-b border-[var(--cs-border)] bg-[var(--cs-surface)] px-4">
+          {/* Real palette trigger where the fake search box used to be */}
+          <button
+            onClick={() => setPaletteOpen(true)}
+            className="flex w-72 items-center gap-2 rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] px-3 py-1.5 text-sm text-[var(--cs-text-muted)] transition-colors hover:border-[var(--cs-accent)]"
+          >
+            <Search className="h-4 w-4" strokeWidth={1.75} />
+            <span className="flex-1 text-left">Search or jump to…</span>
+            <kbd className="rounded border border-[var(--cs-border)] bg-[var(--cs-surface)] px-1.5 py-0.5 text-[10px]">⌘K</kbd>
+          </button>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate("/app/notifications")}
+              className="relative flex h-9 w-9 items-center justify-center rounded-[6px] text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]"
+              title="Notifications"
             >
-              <Plus className="w-4 h-4 mr-1.5" />
-              Quick Add
+              <Bell className="h-[18px] w-[18px]" strokeWidth={1.75} />
             </button>
-            <button className="text-gray-500 hover:text-gray-700 relative">
-              <Bell className="w-5 h-5" />
-              <span className="absolute top-0 right-0 block h-2 w-2 rounded-full bg-red-500 ring-2 ring-white" />
-            </button>
-            <div className="flex items-center space-x-2 relative" ref={dropdownRef}>
-              <button 
+
+            <div className="relative flex items-center" ref={dropdownRef}>
+              <button
                 onClick={() => setShowRoleDropdown(!showRoleDropdown)}
-                className="flex items-center space-x-2 focus:outline-none"
+                className="flex items-center gap-2 rounded-[6px] px-2 py-1 hover:bg-[var(--cs-bg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cs-accent)]"
               >
-                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold">
+                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--cs-accent-soft)] text-xs font-semibold text-[var(--cs-accent)]">
                   {user?.name?.charAt(0).toUpperCase()}
                 </div>
-                <div className="flex flex-col items-start">
-                  <span className="text-sm font-medium text-gray-700 leading-tight">{user?.name}</span>
-                  <span className="text-xs text-gray-500 capitalize">{currentRole} Portal</span>
+                <div className="hidden flex-col items-start sm:flex">
+                  <span className="text-sm font-medium leading-tight text-[var(--cs-text)]">{user?.name}</span>
+                  <span className="text-[11px] capitalize text-[var(--cs-text-muted)]">{currentRole}</span>
                 </div>
                 {user?.roles && user.roles.length > 1 && (
-                  <ChevronDown className="w-4 h-4 text-gray-400" />
+                  <ChevronDown className="h-4 w-4 text-[var(--cs-text-muted)]" strokeWidth={1.75} />
                 )}
               </button>
 
               {showRoleDropdown && user?.roles && user.roles.length > 1 && (
-                <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-10 border border-gray-200">
-                  <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider border-b border-gray-100">
-                    Switch Portal
+                <div className="absolute right-0 top-full z-10 mt-2 w-48 rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-1 shadow-lg">
+                  <div className="border-b border-[var(--cs-border)] px-4 py-2 text-xs font-medium text-[var(--cs-text-muted)]">
+                    Switch portal
                   </div>
                   {user.roles.map((role) => (
                     <button
@@ -219,15 +174,15 @@ export default function Layout() {
                       onClick={() => {
                         setCurrentRole(role);
                         setShowRoleDropdown(false);
-                        navigate('/app');
+                        navigate("/app");
                       }}
-                      className={`w-full text-left px-4 py-2 text-sm ${
-                        currentRole === role 
-                          ? 'bg-indigo-50 text-indigo-700 font-medium' 
-                          : 'text-gray-700 hover:bg-gray-100'
+                      className={`w-full px-4 py-2 text-left text-sm capitalize ${
+                        currentRole === role
+                          ? "bg-[var(--cs-accent-soft)] font-medium text-[var(--cs-accent)]"
+                          : "text-[var(--cs-text)] hover:bg-[var(--cs-bg)]"
                       }`}
                     >
-                      {role.charAt(0).toUpperCase() + role.slice(1)} Portal
+                      {role}
                     </button>
                   ))}
                 </div>
@@ -236,7 +191,6 @@ export default function Layout() {
           </div>
         </header>
 
-        {/* Page Content */}
         <main className="flex-1 overflow-y-auto p-6">
           <Outlet />
         </main>

@@ -195,3 +195,36 @@
     @apply font-sans;
     }
 }
+/* ================================================================
+   ClassStackr design tokens (DEV_PLAN E5.1)
+   Slate base, one indigo accent, semantic color only for state.
+   ================================================================ */
+:root {
+  --cs-accent: #4f46e5;
+  --cs-accent-soft: #eef2ff;
+  --cs-surface: #ffffff;
+  --cs-bg: #fafaf9;
+  --cs-border: #e7e5e4;
+  --cs-text: #1c1917;
+  --cs-text-muted: #78716c;
+  --cs-danger: #dc2626;
+  --cs-warn: #d97706;
+  --cs-ok: #16a34a;
+  --cs-radius-control: 6px;
+  --cs-radius-container: 10px;
+}
+
+.dark {
+  --cs-accent: #818cf8;
+  --cs-accent-soft: #1e1b4b;
+  --cs-surface: #1c1917;
+  --cs-bg: #0c0a09;
+  --cs-border: #292524;
+  --cs-text: #fafaf9;
+  --cs-text-muted: #a8a29e;
+}
+
+/* Money and metrics always align; never let digits jitter. */
+.tabular-nums, [data-money] {
+  font-variant-numeric: tabular-nums;
+}
