@@ -5,7 +5,7 @@ import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import * as XLSX from "xlsx";
+
 
 import LoadingSpinner from "../components/LoadingSpinner";
 
@@ -248,7 +248,7 @@ export default function Invoices() {
     doc.save(`Invoice_${studentName.replace(/\s+/g, '_')}_${invoice.id.substring(0, 4)}.pdf`);
   };
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     const exportFields = billingSettings.excelExportFields || ['Invoice ID', 'Student Name', 'Amount', 'Status', 'Issue Date', 'Due Date', 'Services'];
     
     const data = invoices.map(inv => {
@@ -265,10 +265,22 @@ export default function Invoices() {
       return row;
     });
 
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Invoices");
-    XLSX.writeFile(workbook, "Invoices_Export.xlsx");
+    // exceljs replaces the vulnerable xlsx package; loaded lazily so it
+    // stays out of the main bundle.
+    const ExcelJS = (await import("exceljs")).default;
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Invoices");
+    if (data.length > 0) {
+      sheet.columns = Object.keys(data[0]).map((key) => ({ header: key, key, width: 18 }));
+      sheet.addRows(data);
+      sheet.getRow(1).font = { bold: true };
+    }
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement("a"), { href: url, download: "Invoices_Export.xlsx" });
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // Dashboard Calculations

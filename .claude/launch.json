@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "classstackr-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:preview"],
+      "port": 3100
+    }
+  ]
+}

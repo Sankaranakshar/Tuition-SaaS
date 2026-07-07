@@ -1,91 +1,83 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import pino from "pino-http";
-import { initDb } from "./server/db.ts";
-import authRoutes from "./server/routes/auth.ts";
-import studentRoutes from "./server/routes/students.ts";
-import classRoutes from "./server/routes/classes.ts";
-import documentRoutes from "./server/routes/documents.ts";
-import invoiceRoutes from "./server/routes/invoices.ts";
 import settingsRoutes from "./server/routes/settings.ts";
-import dashboardRoutes from "./server/routes/dashboard.ts";
-import messageRoutes from "./server/routes/messages.ts";
+import membersRoutes from "./server/routes/members.ts";
+import billingRoutes from "./server/routes/billing.ts";
+import type { AuthRequest } from "./server/middleware/auth.ts";
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
-
-  // Initialize DB
-  initDb();
-
-  // Security Middleware
+  const PORT = Number(process.env.PORT) || 3000;
   const isProd = process.env.NODE_ENV === "production";
-  
-  // Structured Logging
+
   app.use(pino({
-    level: isProd ? 'info' : 'debug',
+    level: isProd ? "info" : "debug",
+    redact: ["req.headers.authorization", "req.headers.cookie"],
     transport: isProd ? undefined : {
-      target: 'pino-pretty',
-      options: { colorize: true }
-    }
+      target: "pino-pretty",
+      options: { colorize: true },
+    },
   }));
 
   app.use(helmet({
-    contentSecurityPolicy: isProd ? undefined : false, // Disable CSP for Vite dev server to work properly
+    contentSecurityPolicy: isProd ? undefined : false, // Vite dev server needs inline scripts
     crossOriginEmbedderPolicy: isProd ? undefined : false,
   }));
-  
+
   app.use(cors({
-    origin: process.env.NODE_ENV === "production" ? process.env.APP_URL : "http://localhost:3000",
-    credentials: true,
+    origin: isProd ? process.env.APP_URL : "http://localhost:3000",
+    credentials: false, // header-based auth only; no cookies, no CSRF surface
   }));
 
-  // Trust proxy for rate limiting behind reverse proxy
-  app.set('trust proxy', 1);
+  app.set("trust proxy", 1);
 
-  // Rate limiting
   const apiLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes)
-    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-  });
-
-  const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // Limit each IP to 5 requests per window for auth routes
+    windowMs: 60 * 1000,
+    max: 120,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: "Too many authentication attempts, please try again after 15 minutes" }
+    // Authenticated traffic is limited per user, not per shared NAT
+    // (coaching centers share IPs). ipKeyGenerator handles IPv6 subnets.
+    keyGenerator: (req) => (req as AuthRequest).user?.id || ipKeyGenerator(req.ip || ""),
   });
 
-  app.use(express.json());
-  app.use(cookieParser());
-
-  // Apply rate limiting to API routes
+  app.use(express.json({ limit: "1mb" }));
   app.use("/api/", apiLimiter);
-  app.use("/api/auth/", authLimiter);
 
-  // API routes
-  app.use("/api/auth", authRoutes);
-  app.use("/api/students", studentRoutes);
-  app.use("/api/classes", classRoutes);
-  app.use("/api/documents", documentRoutes);
-  app.use("/api/invoices", invoiceRoutes);
+  // API v1
+  app.use("/api/v1/settings", settingsRoutes);
+  app.use("/api/v1/members", membersRoutes);
+  app.use("/api/v1/billing", billingRoutes);
+  // Temporary alias while the frontend migrates to /api/v1.
   app.use("/api/settings", settingsRoutes);
-  app.use("/api/dashboard", dashboardRoutes);
-  app.use("/api/messages", messageRoutes);
 
-  app.get("/api/health", (req, res) => {
+  app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
   });
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  // JSON 404 for unknown API routes (must precede the SPA catch-all).
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: { code: "not_found", message: "Unknown API route" } });
+  });
+
+  // Central error handler: Zod errors → 422, tagged errors → their status,
+  // everything else → sanitized 500.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (err?.name === "ZodError") {
+      return res.status(422).json({ error: { code: "validation", message: "Invalid request", details: err.issues } });
+    }
+    const status = typeof err?.status === "number" ? err.status : 500;
+    const code = err?.code && typeof err.code === "string" ? err.code : "internal";
+    (req as any).log?.error({ err }, "Unhandled API error");
+    res.status(status).json({ error: { code, message: status === 500 ? "Internal Server Error" : err.message } });
+  });
+
+  if (!isProd) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -93,16 +85,23 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const path = await import("path");
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.get("*", (_req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  const shutdown = () => {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }
 
 startServer();

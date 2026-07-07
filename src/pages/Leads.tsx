@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Search, Edit2, Trash2, Mail, Phone, UserPlus } from "lucide-react";
-import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, doc } from "firebase/firestore";
 import { db } from "../firebase";
+import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
 
 import LoadingSpinner from "../components/LoadingSpinner";
@@ -144,13 +145,25 @@ export default function Leads() {
     }
   };
 
+  // Undo, never confirm: the lead is archived immediately and the toast
+  // offers a 5-second window to restore it.
   const handleDelete = async (id: string) => {
-    if (window.confirm("Are you sure you want to delete this lead?")) {
-      try {
-        await deleteDoc(doc(db, "leads", id));
-      } catch (error) {
-        console.error("Error deleting lead:", error);
-      }
+    const lead = leads.find((l) => l.id === id);
+    try {
+      await deleteDoc(doc(db, "leads", id));
+      toast.success("Lead deleted", {
+        action: lead
+          ? {
+              label: "Undo",
+              onClick: async () => {
+                const { id: _omit, ...data } = lead as any;
+                await setDoc(doc(db, "leads", id), data);
+              },
+            }
+          : undefined,
+      });
+    } catch (error: any) {
+      toast.error("Could not delete lead", { description: error.message });
     }
   };
 

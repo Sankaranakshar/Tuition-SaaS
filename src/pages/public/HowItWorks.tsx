@@ -58,7 +58,7 @@ export default function HowItWorks() {
           </div>
           
           <div className="mt-16 text-center">
-            <Link to="/find-tutors" className="inline-flex items-center px-8 py-4 bg-indigo-600 text-white rounded-full font-bold text-lg hover:bg-indigo-700 transition-colors shadow-lg">
+            <Link to="/contact" className="inline-flex items-center px-8 py-4 bg-indigo-600 text-white rounded-full font-bold text-lg hover:bg-indigo-700 transition-colors shadow-lg">
               Start Searching Now
             </Link>
           </div>

@@ -1,4 +1,5 @@
 import React, { Suspense, lazy } from "react";
+import { Toaster } from "sonner";
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Layout from "./components/Layout";
@@ -13,7 +14,6 @@ import Home from "./pages/public/Home";
 // Lazy load public pages
 const Features = lazy(() => import("./pages/public/Features"));
 const Pricing = lazy(() => import("./pages/public/Pricing"));
-const FindTutors = lazy(() => import("./pages/public/FindTutors"));
 const HowItWorks = lazy(() => import("./pages/public/HowItWorks"));
 
 // Lazy load protected app pages
@@ -74,6 +74,7 @@ const LoadingFallback = () => (
 export default function App() {
   return (
     <AuthProvider>
+      <Toaster position="bottom-right" richColors closeButton />
       <Router>
         <Suspense fallback={<LoadingFallback />}>
           <Routes>
@@ -82,7 +83,6 @@ export default function App() {
               <Route path="/" element={<Home />} />
               <Route path="/features" element={<Features />} />
               <Route path="/pricing" element={<Pricing />} />
-              <Route path="/find-tutors" element={<FindTutors />} />
               <Route path="/how-it-works" element={<HowItWorks />} />
             </Route>
 

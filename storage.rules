@@ -1,0 +1,40 @@
+rules_version = '2';
+
+// Files live under /orgs/{orgId}/... and mirror Firestore org isolation.
+// Membership and role checks read the same organization_members docs.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isMember(orgId) {
+      return request.auth != null &&
+        firestore.exists(/databases/(default)/documents/organization_members/$(orgId + '_' + request.auth.uid));
+    }
+
+    function role(orgId) {
+      return firestore.get(/databases/(default)/documents/organization_members/$(orgId + '_' + request.auth.uid)).data.role;
+    }
+
+    function isStaff(orgId) {
+      return isMember(orgId) && role(orgId) in ['owner', 'admin', 'tutor', 'frontdesk', 'accountant'];
+    }
+
+    match /orgs/{orgId}/{allPaths=**} {
+      allow read: if isMember(orgId);
+      // 5MB cap and safe content types enforced at the edge.
+      allow write: if isStaff(orgId)
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('application/pdf|image/(jpeg|png)|text/plain|application/msword|application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    }
+
+    // Homework submissions: students write into their own submission folder.
+    match /orgs/{orgId}/submissions/{studentUserId}/{fileName} {
+      allow write: if request.auth != null && request.auth.uid == studentUserId
+        && isMember(orgId)
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('application/pdf|image/(jpeg|png)|text/plain|application/msword|application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

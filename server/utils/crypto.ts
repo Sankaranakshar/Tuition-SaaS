@@ -7,7 +7,7 @@ function getEncryptionKey(): Buffer {
   if (!encryptionKey) {
     const key = process.env.ENCRYPTION_KEY;
     if (!key) {
-      throw new Error("ENCRYPTION_KEY environment variable is required for secure token storage. Please set it in the Settings menu.");
+      throw new Error("ENCRYPTION_KEY environment variable is required for secure token storage. Set it in the server environment (.env locally, Secret Manager in production). Generate one with: openssl rand -hex 32");
     }
     if (key.length === 64) {
       encryptionKey = Buffer.from(key, 'hex');
@@ -32,15 +32,18 @@ export function encrypt(text: string) {
   
   const authTag = cipher.getAuthTag().toString('hex');
   
-  // Format: iv:authTag:encryptedText
-  return `${iv.toString('hex')}:${authTag}:${encrypted}`;
+  // Format: v1:iv:authTag:encryptedText. The version prefix makes future
+  // key rotation possible without guessing which key produced a ciphertext.
+  return `v1:${iv.toString('hex')}:${authTag}:${encrypted}`;
 }
 
 export function decrypt(text: string) {
   try {
     const key = getEncryptionKey();
-    const [ivHex, authTagHex, encryptedHex] = text.split(':');
-    
+    // Accept both v1-prefixed and legacy unprefixed ciphertexts.
+    const parts = text.split(':');
+    const [ivHex, authTagHex, encryptedHex] = parts[0] === 'v1' ? parts.slice(1) : parts;
+
     if (!ivHex || !authTagHex || !encryptedHex) {
       throw new Error("Invalid encrypted text format");
     }

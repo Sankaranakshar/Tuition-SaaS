@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { onAuthStateChanged, signInWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from "firebase/auth";
-import { doc, getDoc, setDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db, googleProvider } from "../firebase";
 
 enum OperationType {
@@ -168,13 +168,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               profile_status: 'incomplete',
               is_active: true,
             };
+            // Authorization-bearing fields (role, roles, organizationId) are
+            // never written client-side; membership comes from the server.
             await setDoc(userDocRef, {
               uid: currentUserData.id,
               name: currentUserData.name,
               email: currentUserData.email,
               phone_number: currentUserData.phone_number,
               role_type: currentUserData.role_type,
-              roles: currentUserData.roles,
               profile_status: currentUserData.profile_status,
               created_at: new Date().toISOString(),
               is_active: currentUserData.is_active
@@ -191,39 +192,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           }
 
-          // If user is a tutor/admin, ensure they have an organization
-          if (currentUserData.role_type === 'tutor' || currentUserData.role === 'admin') {
-            try {
-              const orgMembersQuery = query(collection(db, "organization_members"), where("userId", "==", firebaseUser.uid));
-              const orgMembersSnap = await getDocs(orgMembersQuery);
-              
-              if (!orgMembersSnap.empty) {
-                currentUserData.organizationId = orgMembersSnap.docs[0].data().organizationId;
-              } else {
-                // Create a default organization for the new tutor
-                const newOrgRef = doc(collection(db, "organizations"));
-                await setDoc(newOrgRef, {
-                  name: `${currentUserData.name}'s Tutoring`,
-                  ownerUserId: firebaseUser.uid,
-                  isActive: true,
-                  createdAt: new Date().toISOString()
-                });
+          // Organization identity comes from custom claims, which only the
+          // server can set (POST /api/v1/members/bootstrap creates the org,
+          // the owner membership, and the claims atomically).
+          try {
+            let claims = (await firebaseUser.getIdTokenResult()).claims;
 
-                // Create organization member link
-                const memberId = `${newOrgRef.id}_${firebaseUser.uid}`;
-                await setDoc(doc(db, "organization_members", memberId), {
-                  organizationId: newOrgRef.id,
-                  userId: firebaseUser.uid,
-                  role: "owner",
-                  isActive: true,
-                  createdAt: new Date().toISOString()
-                });
-
-                currentUserData.organizationId = newOrgRef.id;
+            if (!claims.organizationId && (currentUserData.role_type === 'tutor' || currentUserData.role === 'admin')) {
+              const token = await firebaseUser.getIdToken();
+              const resp = await fetch('/api/v1/members/bootstrap', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify({ organizationName: `${currentUserData.name}'s Tutoring` }),
+              });
+              if (resp.ok || resp.status === 409) {
+                // Claims changed server-side; force a token refresh to load them.
+                claims = (await firebaseUser.getIdTokenResult(true)).claims;
               }
-            } catch (error) {
-              handleFirestoreError(error, OperationType.WRITE, "organizations/organization_members");
             }
+
+            if (claims.organizationId) {
+              currentUserData.organizationId = claims.organizationId as string;
+            }
+          } catch (error) {
+            console.error("Failed to resolve organization membership", error);
           }
 
           setUser(currentUserData);

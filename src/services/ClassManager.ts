@@ -3,12 +3,10 @@ import {
   collection, 
   doc, 
   addDoc, 
-  updateDoc, 
   getDoc, 
   getDocs, 
   query, 
-  where, 
-  runTransaction 
+  where 
 } from "firebase/firestore";
 
 export enum ClassType {
@@ -173,14 +171,18 @@ export class ClassManager {
   }
 
   static async createSession(sessionData: ClassSession) {
-    // Phase 5: Conflict Detection
+    // Conflict detection over a bounded window (no session exceeds 12h), so
+    // the query cost stays flat as history grows.
+    const windowStart = new Date(new Date(sessionData.startTime).getTime() - 12 * 3600 * 1000).toISOString();
     const conflictsQuery = query(
       collection(db, "class_sessions"),
+      where("organizationId", "==", sessionData.organizationId),
       where("tutorId", "==", sessionData.tutorId),
       where("status", "==", "scheduled"),
+      where("startTime", ">=", windowStart),
       where("startTime", "<", sessionData.endTime)
     );
-    
+
     const existingSessions = await getDocs(conflictsQuery);
     const newStart = new Date(sessionData.startTime).getTime();
     const newEnd = new Date(sessionData.endTime).getTime();
@@ -196,17 +198,9 @@ export class ClassManager {
       }
     }
     
-    const templateRef = doc(db, "class_templates", sessionData.templateId);
-    const templateSnap = await getDoc(templateRef);
-    if (templateSnap.exists()) {
-      const template = templateSnap.data() as ClassTemplate;
-      
-      // For ONLINE_LIVE, trigger API call for meeting link (placeholder)
-      if (sessionData.isOnline && !sessionData.meetingLink) {
-        sessionData.meetingLink = `https://meet.google.com/placeholder-${Date.now()}`;
-      }
-    }
-    
+    // Meeting links are attached server-side via the Google Calendar
+    // integration (Epic 8). Never fabricate a link: a missing link renders
+    // as "link pending", a fake one gets sent to real parents.
     return await addDoc(collection(db, "class_sessions"), sessionData);
   }
 
@@ -228,14 +222,17 @@ export class ClassManager {
       currentDate.setDate(currentDate.getDate() + 1);
     }
     
-    const sessions = [];
+    const sessions: ClassSession[] = [];
+    // Conflicts are returned, never swallowed: sessions silently missing
+    // from a series is a trust-destroying bug, not a convenience.
+    const skipped: string[] = [];
     while (currentDate <= endDate) {
       const sessionStart = new Date(currentDate);
       sessionStart.setHours(startHour, startMinute, 0, 0);
-      
+
       const sessionEnd = new Date(sessionStart);
       sessionEnd.setMinutes(sessionStart.getMinutes() + durationMinutes);
-      
+
       const sessionData: ClassSession = {
         organizationId,
         templateId,
@@ -244,103 +241,19 @@ export class ClassManager {
         endTime: sessionEnd.toISOString(),
         status: "scheduled"
       };
-      
+
       try {
         await this.createSession(sessionData);
         sessions.push(sessionData);
       } catch (e) {
-        console.warn(`Skipped session on ${sessionStart.toISOString()} due to conflict`);
+        skipped.push(sessionStart.toISOString());
       }
-      
+
       currentDate.setDate(currentDate.getDate() + 7);
     }
-    return sessions;
+    return { sessions, skipped };
   }
 
-  // Phase 2 & 5: Atomicity for attendance
-  static async markAttendance(sessionId: string, studentIds: string[]) {
-    const sessionRef = doc(db, "class_sessions", sessionId);
-    const sessionSnap = await getDoc(sessionRef);
-    if (!sessionSnap.exists()) {
-      throw new Error("Session does not exist!");
-    }
-    const session = sessionSnap.data() as ClassSession;
-
-    const templateRef = doc(db, "class_templates", session.templateId);
-    const templateSnap = await getDoc(templateRef);
-    if (!templateSnap.exists()) {
-      throw new Error("Class template does not exist!");
-    }
-    const template = templateSnap.data() as ClassTemplate;
-
-    // Get wallet refs outside transaction
-    const walletRefs: { studentId: string, ref: any }[] = [];
-    if (template.pricingModel === PricingModel.PER_SESSION) {
-      for (const studentId of studentIds) {
-        const walletQuery = query(
-          collection(db, "wallets"),
-          where("studentId", "==", studentId),
-          where("organizationId", "==", session.organizationId)
-        );
-        const walletSnap = await getDocs(walletQuery);
-        if (!walletSnap.empty) {
-          walletRefs.push({ studentId, ref: walletSnap.docs[0].ref });
-        } else {
-          throw new Error(`Wallet not found for student ${studentId}.`);
-        }
-      }
-    }
-
-    await runTransaction(db, async (transaction) => {
-      // Read all documents first
-      const sessionDoc = await transaction.get(sessionRef);
-      if (!sessionDoc.exists()) {
-        throw new Error("Session does not exist!");
-      }
-
-      const walletDocs = [];
-      for (const { studentId, ref } of walletRefs) {
-        const wDoc = await transaction.get(ref);
-        walletDocs.push({ studentId, ref, data: wDoc.data() as Wallet });
-      }
-
-      // Perform updates
-      for (const { studentId, ref, data } of walletDocs) {
-        if (data.balanceCredits >= 1) {
-          transaction.update(ref, { balanceCredits: data.balanceCredits - 1 });
-        } else if (data.balanceCurrency >= template.feeAmount) {
-          transaction.update(ref, { balanceCurrency: data.balanceCurrency - template.feeAmount });
-        } else {
-          // Generate an unpaid invoice instead of throwing an error
-          const newInvoiceRef = doc(collection(db, "invoices"));
-          transaction.set(newInvoiceRef, {
-            organizationId: session.organizationId,
-            tutorId: session.tutorId,
-            studentId,
-            totalAmount: template.feeAmount,
-            subtotal: template.feeAmount,
-            tax: 0,
-            discount: 0,
-            periodStart: new Date().toISOString().split('T')[0],
-            periodEnd: new Date().toISOString().split('T')[0],
-            dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // Due in 7 days
-            status: "unpaid",
-            items: [
-              {
-                description: `${template.type} - ${template.pricingModel} (Attendance)`,
-                amount: template.feeAmount,
-                quantity: 1
-              }
-            ],
-            createdAt: new Date().toISOString()
-          });
-        }
-      }
-
-      // Mark session as completed
-      transaction.update(sessionRef, { status: "completed" });
-      
-      // We would also save attendance records here
-    });
-  }
+  // Attendance + billing moved server-side: see src/lib/api.ts markAttendance()
+  // and server/routes/billing.ts. Client-side wallet mutation is forbidden by rules.
 }

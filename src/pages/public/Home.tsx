@@ -39,7 +39,7 @@ export default function Home() {
                 <option value="adult">Adult Learning</option>
               </select>
             </div>
-            <Link to="/find-tutors" className="w-full sm:w-auto mt-2 sm:mt-0 px-8 py-4 bg-indigo-600 text-white rounded-full font-bold text-lg hover:bg-indigo-700 transition-colors flex items-center justify-center">
+            <Link to="/contact" className="w-full sm:w-auto mt-2 sm:mt-0 px-8 py-4 bg-indigo-600 text-white rounded-full font-bold text-lg hover:bg-indigo-700 transition-colors flex items-center justify-center">
               Search
             </Link>
           </div>
@@ -92,7 +92,7 @@ export default function Home() {
                     <li className="flex items-start"><CheckCircle className="w-6 h-6 text-green-500 mr-3 shrink-0" /><span className="text-gray-700 text-lg">Flexible scheduling that fits around your busy life.</span></li>
                     <li className="flex items-start"><CheckCircle className="w-6 h-6 text-green-500 mr-3 shrink-0" /><span className="text-gray-700 text-lg">Immediate feedback and undivided attention from the tutor.</span></li>
                   </ul>
-                  <Link to="/find-tutors?format=1on1" className="inline-flex items-center text-indigo-600 font-bold text-lg hover:text-indigo-800">
+                  <Link to="/contact" className="inline-flex items-center text-indigo-600 font-bold text-lg hover:text-indigo-800">
                     Find 1-on-1 Tutors <ArrowRight className="ml-2 w-5 h-5" />
                   </Link>
                 </div>
@@ -120,7 +120,7 @@ export default function Home() {
                     <li className="flex items-start"><CheckCircle className="w-6 h-6 text-green-500 mr-3 shrink-0" /><span className="text-gray-700 text-lg">More affordable rates while maintaining high-quality instruction.</span></li>
                     <li className="flex items-start"><CheckCircle className="w-6 h-6 text-green-500 mr-3 shrink-0" /><span className="text-gray-700 text-lg">Structured batch schedules for consistent learning routines.</span></li>
                   </ul>
-                  <Link to="/find-tutors?format=group" className="inline-flex items-center text-emerald-600 font-bold text-lg hover:text-emerald-800">
+                  <Link to="/contact" className="inline-flex items-center text-emerald-600 font-bold text-lg hover:text-emerald-800">
                     Browse Group Batches <ArrowRight className="ml-2 w-5 h-5" />
                   </Link>
                 </div>
@@ -156,7 +156,7 @@ export default function Home() {
               { name: "Python Coding", icon: <Code className="w-8 h-8 text-purple-500" />, count: "500+ Tutors" },
               { name: "Languages", icon: <Globe className="w-8 h-8 text-orange-500" />, count: "900+ Tutors" }
             ].map((category, idx) => (
-              <Link key={idx} to={`/find-tutors?subject=${category.name}`} className="bg-white rounded-2xl p-6 text-center shadow-sm border border-gray-100 hover:shadow-md hover:border-indigo-200 transition-all group">
+              <Link key={idx} to="/contact" className="bg-white rounded-2xl p-6 text-center shadow-sm border border-gray-100 hover:shadow-md hover:border-indigo-200 transition-all group">
                 <div className="w-16 h-16 mx-auto bg-gray-50 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                   {category.icon}
                 </div>

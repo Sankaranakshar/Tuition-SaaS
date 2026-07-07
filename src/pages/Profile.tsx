@@ -35,7 +35,15 @@ export default function Profile() {
   const handleSave = async () => {
     if (!user) return;
     try {
-      await updateDoc(doc(db, "users", user.id), formData);
+      // Only profile fields; spreading the whole doc back would trip the
+      // security rules (role/organizationId are not client-writable).
+      await updateDoc(doc(db, "users", user.id), {
+        name: formData.name || "",
+        phone_number: formData.phone_number || "",
+        school: formData.school || "",
+        grade: formData.grade || "",
+        updatedAt: new Date().toISOString(),
+      });
       setProfile(formData);
       setIsEditing(false);
     } catch (error) {

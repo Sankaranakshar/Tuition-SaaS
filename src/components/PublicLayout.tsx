@@ -10,7 +10,6 @@ export default function PublicLayout() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const navLinks = [
-    { name: 'Find Tutors', path: '/find-tutors' },
     { name: 'How It Works', path: '/how-it-works' },
     { name: 'For Tutors', path: '/features' },
     { name: 'Pricing', path: '/pricing' },
@@ -151,9 +150,7 @@ export default function PublicLayout() {
             <div>
               <h3 className="text-lg font-bold mb-6">For Learners</h3>
               <ul className="space-y-4 text-gray-400">
-                <li><Link to="/find-tutors" className="hover:text-white transition-colors">Find a Tutor</Link></li>
                 <li><Link to="/how-it-works" className="hover:text-white transition-colors">How It Works</Link></li>
-                <li><Link to="/find-tutors?format=group" className="hover:text-white transition-colors">Group Classes</Link></li>
               </ul>
             </div>
             <div>

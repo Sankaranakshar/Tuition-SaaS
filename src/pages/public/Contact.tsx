@@ -8,6 +8,7 @@ export default function Contact() {
     phone: '',
     role: 'tutor'
   });
+  const [submitted, setSubmitted] = useState(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -16,8 +17,7 @@ export default function Contact() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Demo requested:', formData);
-    alert('Thank you! We will contact you shortly to schedule your demo.');
+    setSubmitted(true);
     setFormData({ name: '', email: '', phone: '', role: 'tutor' });
   };
 
@@ -42,7 +42,12 @@ export default function Contact() {
             {/* Demo Form */}
             <div className="bg-white p-8 md:p-10 rounded-3xl shadow-xl border border-gray-100">
               <h2 className="text-2xl font-bold text-gray-900 mb-8">Request a Demo</h2>
-              <form onSubmit={handleSubmit} className="space-y-6">
+              {submitted && (
+              <div className="mb-6 rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
+                Thank you! We will contact you shortly to schedule your demo.
+              </div>
+            )}
+            <form onSubmit={handleSubmit} className="space-y-6">
                 <div>
                   <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
                     Full Name

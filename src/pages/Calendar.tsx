@@ -18,6 +18,8 @@ import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc } 
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { ClassManager, ClassType, PricingModel } from "../services/ClassManager";
+import { markAttendance as apiMarkAttendance, cancelSession } from "../lib/api";
+import { toast } from "sonner";
 import LoadingSpinner from "../components/LoadingSpinner";
 
 export default function Calendar() {
@@ -236,7 +238,7 @@ export default function Calendar() {
       currentCheck.setDate(currentCheck.getDate() + 1);
       currentCheck.setHours(9, 0, 0, 0);
     }
-    alert("No gaps found in the next 14 days.");
+    toast.info("No gaps found in the next 14 days.");
   };
 
   const handleCreateTemplateAndSessions = async (e: React.FormEvent) => {
@@ -282,12 +284,15 @@ export default function Calendar() {
           status: "scheduled",
           isOnline,
           roomNumber,
-          meetingLink: isOnline ? `https://meet.google.com/placeholder-${Date.now()}` : ""
+          // Real Meet links come from the Google Calendar integration;
+          // an empty link renders as "link pending".
+          meetingLink: ""
         });
       } else {
         // Recurring Batch
+        const allSkipped: string[] = [];
         for (const dayOfWeek of selectedDays) {
-          await ClassManager.generateRecurringSessions(
+          const { skipped } = await ClassManager.generateRecurringSessions(
             templateRef.id,
             user.organizationId,
             user.id,
@@ -298,6 +303,12 @@ export default function Calendar() {
             minutes,
             duration
           );
+          allSkipped.push(...skipped);
+        }
+        if (allSkipped.length > 0) {
+          toast.warning(`${allSkipped.length} session(s) skipped due to conflicts`, {
+            description: allSkipped.slice(0, 3).map(d => new Date(d).toLocaleDateString()).join(", ") + (allSkipped.length > 3 ? "\u2026" : ""),
+          });
         }
         
         // Auto-enroll selected students
@@ -307,9 +318,9 @@ export default function Calendar() {
       }
 
       closeModal();
+      toast.success("Class created");
     } catch (error: any) {
-      alert(error.message);
-      console.error("Error creating class:", error);
+      toast.error("Could not create class", { description: error.message });
     }
   };
 
@@ -341,16 +352,23 @@ export default function Calendar() {
   const markAttendance = async (sessionId: string, status: string) => {
     try {
       if (status === 'completed' && selectedSession) {
-        // Use ClassManager to handle wallet deductions if applicable
-        await ClassManager.markAttendance(sessionId, selectedSession.studentIds || []);
+        // Attendance + billing is a server-side transaction; the client has
+        // no write path to wallets or attendance records.
+        const result = await apiMarkAttendance(
+          sessionId,
+          (selectedSession.studentIds || []).map((studentId: string) => ({ studentId, status: "present" as const }))
+        );
+        const parts = ["Attendance saved"];
+        if (result.billed.length) parts.push(`${result.billed.length} billed from wallet`);
+        if (result.invoiced.length) parts.push(`${result.invoiced.length} invoiced`);
+        toast.success(parts.join(" \u00b7 "));
       } else {
-        const sessionRef = doc(db, "class_sessions", sessionId);
-        await updateDoc(sessionRef, { status });
+        await cancelSession(sessionId);
+        toast.success("Session cancelled");
       }
       setSelectedSession(null);
     } catch (error: any) {
-      alert(error.message);
-      console.error("Error updating attendance:", error);
+      toast.error("Could not update session", { description: error.message });
     }
   };
 

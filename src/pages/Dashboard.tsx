@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { Users, Calendar, DollarSign, Video, AlertTriangle, CheckCircle, TrendingDown } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, limit, orderBy } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
+import { formatINR } from "../lib/format";
 import { Link } from "react-router-dom";
 import StudentDashboard from "./StudentDashboard";
 import { 
@@ -71,8 +72,16 @@ export default function Dashboard() {
       console.error("Firestore Error (Students): ", error);
     });
 
-    const sessionsConstraints = [where("organizationId", "==", user.organizationId)];
-    if (user.role === 'tutor') sessionsConstraints.push(where("tutorId", "==", user.id));
+    // Bounded: yesterday onward, capped. The dashboard needs this week,
+    // not the org's entire scheduling history.
+    const windowStart = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const sessionsConstraints: any[] = [
+      where("organizationId", "==", user.organizationId),
+      where("startTime", ">=", windowStart),
+      orderBy("startTime"),
+      limit(200),
+    ];
+    if (user.role === 'tutor') sessionsConstraints.unshift(where("tutorId", "==", user.id));
     const qSessions = query(collection(db, "class_sessions"), ...sessionsConstraints);
     
     const unsubSessions = onSnapshot(qSessions, (sessionSnapshot) => {
@@ -96,8 +105,13 @@ export default function Dashboard() {
       console.error("Firestore Error (Sessions): ", error);
     });
 
-    const invoicesConstraints = [where("organizationId", "==", user.organizationId)];
-    if (user.role === 'tutor') invoicesConstraints.push(where("tutorId", "==", user.id));
+    const yearAgo = new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString();
+    const invoicesConstraints: any[] = [
+      where("organizationId", "==", user.organizationId),
+      where("createdAt", ">=", yearAgo),
+      limit(1000),
+    ];
+    if (user.role === 'tutor') invoicesConstraints.unshift(where("tutorId", "==", user.id));
     const qInvoices = query(collection(db, "invoices"), ...invoicesConstraints);
     
     const unsubInvoices = onSnapshot(qInvoices, (invoiceSnapshot) => {
@@ -121,8 +135,11 @@ export default function Dashboard() {
       console.error("Firestore Error (Invoices): ", error);
     });
 
-    const assessmentsConstraints = [where("organizationId", "==", user.organizationId)];
-    if (user.role === 'tutor') assessmentsConstraints.push(where("tutorId", "==", user.id));
+    const assessmentsConstraints: any[] = [
+      where("organizationId", "==", user.organizationId),
+      limit(500),
+    ];
+    if (user.role === 'tutor') assessmentsConstraints.unshift(where("tutorId", "==", user.id));
     const qAssessments = query(collection(db, "assessments"), ...assessmentsConstraints);
     
     const unsubAssessments = onSnapshot(qAssessments, (assessmentSnapshot) => {
@@ -215,7 +232,7 @@ export default function Dashboard() {
           </div>
           <div>
             <p className="text-sm font-medium text-gray-500">Pending Invoices</p>
-            <p className="text-2xl font-bold text-gray-900">${data?.kpis?.pendingInvoiceAmount?.toFixed(2) || "0.00"}</p>
+            <p className="text-2xl font-bold text-gray-900">{formatINR(data?.kpis?.pendingInvoiceAmount)}</p>
           </div>
         </div>
       </div>
@@ -240,10 +257,10 @@ export default function Dashboard() {
                 <YAxis 
                   axisLine={false}
                   tickLine={false}
-                  tickFormatter={(value) => `$${value}`}
+                  tickFormatter={(value) => formatINR(value)}
                 />
                 <Tooltip 
-                  formatter={(value: number) => [`$${value}`, 'Revenue']}
+                  formatter={(value: number) => [formatINR(value), 'Revenue']}
                   labelFormatter={(label) => {
                     const date = new Date(label + "-01");
                     return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });

@@ -60,9 +60,10 @@ export default function Onboarding() {
     if (!user?.id) return;
     setLoading(true);
     try {
+      // role_type is a display preference; real authorization comes from
+      // server-set custom claims and organization_members.
       await updateDoc(doc(db, "users", user.id), {
-        role_type: selectedRole,
-        role: selectedRole // for backward compatibility
+        role_type: selectedRole
       });
       setRole(selectedRole);
       setStep(2);
