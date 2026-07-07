@@ -10,18 +10,22 @@ This document lets anyone (engineer or agent) pick up the build without re-readi
 
 ## 1. Current state in one paragraph
 
-The repository is a fresh, safe foundation. **Stage 0 of DEV_PLAN.md is complete** (Epics 1–5: security, server money, SQLite removal, query hygiene, and the full design foundation — tokens, shell, palette, component kit, and i18n wrapper), **Stage 1 Epic 6 (Payments) is built server-side** (Razorpay payment links, signature-verified idempotent webhooks, reconciliation poll, gap-free invoice numbering, tax/GST snapshot, manual refunds), and **Epic 9 (Today workspace) is built** — the tutor/owner home with the live session Line, one-tap attendance (optimistic + undo), the rules-based attention queue, the three-number Pulse, the attendance-debt counter, and the admin per-tutor lanes; the legacy Dashboard is retired. **Epics 7 (Outbound comms) and 8 (Real scheduling integrations) are explicitly DEFERRED** — both are blocked on external provider onboarding (WhatsApp/SMS/email; Google Calendar+Meet OAuth verification) that cannot be finished from a dev machine, so they were sequenced after Epic 9. The four Critical security vulnerabilities (C1–C5) are fixed in `firestore.rules` and codified as an executable test suite. SQLite is gone; the app runs on Firestore + a slim stateless Express API. Money and attendance are server-authoritative. The product builds, typechecks, unit-tests green (44/44), and boots with all routes wired. It has **not** been deployed to a live Firebase project; the payment loop and the Today workspace have **not** been exercised in a browser (both need a live/emulated Firebase project with seeded data + a connected Razorpay account). Commits through Epic 5 are on GitHub `main`; Epic 6 and Epic 9 are uncommitted in the working tree.
+The repository is a fresh, safe foundation. **Stage 0 of DEV_PLAN.md is complete** (Epics 1–5: security, server money, SQLite removal, query hygiene, and the full design foundation — tokens, shell, palette, component kit, and i18n wrapper), **Stage 1 Epic 6 (Payments) is built server-side** (Razorpay payment links, signature-verified idempotent webhooks, reconciliation poll, gap-free invoice numbering, tax/GST snapshot, manual refunds), and **Epic 9 (Today workspace) is built** — the tutor/owner home with the live session Line, one-tap attendance (optimistic + undo), the rules-based attention queue, the three-number Pulse, the attendance-debt counter, and the admin per-tutor lanes; the legacy Dashboard is retired. **Epics 7 (Outbound comms) and 8 (Real scheduling integrations) are explicitly DEFERRED** — both are blocked on external provider onboarding (WhatsApp/SMS/email; Google Calendar+Meet OAuth verification) that cannot be finished from a dev machine, so they were sequenced after Epic 9. The four Critical security vulnerabilities (C1–C5) are fixed in `firestore.rules` and codified as an executable test suite. SQLite is gone; the app runs on Firestore + a slim stateless Express API. Money and attendance are server-authoritative. The product builds, typechecks, unit-tests green (44/44), and boots with all routes wired. It has **not** been deployed to a live Firebase project; the payment loop and the Today workspace have **not** been exercised in a browser (both need a live/emulated Firebase project with seeded data + a connected Razorpay account). **All work through Epic 9 is committed and pushed to GitHub `main`.**
 
 ---
 
 ## 2. Repository & git state
 
-- **Remote:** `git@github.com:Sankaranakshar/Tuition-SaaS.git` (private), branch `main`, upstream tracking set.
-- **History (3 commits):**
+- **Remote:** `https://github.com/Sankaranakshar/Tuition-SaaS.git` (private), branch `main`, upstream tracking set. Working tree is clean — everything below is pushed.
+- **History (7 commits):**
   1. `96865ce` Baseline — code as received + planning docs
   2. `0fb8d01` Stage 0 — security, server money, SQLite removal
   3. `7c98726` Epic 5 (partial) — tokens, shell, palette
-- **⚠️ History note:** the build started from a fresh `git init`, so `main`'s previous AI-Studio commit history (~10 commits) was replaced by this clean 3-commit history. **No code was lost** — commit 1 is byte-identical to the old remote HEAD plus the planning docs. The old commits likely still exist as unreferenced objects on GitHub for now; ask if you want them grafted back onto a `legacy-history` branch.
+  4. `e3c04c6` Add engineering handoff document
+  5. `b6f5f4d` Epic 5 — component kit + i18n wrapper (Stage 0 complete)
+  6. `61620e5` Epic 6 — Razorpay payments (server-authoritative money loop)
+  7. `d2e86ca` Epic 9 — Today workspace; defer Epics 7-8
+- **⚠️ History note:** the build started from a fresh `git init`, so `main`'s previous AI-Studio commit history (~10 commits) was replaced by this clean history. **No code was lost** — commit 1 is byte-identical to the old remote HEAD plus the planning docs. The old commits likely still exist as unreferenced objects on GitHub for now; ask if you want them grafted back onto a `legacy-history` branch.
 
 ---
 
@@ -65,7 +69,7 @@ The repository is a fresh, safe foundation. **Stage 0 of DEV_PLAN.md is complete
 - Recurring generation returns `skipped[]` conflicts instead of silently swallowing them; surfaced to the user as a toast in [src/pages/Calendar.tsx](src/pages/Calendar.tsx).
 
 ### Epic 4 — Query hygiene & error honesty
-- Dashboard listeners bounded ([src/pages/Dashboard.tsx](src/pages/Dashboard.tsx)): rolling session window, 12-month invoices, capped assessments (were four unbounded `onSnapshot`s).
+- Dashboard listeners bounded (`src/pages/Dashboard.tsx`, since deleted — see Epic 9): rolling session window, 12-month invoices, capped assessments (were four unbounded `onSnapshot`s).
 - **All `alert()` / `window.confirm()` removed** (Calendar, Leads, Contact) → `sonner` toasts with undo. Lead delete is now optimistic + 5-second undo.
 - INR everywhere via [src/lib/format.ts](src/lib/format.ts) (`formatINR`, `formatPaise`, Indian digit grouping, relative dates). Every `$` render purged.
 - `exceljs` loaded dynamically (out of main bundle).
@@ -139,10 +143,9 @@ npm run build                  # vite build + esbuild server bundle
 | Unauth billing / gateway calls rejected | ✅ structured 401 JSON before any Firestore touch |
 | Payment webhook / reconcile e2e | ⚠️ **not run** — needs live/emulated Firestore + a connected Razorpay account |
 | Today workspace build (route-split) | ✅ `Today` chunk compiles (~32kb / 9.5kb gzip); old Dashboard chunk gone |
-| Today workspace browser render | ⚠️ **not run** — auth-gated lazy route; needs a seeded Firebase project to load the chunk |
 | Unknown API route → JSON 404 | ✅ |
 | `npm run test:rules` | ⚠️ **NOT run locally** — this machine has no Java. Written to run in CI. **First action for whoever has Java: run it and confirm 34/34 green.** |
-| Browser UI walkthrough | ⚠️ not done — needs a live/emulated Firebase project with seeded data |
+| Browser UI walkthrough (any workspace, incl. Today) | ⚠️ not done — needs a live/emulated Firebase project with seeded data |
 
 ---
 
