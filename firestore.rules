@@ -1,0 +1,219 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isOrgMember(orgId) {
+      return isAuthenticated() && orgId != null && exists(/databases/$(database)/documents/organization_members/$(orgId + '_' + request.auth.uid));
+    }
+
+    function isOrgOwner(orgId) {
+      let org = orgId != null ? get(/databases/$(database)/documents/organizations/$(orgId)) : null;
+      return isAuthenticated() && org != null && org.data.ownerUserId == request.auth.uid;
+    }
+
+    function isOrgAdmin(orgId) {
+      let member = orgId != null ? get(/databases/$(database)/documents/organization_members/$(orgId + '_' + request.auth.uid)) : null;
+      return isAuthenticated() && member != null && (member.data.role == 'admin' || member.data.role == 'owner');
+    }
+
+    function isValidStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+             request.resource.data[field].size() >= minLen &&
+             request.resource.data[field].size() <= maxLen;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isOrgAdmin(resource.data.organizationId);
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if false;
+    }
+
+    match /tutor_profiles/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if false;
+    }
+
+    match /parent_profiles/{userId} {
+      allow read: if isOwner(userId) || isOrgAdmin(resource.data.organizationId);
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if false;
+    }
+
+    match /student_profiles/{userId} {
+      allow read: if isOwner(userId) || isOrgAdmin(resource.data.organizationId) || (isAuthenticated() && resource.data.parent_id == request.auth.uid);
+      allow create: if isOwner(userId) || (isAuthenticated() && request.resource.data.parent_id == request.auth.uid);
+      allow update: if isOwner(userId) || (isAuthenticated() && resource.data.parent_id == request.auth.uid);
+      allow delete: if false;
+    }
+
+    match /organizations/{orgId} {
+      allow read: if isOrgMember(orgId);
+      allow create: if isAuthenticated();
+      allow update: if isOrgAdmin(orgId);
+      allow delete: if false;
+    }
+
+    match /organization_members/{memberId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isOrgAdmin(resource.data.organizationId));
+      allow create: if isAuthenticated() && (
+        isOrgAdmin(request.resource.data.organizationId) ||
+        (isOrgOwner(request.resource.data.organizationId) && request.resource.data.userId == request.auth.uid && request.resource.data.role == 'owner')
+      );
+      allow update: if isOrgAdmin(resource.data.organizationId);
+      allow delete: if isOrgAdmin(resource.data.organizationId);
+    }
+
+    match /students/{studentId} {
+      allow read: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || resource.data.studentUserId == request.auth.uid);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+    }
+
+    match /student_parents/{parentId} {
+      allow read: if isOwner(parentId);
+      allow create: if isOwner(parentId);
+      allow update: if isOwner(parentId);
+      allow delete: if isOwner(parentId);
+    }
+
+    match /programs/{programId} {
+      allow read: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+    }
+
+    match /courses/{courseId} {
+      allow read: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+    }
+
+    match /class_templates/{templateId} {
+      allow read: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+    }
+
+    match /class_sessions/{sessionId} {
+      allow read: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || request.auth.uid in resource.data.studentIds);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+    }
+
+    match /wallets/{walletId} {
+      allow read: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || resource.data.studentId == request.auth.uid);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+    }
+
+    match /enrollments/{enrollmentId} {
+      allow read: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || resource.data.studentId == request.auth.uid);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+    }
+
+    match /documents/{documentId} {
+      allow read: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || resource.data.studentId == request.auth.uid || request.auth.uid in resource.data.get('studentIds', []));
+      allow create: if isAuthenticated() && (isOrgMember(request.resource.data.organizationId) || request.resource.data.studentId == request.auth.uid);
+      allow update: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || resource.data.studentId == request.auth.uid);
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || resource.data.studentId == request.auth.uid);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+    }
+
+    match /assessments/{assessmentId} {
+      allow read: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || resource.data.studentId == request.auth.uid);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || resource.data.studentId == request.auth.uid);
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || resource.data.studentId == request.auth.uid);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+    }
+
+    match /session_requests/{requestId} {
+      allow read: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || resource.data.studentId == request.auth.uid);
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || resource.data.studentId == request.auth.uid);
+      allow delete: if isAuthenticated() && (isOrgMember(resource.data.organizationId) || resource.data.studentId == request.auth.uid);
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /conversations/{conversationId} {
+      allow read: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow delete: if false;
+    }
+
+    match /messages/{messageId} {
+      allow read: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && resource.data.senderUserId == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /leads/{leadId} {
+      allow read: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId);
+      allow update: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+    }
+
+    match /tutor_availability/{availabilityId} {
+      allow read: if isAuthenticated() && isOrgMember(resource.data.organizationId);
+      allow create: if isAuthenticated() && isOrgMember(request.resource.data.organizationId) && (request.resource.data.tutorId == request.auth.uid || isOrgAdmin(request.resource.data.organizationId));
+      allow update: if isAuthenticated() && isOrgMember(resource.data.organizationId) && (resource.data.tutorId == request.auth.uid || isOrgAdmin(resource.data.organizationId));
+      allow delete: if isAuthenticated() && isOrgMember(resource.data.organizationId) && (resource.data.tutorId == request.auth.uid || isOrgAdmin(resource.data.organizationId));
+    }
+  }
+}
