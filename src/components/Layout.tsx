@@ -1,4 +1,5 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "../context/AuthContext";
 import {
   LayoutDashboard,
@@ -21,6 +22,7 @@ import CommandPalette from "./CommandPalette";
 // trigger. Everything else lives one keystroke away (Cmd+K).
 export default function Layout() {
   const { user, logout, currentRole, setCurrentRole } = useAuth();
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [showRoleDropdown, setShowRoleDropdown] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -47,18 +49,18 @@ export default function Layout() {
   // the rail stays furniture, not a table of contents.
   const rail = isStudent
     ? [
-        { to: "/app", label: "Today", icon: LayoutDashboard, end: true },
-        { to: "/app/timetable", label: "Schedule", icon: Calendar },
-        { to: "/app/study-material", label: "Learn", icon: BookOpen },
-        { to: "/app/wallet", label: "Money", icon: Wallet },
-        { to: "/app/messaging", label: "Inbox", icon: MessageSquare },
+        { to: "/app", label: t("nav.today"), icon: LayoutDashboard, end: true },
+        { to: "/app/timetable", label: t("nav.schedule"), icon: Calendar },
+        { to: "/app/study-material", label: t("nav.learn"), icon: BookOpen },
+        { to: "/app/wallet", label: t("nav.money"), icon: Wallet },
+        { to: "/app/messaging", label: t("nav.inbox"), icon: MessageSquare },
       ]
     : [
-        { to: "/app", label: "Today", icon: LayoutDashboard, end: true },
-        { to: "/app/students", label: "People", icon: Users },
-        { to: "/app/calendar", label: "Schedule", icon: Calendar },
-        { to: "/app/invoices", label: "Money", icon: Wallet },
-        { to: "/app/messaging", label: "Inbox", icon: MessageSquare },
+        { to: "/app", label: t("nav.today"), icon: LayoutDashboard, end: true },
+        { to: "/app/students", label: t("nav.people"), icon: Users },
+        { to: "/app/calendar", label: t("nav.schedule"), icon: Calendar },
+        { to: "/app/invoices", label: t("nav.money"), icon: Wallet },
+        { to: "/app/messaging", label: t("nav.inbox"), icon: MessageSquare },
       ];
 
   const settingsPath = isStudent ? "/app/preferences" : "/app/settings";
@@ -103,7 +105,7 @@ export default function Layout() {
         <div className="flex flex-col items-center gap-1">
           <NavLink
             to={settingsPath}
-            title="Settings"
+            title={t("common.settings")}
             className={({ isActive }) =>
               `flex h-10 w-10 items-center justify-center rounded-[6px] transition-colors ${
                 isActive
@@ -116,7 +118,7 @@ export default function Layout() {
           </NavLink>
           <button
             onClick={handleLogout}
-            title="Log out"
+            title={t("common.logOut")}
             className="flex h-10 w-10 items-center justify-center rounded-[6px] text-[var(--cs-text-muted)] transition-colors hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]"
           >
             <LogOut className="h-[18px] w-[18px]" strokeWidth={1.75} />
@@ -133,7 +135,7 @@ export default function Layout() {
             className="flex w-72 items-center gap-2 rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] px-3 py-1.5 text-sm text-[var(--cs-text-muted)] transition-colors hover:border-[var(--cs-accent)]"
           >
             <Search className="h-4 w-4" strokeWidth={1.75} />
-            <span className="flex-1 text-left">Search or jump to…</span>
+            <span className="flex-1 text-left">{t("common.search")}</span>
             <kbd className="rounded border border-[var(--cs-border)] bg-[var(--cs-surface)] px-1.5 py-0.5 text-[10px]">⌘K</kbd>
           </button>
 
@@ -141,7 +143,7 @@ export default function Layout() {
             <button
               onClick={() => navigate("/app/notifications")}
               className="relative flex h-9 w-9 items-center justify-center rounded-[6px] text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]"
-              title="Notifications"
+              title={t("common.notifications")}
             >
               <Bell className="h-[18px] w-[18px]" strokeWidth={1.75} />
             </button>
@@ -166,7 +168,7 @@ export default function Layout() {
               {showRoleDropdown && user?.roles && user.roles.length > 1 && (
                 <div className="absolute right-0 top-full z-10 mt-2 w-48 rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-1 shadow-lg">
                   <div className="border-b border-[var(--cs-border)] px-4 py-2 text-xs font-medium text-[var(--cs-text-muted)]">
-                    Switch portal
+                    {t("common.switchPortal")}
                   </div>
                   {user.roles.map((role) => (
                     <button

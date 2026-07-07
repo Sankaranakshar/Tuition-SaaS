@@ -16,6 +16,7 @@ import {
   Shield,
   GraduationCap,
   Bell,
+  LayoutGrid,
   User as UserIcon,
 } from "lucide-react";
 import { collection, query, where, limit, onSnapshot } from "firebase/firestore";
@@ -91,6 +92,7 @@ export default function CommandPalette({ open, onOpenChange }: PaletteProps) {
       { label: "Settings", to: "/app/settings", icon: Settings },
     ];
     if (currentRole === "admin") items.push({ label: "Admin panel", to: "/app/admin", icon: Shield });
+    items.push({ label: "Component kit", to: "/app/kit", icon: LayoutGrid });
     return items;
   }, [isStaff, currentRole]);
 

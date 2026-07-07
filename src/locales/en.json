@@ -1,0 +1,53 @@
+{
+  "common": {
+    "appName": "ClassStackr",
+    "search": "Search or jump to…",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving…",
+    "delete": "Delete",
+    "undo": "Undo",
+    "close": "Close",
+    "loading": "Loading…",
+    "notDue": "Not due",
+    "daysOverdue": "{{count}}d overdue",
+    "logOut": "Log out",
+    "settings": "Settings",
+    "notifications": "Notifications",
+    "switchPortal": "Switch portal"
+  },
+  "nav": {
+    "today": "Today",
+    "schedule": "Schedule",
+    "people": "People",
+    "money": "Money",
+    "inbox": "Inbox",
+    "learn": "Learn",
+    "leads": "Leads",
+    "documents": "Documents",
+    "admin": "Admin panel",
+    "students": "Students",
+    "calendar": "Calendar",
+    "messages": "Messages",
+    "timetable": "Timetable",
+    "studyMaterial": "Study material",
+    "academicProgress": "Academic progress",
+    "wallet": "Wallet",
+    "transactions": "Transactions",
+    "profile": "Profile"
+  },
+  "palette": {
+    "empty": "Nothing matches.",
+    "goTo": "Go to",
+    "create": "Create",
+    "students": "Students",
+    "newStudent": "New student",
+    "scheduleClass": "Schedule a class",
+    "newLead": "New lead",
+    "hint": "↑↓ navigate · ↵ open · esc close"
+  },
+  "empty": {
+    "noResults": "No results",
+    "allClear": "All clear"
+  }
+}
