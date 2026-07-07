@@ -3,6 +3,9 @@ import { z } from "zod";
 import { adminDb } from "../firebaseAdmin.ts";
 import { authenticateToken, requireRole, requireOrg, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
+import { applyPayment, type InvoiceStatus } from "../utils/invoiceStatus.ts";
+import { allocateInvoiceNumber } from "../utils/invoiceNumber.ts";
+import { getGatewayCreds, createPaymentLink, fetchPaymentLink } from "../utils/razorpay.ts";
 
 const router = express.Router();
 router.use(authenticateToken, requireOrg);
@@ -205,13 +208,13 @@ router.post("/payments/manual", requireRole(...CAN_MONEY), async (req: AuthReque
         throw Object.assign(new Error("Invoice not found"), { status: 404, code: "not_found" });
       }
       const inv = invSnap.data()!;
-      if (inv.status === "void") {
-        throw Object.assign(new Error("Invoice is void"), { status: 422, code: "invoice_void" });
-      }
       const totalPaise = inv.totalPaise ?? Math.round((inv.totalAmount || 0) * 100);
-      const paidSoFar = inv.paidPaise || 0;
-      const newPaid = paidSoFar + body.amountPaise;
-      const status = newPaid >= totalPaise ? "paid" : "partially_paid";
+      // Shared status machine: caps paid at total, reports overpayment, throws
+      // on void/non-payable. Identical math to the gateway webhook path.
+      const applied = applyPayment(
+        { status: inv.status as InvoiceStatus, totalPaise, paidPaise: inv.paidPaise || 0 },
+        body.amountPaise
+      );
 
       tx.set(payRef, {
         organizationId: orgId,
@@ -221,11 +224,20 @@ router.post("/payments/manual", requireRole(...CAN_MONEY), async (req: AuthReque
         method: body.method,
         note: body.note || null,
         recordedBy: req.user!.id,
-        invoiceStatus: status,
+        invoiceStatus: applied.status,
         at: new Date(),
       });
-      tx.update(invRef, { paidPaise: newPaid, status, lastPaymentAt: new Date() });
-      return { duplicate: false, status };
+      tx.update(invRef, { paidPaise: applied.paidPaise, status: applied.status, lastPaymentAt: new Date() });
+
+      // Overpayment (e.g. round cash) becomes wallet credit on the ledger.
+      if (applied.overpaidPaise > 0 && inv.studentId) {
+        tx.set(db.collection("wallet_ledger").doc(), {
+          organizationId: orgId, studentId: inv.studentId, type: "credit_currency",
+          credits: 0, paise: applied.overpaidPaise, reason: "overpayment", invoiceId: body.invoiceId,
+          at: new Date(), by: req.user!.id,
+        });
+      }
+      return { duplicate: false, status: applied.status };
     });
 
     if (!outcome.duplicate) {
@@ -253,6 +265,221 @@ router.post("/invoices/:invoiceId/void", requireRole("owner", "admin"), async (r
     await ref.update({ status: "void", voidedAt: new Date(), voidedBy: req.user!.id });
     await writeAudit(orgId, req.user!.id, "invoice.void", "invoices", req.params.invoiceId, {});
     res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// Finalize an invoice: assign a gap-free per-org number, snapshot GST/tax
+// settings onto the immutable record, and move draft → sent. Idempotent: an
+// already-numbered invoice returns its existing number untouched (E6.4).
+router.post("/invoices/:invoiceId/finalize", requireRole(...CAN_MONEY), async (req: AuthRequest, res, next) => {
+  try {
+    if (!adminDb) throw new Error("Firebase Admin not initialized");
+    const db = adminDb;
+    const orgId = req.user!.organizationId!;
+
+    const gwSnap = await db.collection("payment_gateways").doc(orgId).get();
+    const tax = gwSnap.exists ? (gwSnap.data()!.tax || {}) : {};
+    const slug: string = tax.invoicePrefix || orgId.slice(0, 6);
+
+    const invRef = db.collection("invoices").doc(req.params.invoiceId);
+
+    const out = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(invRef);
+      if (!snap.exists || snap.data()!.organizationId !== orgId) {
+        throw Object.assign(new Error("Invoice not found"), { status: 404, code: "not_found" });
+      }
+      const inv = snap.data()!;
+      if (inv.status === "void") {
+        throw Object.assign(new Error("Invoice is void"), { status: 422, code: "invoice_void" });
+      }
+      if (inv.invoiceNumber) {
+        return { number: inv.invoiceNumber as string, alreadyFinalized: true };
+      }
+      const { number } = await allocateInvoiceNumber(db, tx, orgId, slug);
+      tx.update(invRef, {
+        invoiceNumber: number,
+        status: inv.status === "draft" ? "sent" : inv.status,
+        finalizedAt: new Date(),
+        finalizedBy: req.user!.id,
+        gstSnapshot: {
+          legalName: tax.legalName || null,
+          gstin: tax.gstin || null,
+          placeOfSupply: tax.placeOfSupply || null,
+        },
+      });
+      return { number, alreadyFinalized: false };
+    });
+
+    if (!out.alreadyFinalized) {
+      await writeAudit(orgId, req.user!.id, "invoice.finalize", "invoices", req.params.invoiceId, { number: out.number });
+    }
+    res.json({ ok: true, invoiceNumber: out.number });
+  } catch (err) { next(err); }
+});
+
+// Create (or return the existing) Razorpay payment link for an invoice's
+// outstanding amount. The parent pays via UPI; the webhook reconciles (E6.1).
+router.post("/invoices/:invoiceId/payment-link", requireRole(...CAN_MONEY), async (req: AuthRequest, res, next) => {
+  try {
+    if (!adminDb) throw new Error("Firebase Admin not initialized");
+    const db = adminDb;
+    const orgId = req.user!.organizationId!;
+    const invRef = db.collection("invoices").doc(req.params.invoiceId);
+    const snap = await invRef.get();
+    if (!snap.exists || snap.data()!.organizationId !== orgId) {
+      return res.status(404).json({ error: { code: "not_found", message: "Invoice not found" } });
+    }
+    const inv = snap.data()!;
+    if (inv.status === "void" || inv.status === "paid") {
+      return res.status(422).json({ error: { code: "not_payable", message: `Invoice is ${inv.status}` } });
+    }
+    // Reuse a still-open link rather than minting duplicates.
+    const existing = inv.paymentLink;
+    if (existing?.shortUrl && ["created", "issued", "partially_paid"].includes(existing.status)) {
+      return res.json({ ok: true, shortUrl: existing.shortUrl, reused: true });
+    }
+
+    const creds = await getGatewayCreds(db, orgId);
+    if (!creds) {
+      return res.status(422).json({ error: { code: "gateway_not_connected", message: "Connect Razorpay in settings first" } });
+    }
+
+    const totalPaise = inv.totalPaise ?? Math.round((inv.totalAmount || 0) * 100);
+    const outstanding = totalPaise - (inv.paidPaise || 0);
+    if (outstanding <= 0) {
+      return res.status(422).json({ error: { code: "nothing_due", message: "Invoice has no outstanding balance" } });
+    }
+
+    // Best-effort customer details for the hosted page.
+    let customer: { name?: string; contact?: string; email?: string } = {};
+    if (inv.studentId) {
+      const st = await db.collection("students").doc(inv.studentId).get();
+      if (st.exists) {
+        const s = st.data()!;
+        customer = { name: s.name || undefined, contact: s.parentPhone || s.phone || undefined, email: s.parentEmail || s.email || undefined };
+      }
+    }
+
+    const link = await createPaymentLink(creds, {
+      amountPaise: outstanding,
+      referenceId: req.params.invoiceId,
+      description: `${inv.invoiceNumber || "Invoice"} · ${inv.items?.[0]?.description || "Tuition fees"}`,
+      customer,
+      notes: { organizationId: orgId, invoiceId: req.params.invoiceId },
+      callbackUrl: process.env.APP_URL ? `${process.env.APP_URL}/app/invoices` : undefined,
+    });
+
+    await invRef.update({
+      paymentLink: { id: link.id, shortUrl: link.shortUrl, status: link.status, amountPaise: outstanding, createdAt: new Date() },
+    });
+    await writeAudit(orgId, req.user!.id, "invoice.payment_link", "invoices", req.params.invoiceId, { linkId: link.id, amountPaise: outstanding });
+    res.json({ ok: true, shortUrl: link.shortUrl, reused: false });
+  } catch (err) { next(err); }
+});
+
+const refundSchema = z.object({
+  invoiceId: z.string().min(1),
+  amountPaise: z.number().int().positive(),
+  reason: z.string().max(500).optional(),
+  idempotencyKey: z.string().min(8).max(128),
+});
+
+// Manual refund (E6.6). Records an immutable refund entry, decrements the paid
+// total, and re-derives the invoice status. Gateway refunds are initiated in
+// the Razorpay dashboard for now; this keeps our ledger truthful either way.
+router.post("/refunds", requireRole("owner", "admin"), async (req: AuthRequest, res, next) => {
+  try {
+    if (!adminDb) throw new Error("Firebase Admin not initialized");
+    const db = adminDb;
+    const body = refundSchema.parse(req.body);
+    const orgId = req.user!.organizationId!;
+    const refundRef = db.collection("refunds").doc(body.idempotencyKey);
+    const invRef = db.collection("invoices").doc(body.invoiceId);
+
+    const outcome = await db.runTransaction(async (tx) => {
+      const [rSnap, iSnap] = await Promise.all([tx.get(refundRef), tx.get(invRef)]);
+      if (rSnap.exists) return { duplicate: true, status: rSnap.data()!.invoiceStatus as InvoiceStatus };
+      if (!iSnap.exists || iSnap.data()!.organizationId !== orgId) {
+        throw Object.assign(new Error("Invoice not found"), { status: 404, code: "not_found" });
+      }
+      const inv = iSnap.data()!;
+      const paid = inv.paidPaise || 0;
+      if (body.amountPaise > paid) {
+        throw Object.assign(new Error("Refund exceeds amount paid"), { status: 422, code: "refund_too_large" });
+      }
+      const newPaid = paid - body.amountPaise;
+      const totalPaise = inv.totalPaise ?? Math.round((inv.totalAmount || 0) * 100);
+      const status: InvoiceStatus = newPaid <= 0 ? "unpaid" : newPaid >= totalPaise ? "paid" : "partially_paid";
+
+      tx.set(refundRef, {
+        organizationId: orgId, invoiceId: body.invoiceId, studentId: inv.studentId || null,
+        amountPaise: body.amountPaise, reason: body.reason || null, refundedBy: req.user!.id,
+        invoiceStatus: status, at: new Date(),
+      });
+      tx.update(invRef, { paidPaise: newPaid, status, lastRefundAt: new Date() });
+      return { duplicate: false, status };
+    });
+
+    if (!outcome.duplicate) {
+      await writeAudit(orgId, req.user!.id, "payment.refund", "invoices", body.invoiceId, { amountPaise: body.amountPaise });
+    }
+    res.status(outcome.duplicate ? 200 : 201).json({ ok: true, invoiceStatus: outcome.status, duplicate: outcome.duplicate });
+  } catch (err) { next(err); }
+});
+
+// Reconciliation poll for missed webhooks (E6.3). Meant to be hit hourly by
+// Cloud Scheduler (with an admin/service token). For each invoice carrying an
+// open payment link, re-pull the link; if Razorpay shows it paid, settle it
+// idempotently (keyed by link id) so a dropped webhook still reconciles.
+router.post("/reconcile", requireRole("owner", "admin"), async (req: AuthRequest, res, next) => {
+  try {
+    if (!adminDb) throw new Error("Firebase Admin not initialized");
+    const db = adminDb;
+    const orgId = req.user!.organizationId!;
+    const creds = await getGatewayCreds(db, orgId);
+    if (!creds) return res.status(422).json({ error: { code: "gateway_not_connected", message: "Connect Razorpay first" } });
+
+    const open = await db.collection("invoices")
+      .where("organizationId", "==", orgId)
+      .where("status", "in", ["sent", "unpaid", "partially_paid"])
+      .limit(100).get();
+
+    let reconciled = 0;
+    for (const doc of open.docs) {
+      const inv = doc.data();
+      const linkId = inv.paymentLink?.id;
+      if (!linkId) continue;
+      const link = await fetchPaymentLink(creds, linkId).catch(() => null);
+      if (!link || link.status !== "paid") continue;
+
+      const amountPaid = Number(link.amount_paid || 0);
+      if (amountPaid <= 0) continue;
+      const payRef = db.collection("payments").doc(`rzp_link_${linkId}`);
+      const invRef = db.collection("invoices").doc(doc.id);
+
+      const settled = await db.runTransaction(async (tx) => {
+        const [pSnap, iSnap] = await Promise.all([tx.get(payRef), tx.get(invRef)]);
+        if (pSnap.exists) return false;
+        const i = iSnap.data()!;
+        const totalPaise = i.totalPaise ?? Math.round((i.totalAmount || 0) * 100);
+        const applied = applyPayment(
+          { status: i.status as InvoiceStatus, totalPaise, paidPaise: i.paidPaise || 0 },
+          amountPaid
+        );
+        tx.set(payRef, {
+          organizationId: orgId, invoiceId: doc.id, studentId: i.studentId || null,
+          amountPaise: amountPaid, method: "upi", gateway: "razorpay",
+          gatewayLinkId: linkId, source: "reconcile", invoiceStatus: applied.status, at: new Date(),
+        });
+        tx.update(invRef, { paidPaise: applied.paidPaise, status: applied.status, lastPaymentAt: new Date() });
+        return true;
+      });
+      if (settled) {
+        reconciled++;
+        await writeAudit(orgId, req.user!.id, "payment.reconciled", "invoices", doc.id, { linkId, amountPaise: amountPaid });
+      }
+    }
+    res.json({ ok: true, scanned: open.size, reconciled });
   } catch (err) { next(err); }
 });
 

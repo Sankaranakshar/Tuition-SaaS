@@ -286,6 +286,20 @@ describe("Audit and server-only collections", () => {
     await assertFails(getDoc(doc(ctx(uids.tutor), "google_tokens", uids.tutor)));
     await assertFails(setDoc(doc(ctx(uids.tutor), "google_tokens", uids.tutor), { refreshToken: "x" }));
   });
+  it("payment_gateways (encrypted Razorpay secrets) are unreachable from any client", async () => {
+    // Even the owner must not read the encrypted gateway secrets or overwrite them.
+    await assertFails(getDoc(doc(ctx(uids.owner), "payment_gateways", ORG)));
+    await assertFails(setDoc(doc(ctx(uids.owner), "payment_gateways", ORG), { keyId: "rzp_evil" }));
+  });
+  it("invoice-number counters cannot be tampered with client-side", async () => {
+    await assertFails(getDoc(doc(ctx(uids.owner), "counters", `${ORG}_invoice_2026`)));
+    await assertFails(setDoc(doc(ctx(uids.owner), "counters", `${ORG}_invoice_2026`), { seq: 9999 }));
+  });
+  it("refunds are server-written only", async () => {
+    await assertFails(addDoc(collection(ctx(uids.owner), "refunds"), {
+      organizationId: ORG, invoiceId: "inv1", amountPaise: 100000,
+    }));
+  });
   it("organizations cannot be created client-side (bootstrap API only)", async () => {
     await assertFails(setDoc(doc(ctx(uids.anon), "organizations", "newOrg"), {
       name: "Rogue Org", ownerUserId: uids.anon,

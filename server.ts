@@ -7,6 +7,8 @@ import pino from "pino-http";
 import settingsRoutes from "./server/routes/settings.ts";
 import membersRoutes from "./server/routes/members.ts";
 import billingRoutes from "./server/routes/billing.ts";
+import gatewayRoutes from "./server/routes/gateway.ts";
+import webhookRoutes from "./server/routes/webhooks.ts";
 import type { AuthRequest } from "./server/middleware/auth.ts";
 
 async function startServer() {
@@ -35,6 +37,11 @@ async function startServer() {
 
   app.set("trust proxy", 1);
 
+  // Payment webhooks mount FIRST: signature verification needs the exact raw
+  // bytes (so no JSON parsing), and gateway retry bursts must not be
+  // rate-limited. The router verifies the HMAC signature before trusting input.
+  app.use("/api/webhooks", express.raw({ type: "*/*", limit: "1mb" }), webhookRoutes);
+
   const apiLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 120,
@@ -52,6 +59,7 @@ async function startServer() {
   app.use("/api/v1/settings", settingsRoutes);
   app.use("/api/v1/members", membersRoutes);
   app.use("/api/v1/billing", billingRoutes);
+  app.use("/api/v1/gateway", gatewayRoutes);
   // Temporary alias while the frontend migrates to /api/v1.
   app.use("/api/settings", settingsRoutes);
 

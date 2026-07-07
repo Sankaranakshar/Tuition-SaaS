@@ -51,3 +51,55 @@ export function recordManualPayment(input: {
     body: { ...input, idempotencyKey: crypto.randomUUID() },
   });
 }
+
+export function voidInvoice(invoiceId: string) {
+  return api<{ ok: true }>(`/billing/invoices/${invoiceId}/void`, { method: "POST" });
+}
+
+/** Assign a gap-free invoice number and snapshot tax details (draft → sent). */
+export function finalizeInvoice(invoiceId: string) {
+  return api<{ ok: true; invoiceNumber: string }>(`/billing/invoices/${invoiceId}/finalize`, { method: "POST" });
+}
+
+/** Create (or reuse) a Razorpay UPI payment link for the outstanding amount. */
+export function createInvoicePaymentLink(invoiceId: string) {
+  return api<{ ok: true; shortUrl: string; reused: boolean }>(
+    `/billing/invoices/${invoiceId}/payment-link`,
+    { method: "POST" }
+  );
+}
+
+export function refundPayment(input: { invoiceId: string; amountPaise: number; reason?: string }) {
+  return api<{ ok: true; invoiceStatus: string; duplicate: boolean }>("/billing/refunds", {
+    method: "POST",
+    body: { ...input, idempotencyKey: crypto.randomUUID() },
+  });
+}
+
+export function reconcilePayments() {
+  return api<{ ok: true; scanned: number; reconciled: number }>("/billing/reconcile", { method: "POST" });
+}
+
+// Gateway + tax settings (owner/admin).
+export function getGatewaySettings() {
+  return api<{ connected: boolean; keyId: string | null; tax: Record<string, unknown> | null }>("/gateway");
+}
+
+export function connectRazorpay(input: { keyId: string; keySecret: string; webhookSecret: string }) {
+  return api<{ ok: true; connected: boolean; keyId: string }>("/gateway/razorpay", { method: "PUT", body: input });
+}
+
+export function disconnectRazorpay() {
+  return api<{ ok: true; connected: boolean }>("/gateway/razorpay", { method: "DELETE" });
+}
+
+export function saveTaxSettings(tax: {
+  legalName?: string;
+  gstin?: string;
+  addressLines?: string[];
+  placeOfSupply?: string;
+  defaultTaxRatePercent?: number;
+  invoicePrefix?: string;
+}) {
+  return api<{ ok: true; tax: unknown }>("/gateway/tax", { method: "PUT", body: tax });
+}
