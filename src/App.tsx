@@ -17,7 +17,7 @@ const Pricing = lazy(() => import("./pages/public/Pricing"));
 const HowItWorks = lazy(() => import("./pages/public/HowItWorks"));
 
 // Lazy load protected app pages
-const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Today = lazy(() => import("./pages/Today"));
 const Students = lazy(() => import("./pages/Students"));
 const StudentProfile = lazy(() => import("./pages/StudentProfile"));
 const Leads = lazy(() => import("./pages/Leads"));
@@ -93,7 +93,7 @@ export default function App() {
             
             {/* Protected App Routes */}
             <Route path="/app" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-              <Route index element={<Dashboard />} />
+              <Route index element={<Today />} />
               <Route path="students" element={<Students />} />
               <Route path="students/:id" element={<StudentProfile />} />
               <Route path="leads" element={<Leads />} />

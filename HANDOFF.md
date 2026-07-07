@@ -10,7 +10,7 @@ This document lets anyone (engineer or agent) pick up the build without re-readi
 
 ## 1. Current state in one paragraph
 
-The repository is a fresh, safe foundation. **Stage 0 of DEV_PLAN.md is complete** (Epics 1–5: security, server money, SQLite removal, query hygiene, and the full design foundation — tokens, shell, palette, component kit, and i18n wrapper), and **Stage 1 Epic 6 (Payments) is built server-side** (Razorpay payment links, signature-verified idempotent webhooks, reconciliation poll, gap-free invoice numbering, tax/GST snapshot, manual refunds). The four Critical security vulnerabilities (C1–C5) are fixed in `firestore.rules` and codified as an executable test suite. SQLite is gone; the app runs on Firestore + a slim stateless Express API. Money and attendance are server-authoritative. The product builds, typechecks, unit-tests green (18/18), and boots with all routes wired. It has **not** been deployed to a live Firebase project and the payment loop has **not** been run end-to-end (needs a live/emulated Firebase project + a connected Razorpay account). No WhatsApp/email delivery yet (Epic 7). Commits through Epic 5 are on GitHub `main`; Epic 6 is uncommitted in the working tree.
+The repository is a fresh, safe foundation. **Stage 0 of DEV_PLAN.md is complete** (Epics 1–5: security, server money, SQLite removal, query hygiene, and the full design foundation — tokens, shell, palette, component kit, and i18n wrapper), **Stage 1 Epic 6 (Payments) is built server-side** (Razorpay payment links, signature-verified idempotent webhooks, reconciliation poll, gap-free invoice numbering, tax/GST snapshot, manual refunds), and **Epic 9 (Today workspace) is built** — the tutor/owner home with the live session Line, one-tap attendance (optimistic + undo), the rules-based attention queue, the three-number Pulse, the attendance-debt counter, and the admin per-tutor lanes; the legacy Dashboard is retired. **Epics 7 (Outbound comms) and 8 (Real scheduling integrations) are explicitly DEFERRED** — both are blocked on external provider onboarding (WhatsApp/SMS/email; Google Calendar+Meet OAuth verification) that cannot be finished from a dev machine, so they were sequenced after Epic 9. The four Critical security vulnerabilities (C1–C5) are fixed in `firestore.rules` and codified as an executable test suite. SQLite is gone; the app runs on Firestore + a slim stateless Express API. Money and attendance are server-authoritative. The product builds, typechecks, unit-tests green (44/44), and boots with all routes wired. It has **not** been deployed to a live Firebase project; the payment loop and the Today workspace have **not** been exercised in a browser (both need a live/emulated Firebase project with seeded data + a connected Razorpay account). Commits through Epic 5 are on GitHub `main`; Epic 6 and Epic 9 are uncommitted in the working tree.
 
 ---
 
@@ -90,6 +90,25 @@ The money loop's server backbone. Each org connects **its own** Razorpay account
 - **Rules regressions** added to [tests/rules/rbac.test.ts](tests/rules/rbac.test.ts): clients (even the owner) cannot read/write `payment_gateways`, `counters`, or `refunds` (default-deny; run in CI).
 - **Not done in Epic 6:** UI surfaces (the Money workspace that calls these is Epic 12 / Stage 2; wire buttons onto the legacy Invoices page sooner if a pilot needs it), server-side PDF receipt (E6.5 — deps `jspdf`/`jspdf-autotable` are present, endpoint not written yet), and initiating gateway refunds via Razorpay API (E6.6 records the ledger side only; refund is issued from the Razorpay dashboard for now).
 
+### Epics 7 & 8 — DEFERRED (2026-07-07)
+Both skipped ahead of Epic 9 on purpose; each is blocked on onboarding that can't complete from a dev machine, and neither gates the wedge demo (a pilot can send UPI links by hand and run sessions with "link pending" until they land). Marked deferred in [DEV_PLAN.md](DEV_PLAN.md).
+- **Epic 7 (Outbound comms):** blocked on WhatsApp Business API template approval, SMS DLT registration, Resend/SES domain verification.
+- **Epic 8 (Real scheduling / Meet links):** blocked on Google Cloud OAuth consent-screen verification + Calendar API `conferenceData` scopes. The safe placeholder-link removal already shipped in Epic 3, so there's no regression from waiting — the Today Join action degrades to "Link pending" when a session has no real `meetingLink`.
+
+### Epic 9 — Today workspace (BUILT, not browser-verified)
+The tutor/owner home, replacing the old Dashboard. All logic that decides *what* to show lives in one pure, unit-tested module so the clock is injectable and every rule is testable.
+- **Pure core** ([src/lib/today.ts](src/lib/today.ts), 26 unit tests): session phase machine (`upcoming → live → unmarked → done`), now-cursor index, attendance-debt / markable window (mirrors the server's 7-day rule), paise-canonical + legacy-tolerant invoice money helpers, `buildPulse` (collected-this-month / outstanding / sessions-this-week-vs-last), and the five attention-queue builders (overdue invoices, unmarked sessions, absence streaks, quiet leads, schedule conflicts).
+- **The page** ([src/pages/Today.tsx](src/pages/Today.tsx)): built entirely on the E5 component kit + tokens.
+  - **E9.1 The Line** — today's sessions with a minute-ticking now-cursor; state-aware action per block (Join when online & near start → Mark attendance → "Marked").
+  - **E9.2 One-tap attendance** — roster popover, all-present default, tap-to-cycle exceptions, **optimistic with a 5-second Undo**. The undo model *is* the safety on billing: the real `markAttendance` API call is deferred 5s and cancelled on undo, so nothing bills unless the mark stands. Navigating away within the window **flushes** (does not drop) the write; the API is idempotent so a double-flush is safe.
+  - **E9.3 Attention queue** — rules-based, each item with an inline action (Collect / Mark / Call / Follow up / Resolve) plus snooze (1 day) and dismiss (30 days), persisted in `localStorage` per org.
+  - **E9.4 The Pulse** — three `StatChip`s, no charts.
+  - **E9.5 Attendance-debt counter** — header badge counting unmarked sessions across the 7-day window; those sessions also surface as queue items with a Mark action.
+  - **E9.6 Admin variant** — owner/admin see one stacked lane per tutor (names from `tutor_profiles`); a single-tutor day collapses back to one lane.
+  - **E9.7** — legacy `Dashboard.tsx` and its `utils/analytics.ts` **deleted**; the `/app` index route now renders `Today`. `recharts` is no longer imported by any route (still in `package.json`; drop it in a dep-cleanup pass).
+- **Security:** attendance still mutates **only** through `POST /api/v1/billing/attendance` (via [src/lib/api.ts](src/lib/api.ts)); the page reads live and writes nothing to Firestore directly. All listeners are org-scoped + bounded + capped (E4.1).
+- **Not verified:** no browser walkthrough — needs a live/emulated Firebase project with seeded sessions/invoices/leads to render. Student role still delegates to the existing `StudentDashboard`.
+
 ## 4. How to run, test, deploy
 
 ```bash
@@ -115,10 +134,12 @@ npm run build                  # vite build + esbuild server bundle
 |---|---|
 | `npm run lint` (typecheck) | ✅ clean |
 | `npm run build` | ✅ passes (server bundle 24.5kb; SPA route-split) |
-| `npm test` (unit) | ✅ 18/18 (money math, invoice numbering, webhook signature) |
+| `npm test` (unit) | ✅ 44/44 (money math, invoice numbering, webhook signature, + 26 Today-workspace derivations) |
 | Server boots with Epic 6 routes, `/api/health` ok | ✅ verified on :3199 |
 | Unauth billing / gateway calls rejected | ✅ structured 401 JSON before any Firestore touch |
 | Payment webhook / reconcile e2e | ⚠️ **not run** — needs live/emulated Firestore + a connected Razorpay account |
+| Today workspace build (route-split) | ✅ `Today` chunk compiles (~32kb / 9.5kb gzip); old Dashboard chunk gone |
+| Today workspace browser render | ⚠️ **not run** — auth-gated lazy route; needs a seeded Firebase project to load the chunk |
 | Unknown API route → JSON 404 | ✅ |
 | `npm run test:rules` | ⚠️ **NOT run locally** — this machine has no Java. Written to run in CI. **First action for whoever has Java: run it and confirm 34/34 green.** |
 | Browser UI walkthrough | ⚠️ not done — needs a live/emulated Firebase project with seeded data |
@@ -139,9 +160,9 @@ npm run build                  # vite build + esbuild server bundle
 
 1. **Run `npm run test:rules` on a Java-equipped machine / CI**; fix any red before anything else. This suite is the safety net for all future rules work.
 2. ~~Finish Epic 5~~ **done** (kit + i18n + shell). Remaining Epic 5 polish that is deferred into the workspace rebuilds (Stage 1–3): restyling the *legacy* pages to tokens happens when each is retired per DEV_PLAN §"Delete on replace", not in place.
-3. **Stage 1, Epic 6 (Payments):** Razorpay links + webhooks + reconciliation ([DEV_PLAN.md](DEV_PLAN.md) §Stage 1). Do this on the new `payments`/`invoices` shapes already defined.
-4. **Epic 7 (WhatsApp/email router), Epic 8 (real Meet links), Epic 9 (Today workspace + one-tap attendance — the API it calls already exists), Epic 10 (parent portal + pay).**
-5. Stage 1 exit gate: the wedge demo — mark attendance → invoice → WhatsApp UPI link → real payment → self-reconciled ledger, in one take.
+3. ~~Epic 6 (Payments)~~ **built** (server-side; see §3). ~~Epic 9 (Today workspace)~~ **built** (see §3) — the first thing to do here is a **browser walkthrough on a seeded project**: confirm the Line renders today's sessions with a live cursor, one-tap attendance persists after the 5s undo lapses, and the queue/Pulse/debt counter read correctly against the ledger.
+4. **Epics 7 & 8 are DEFERRED** (see §3) — resume once the founder's provider accounts clear (WhatsApp/SMS/email onboarding for 7; Google OAuth verification for 8). **Epic 10 (parent portal + pay)** is the next new build and needs Epic 6's payable invoices, which exist.
+5. Stage 1 exit gate: the wedge demo — mark attendance (now via Today) → invoice → UPI link → real payment → self-reconciled ledger, in one take. Until Epic 7 lands, the "send UPI link" step is manual (copy the link from `POST /billing/invoices/:id/payment-link`).
 
 ---
 

@@ -104,6 +104,8 @@ Dependencies: E3.5 (money endpoints), E2.3.
 | E6.6 | Refund and void flows (manual, audit-logged) | Void leaves immutable record; ledger balances |
 
 ## Epic 7: Outbound communications (Weeks 6-8) — Engineer A
+**⚠️ DEFERRED (2026-07-07).** Blocked on external provider onboarding (WhatsApp Business API template approval, SMS DLT registration, Resend/SES domain verification) — none of which can be finished from a dev machine. Sequenced after the Today workspace (Epic 9) so the wedge demo can be exercised with manually-sent UPI links until the router lands. Resume once the founder's provider accounts clear KYC.
+
 Dependencies: E6.1 (payment links to send), founder's provider onboarding.
 
 | ID | Task | Acceptance criteria |
@@ -114,6 +116,8 @@ Dependencies: E6.1 (payment links to send), founder's provider onboarding.
 | E7.4 | Bulk fee-reminder endpoint: select N invoices → N personalized sends, one audit event | 30 reminders send in one action from the API |
 
 ## Epic 8: Real scheduling integrations (Week 8) — Engineer A
+**⚠️ DEFERRED (2026-07-07).** Blocked on Google Cloud OAuth verification + Calendar API conferenceData scopes (Meet link creation requires a verified consent screen). The safe placeholder-link removal already shipped in Epic 3, so sessions render "link pending" rather than a fake Meet — no user-facing regression from deferring. The Today workspace (Epic 9) Join action degrades gracefully when a session has no `meetingLink`. Resume once the OAuth consent screen is verified.
+
 Dependencies: E3.7.
 
 | ID | Task | Acceptance criteria |
