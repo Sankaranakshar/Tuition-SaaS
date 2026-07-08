@@ -69,6 +69,35 @@ export function createInvoicePaymentLink(invoiceId: string) {
   );
 }
 
+/** Download the server-rendered invoice PDF. Streams as a Blob; triggers a
+ *  file save via a synthetic anchor click. */
+export async function downloadInvoicePdf(invoiceId: string): Promise<void> {
+  const token = await auth.currentUser?.getIdToken();
+  if (!token) throw new Error("Not signed in");
+  const resp = await fetch(`/api/v1/billing/invoices/${invoiceId}/pdf`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw Object.assign(
+      new Error((data as any)?.error?.message || `Couldn't download PDF (${resp.status})`),
+      { status: resp.status }
+    );
+  }
+  const blob = await resp.blob();
+  const cd = resp.headers.get("content-disposition") || "";
+  const match = cd.match(/filename="([^"]+)"/);
+  const filename = match?.[1] || `invoice-${invoiceId}.pdf`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function refundPayment(input: { invoiceId: string; amountPaise: number; reason?: string }) {
   return api<{ ok: true; invoiceStatus: string; duplicate: boolean }>("/billing/refunds", {
     method: "POST",

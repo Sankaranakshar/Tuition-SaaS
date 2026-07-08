@@ -1,6 +1,6 @@
 # ClassStackr — Engineering Handoff
 
-_Last updated: 2026-07-08. Author: Epic 10 execution pass._
+_Last updated: 2026-07-08. Author: Epic 10 execution pass + tech-debt cleanup + E6.5 (server-side invoice PDF)._
 
 This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked on you, and what comes next.
 
@@ -94,7 +94,8 @@ The money loop's server backbone. Each org connects **its own** Razorpay account
 - **Gateway settings** ([server/routes/gateway.ts](server/routes/gateway.ts)): `GET /api/v1/gateway`, `PUT/DELETE /gateway/razorpay`, `PUT /gateway/tax`. Secrets are write-only from the client's perspective — never returned.
 - **Client API** ([src/lib/api.ts](src/lib/api.ts)): `finalizeInvoice`, `createInvoicePaymentLink`, `refundPayment`, `reconcilePayments`, `voidInvoice`, `getGatewaySettings`, `connectRazorpay`, `disconnectRazorpay`, `saveTaxSettings`.
 - **Rules regressions** added to [tests/rules/rbac.test.ts](tests/rules/rbac.test.ts): clients (even the owner) cannot read/write `payment_gateways`, `counters`, or `refunds` (default-deny; run in CI).
-- **Not done in Epic 6:** UI surfaces (the Money workspace that calls these is Epic 12 / Stage 2; wire buttons onto the legacy Invoices page sooner if a pilot needs it), server-side PDF receipt (E6.5 — deps `jspdf`/`jspdf-autotable` are present, endpoint not written yet), and initiating gateway refunds via Razorpay API (E6.6 records the ledger side only; refund is issued from the Razorpay dashboard for now).
+- **E6.5 server-side PDF receipt/invoice (BUILT 2026-07-08):** [server/utils/invoicePdf.ts](server/utils/invoicePdf.ts) — pure Node composer (`renderInvoicePdf`) using jsPDF + jspdf-autotable; A4 layout with org header, bill-to block, line items, subtotal/tax/discount/total/paid/outstanding math, tolerant of legacy rupee-only invoices via `resolveInvoiceTotals`. Money renders as `Rs. 1,234` (Helvetica has no ₹ glyph, and jsPDF splits it into a broken 2-byte sequence — standard Indian invoice fallback). Endpoint `GET /api/v1/billing/invoices/:invoiceId/pdf` in [server/routes/billing.ts](server/routes/billing.ts): owner/admin/frontdesk/accountant get any invoice; tutors get only their own; **parents get an invoice for a student they're linked to via `parent_links`** (mirrors the `/pay` route's auth check); students → 403. Streams `application/pdf` with `Content-Disposition: attachment` and `Cache-Control: private, no-store`. Client helper `downloadInvoicePdf` in [src/lib/api.ts](src/lib/api.ts); wired into [ParentPortal.tsx](src/pages/ParentPortal.tsx) invoice cards (Pay / Share / Download when payable; Download-only when paid/void). Unit tests in [tests/unit/invoicePdf.test.ts](tests/unit/invoicePdf.test.ts) — 7 cases, all green.
+- **Not done in Epic 6:** UI surfaces on the staff side (the Money workspace that calls these is Epic 12 / Stage 2 — wire a Download button onto the legacy Invoices page sooner if a pilot needs it), and initiating gateway refunds via Razorpay API (E6.6 records the ledger side only; refund is issued from the Razorpay dashboard for now).
 
 ### Epics 7 & 8 — DEFERRED (2026-07-07)
 Both skipped ahead of Epic 9 on purpose; each is blocked on onboarding that can't complete from a dev machine, and neither gates the wedge demo (a pilot can send UPI links by hand and run sessions with "link pending" until they land). Marked deferred in [DEV_PLAN.md](DEV_PLAN.md).
@@ -150,8 +151,8 @@ npm run build                  # vite build + esbuild server bundle
 | Check | Status |
 |---|---|
 | `npm run lint` (typecheck) | ✅ clean |
-| `npm run build` | ✅ passes (server bundle 24.5kb; SPA route-split) |
-| `npm test` (unit) | ✅ 44/44 (money math, invoice numbering, webhook signature, + 26 Today-workspace derivations) |
+| `npm run build` | ✅ passes (server bundle 60.5kb after E6.5; SPA route-split) |
+| `npm test` (unit) | ✅ 51/51 (money math, invoice numbering, webhook signature, 26 Today-workspace derivations, + 7 invoice-PDF composer) |
 | Server boots with Epic 6 routes, `/api/health` ok | ✅ verified on :3199 |
 | Unauth billing / gateway calls rejected | ✅ structured 401 JSON before any Firestore touch |
 | Payment webhook / reconcile e2e | ⚠️ **not run** — needs live/emulated Firestore + a connected Razorpay account |
@@ -180,7 +181,7 @@ npm run build                  # vite build + esbuild server bundle
 3. ~~Epic 6 (Payments)~~ **built** (server-side; see §3). ~~Epic 9 (Today workspace)~~ **built** (see §3). ~~Epic 10 (Parent portal)~~ **built** (see §3). All three need the same thing next: a **browser walkthrough on a seeded, live/emulated Firebase project** — confirm the Line renders today's sessions with a live cursor and one-tap attendance persists after undo; confirm a staff-generated parent invite redeems end to end (phone OTP → preview → consent → portal) and the Pay Now button reaches a real Razorpay-hosted page.
 4. **Epics 7 & 8 are DEFERRED** (see §3) — resume once the founder's provider accounts clear (WhatsApp/SMS/email onboarding for 7; Google OAuth verification for 8).
 5. Stage 1 exit gate: the wedge demo — mark attendance (now via Today) → invoice → UPI link (now reachable via staff *or* the parent portal) → real payment → self-reconciled ledger, in one take. Until Epic 7 lands, sending the link is manual: staff copies it from the Invoices page, or the parent portal's own Share-via-WhatsApp button opens it pre-filled.
-6. **Tech debt from Epic 10:** `StudentProfile.tsx`'s pre-existing "Link Parent Account" box (writes `students.parentId` directly) is dead/broken — it predates the real `parent_links` model and isn't consulted by rules or billing. Worth deleting in a follow-up pass rather than confusing staff with two "link a parent" UIs.
+6. ~~**Tech debt from Epic 10:** `StudentProfile.tsx`'s pre-existing "Link Parent Account" box~~ **done (2026-07-08).** Removed: the "Link Parent Account" / "Unlink Account" buttons, the parent-select-or-create modal, the `parentUser`/`availableParents`/`isLinkParentModalOpen`/`selectedParentId`/`newParent*`/`isCreatingParent` state, the two `useEffect`s that fed them, and the three legacy handlers (`handleLinkExistingParent`, `handleCreateAndLinkParent`, `handleUnlinkParent`). Only the display fields `parentName`/`parentPhone`/`parentEmail` on the student doc remain, plus the real Epic 10 "Parent Portal Access" invite card. Typecheck green; no other file referenced `student.parentId`.
 
 ---
 

@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
 import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
 import { toast } from "sonner";
-import { CalendarClock, Wallet as WalletIcon, Receipt, Share2, ExternalLink, Users } from "lucide-react";
+import { CalendarClock, Wallet as WalletIcon, Receipt, Share2, ExternalLink, Users, Download } from "lucide-react";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { EmptyState, Skeleton, SkeletonText, StatChip, StatusChip, type ChipTone } from "../components/kit";
 import { formatPaise, formatINR, formatDate, formatRelativeDays } from "../lib/format";
-import { payInvoiceAsParent } from "../lib/api";
+import { payInvoiceAsParent, downloadInvoicePdf } from "../lib/api";
 
 // Epic 10 (parent portal v1, mobile-web-first). One page, three tabs, no new
 // routes: a parent's whole world is "which of my kids, what do I owe, what
@@ -156,6 +156,14 @@ export default function ParentPortal() {
     }
   }
 
+  async function handleDownload(invoiceId: string) {
+    try {
+      await downloadInvoicePdf(invoiceId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't download the invoice");
+    }
+  }
+
   async function handleShare(invoiceId: string) {
     try {
       const { shortUrl } = await payInvoiceAsParent(invoiceId);
@@ -276,25 +284,35 @@ export default function ParentPortal() {
                       <StatusChip label={inv.status.replace("_", " ")} tone={STATUS_TONE[inv.status] || "neutral"} />
                     </div>
                     <p className="mt-2 text-lg font-semibold tabular-nums text-[var(--cs-text)]">{formatPaise(total)}</p>
-                    {payable && due > 0 && (
-                      <div className="mt-2 flex gap-2">
-                        <button
-                          onClick={() => handlePay(inv.id)}
-                          disabled={payingId === inv.id}
-                          className="flex flex-1 items-center justify-center gap-1.5 rounded-[6px] bg-[var(--cs-accent)] px-3 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} />
-                          {payingId === inv.id ? "Opening…" : `Pay ${formatPaise(due)}`}
-                        </button>
-                        <button
-                          onClick={() => handleShare(inv.id)}
-                          title="Share via WhatsApp"
-                          className="flex items-center justify-center rounded-[6px] border border-[var(--cs-border)] px-3 py-2 text-sm text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)]"
-                        >
-                          <Share2 className="h-4 w-4" strokeWidth={1.75} />
-                        </button>
-                      </div>
-                    )}
+                    <div className="mt-2 flex gap-2">
+                      {payable && due > 0 && (
+                        <>
+                          <button
+                            onClick={() => handlePay(inv.id)}
+                            disabled={payingId === inv.id}
+                            className="flex flex-1 items-center justify-center gap-1.5 rounded-[6px] bg-[var(--cs-accent)] px-3 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} />
+                            {payingId === inv.id ? "Opening…" : `Pay ${formatPaise(due)}`}
+                          </button>
+                          <button
+                            onClick={() => handleShare(inv.id)}
+                            title="Share via WhatsApp"
+                            className="flex items-center justify-center rounded-[6px] border border-[var(--cs-border)] px-3 py-2 text-sm text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)]"
+                          >
+                            <Share2 className="h-4 w-4" strokeWidth={1.75} />
+                          </button>
+                        </>
+                      )}
+                      <button
+                        onClick={() => handleDownload(inv.id)}
+                        title="Download PDF"
+                        className={`flex items-center justify-center rounded-[6px] border border-[var(--cs-border)] px-3 py-2 text-sm text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] ${payable && due > 0 ? "" : "flex-1 gap-1.5"}`}
+                      >
+                        <Download className="h-4 w-4" strokeWidth={1.75} />
+                        {(!payable || due <= 0) && "Download PDF"}
+                      </button>
+                    </div>
                   </div>
                 );
               })}

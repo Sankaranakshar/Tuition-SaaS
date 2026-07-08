@@ -46,16 +46,6 @@ export default function StudentProfile() {
   const [availableClassInstances, setAvailableClassInstances] = useState<any[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState("");
 
-  // Parent linking state
-  const [parentUser, setParentUser] = useState<any>(null);
-  const [isLinkParentModalOpen, setIsLinkParentModalOpen] = useState(false);
-  const [availableParents, setAvailableParents] = useState<any[]>([]);
-  const [selectedParentId, setSelectedParentId] = useState("");
-  const [newParentName, setNewParentName] = useState("");
-  const [newParentEmail, setNewParentEmail] = useState("");
-  const [newParentPhone, setNewParentPhone] = useState("");
-  const [isCreatingParent, setIsCreatingParent] = useState(false);
-
   // Parent portal invite state (E10.1) — the real, verified linking path.
   const [parentInvite, setParentInvite] = useState<{ link: string; expiresAt: string } | null>(null);
   const [isCreatingInvite, setIsCreatingInvite] = useState(false);
@@ -152,70 +142,6 @@ export default function StudentProfile() {
       unsubAssessments();
     };
   }, [user, id]);
-
-  // Fetch linked parent user
-  useEffect(() => {
-    if (student?.parentId) {
-      const unsubParent = onSnapshot(doc(db, "users", student.parentId), (docSnap) => {
-        if (docSnap.exists()) {
-          setParentUser({ id: docSnap.id, ...docSnap.data() });
-        } else {
-          setParentUser(null);
-        }
-      });
-      return () => unsubParent();
-    } else {
-      setParentUser(null);
-    }
-  }, [student?.parentId]);
-
-  // Fetch available parents for linking
-  useEffect(() => {
-    if (isLinkParentModalOpen && user?.organizationId) {
-      const q = query(collection(db, "users"), where("organizationId", "==", user.organizationId), where("role", "==", "parent"));
-      const unsub = onSnapshot(q, (snapshot) => {
-        setAvailableParents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      });
-      return () => unsub();
-    }
-  }, [isLinkParentModalOpen, user?.organizationId]);
-
-  const handleLinkExistingParent = async () => {
-    if (!selectedParentId || !id) return;
-    try {
-      await updateDoc(doc(db, "students", id), { parentId: selectedParentId });
-      setIsLinkParentModalOpen(false);
-    } catch (error) {
-      console.error("Error linking parent:", error);
-    }
-  };
-
-  const handleCreateAndLinkParent = async () => {
-    if (!newParentName || !newParentEmail || !id || !user?.organizationId) return;
-    try {
-      const parentRef = await addDoc(collection(db, "users"), {
-        name: newParentName,
-        email: newParentEmail,
-        phone: newParentPhone,
-        role: "parent",
-        organizationId: user.organizationId,
-        createdAt: new Date().toISOString()
-      });
-      await updateDoc(doc(db, "students", id), { parentId: parentRef.id });
-      setIsLinkParentModalOpen(false);
-    } catch (error) {
-      console.error("Error creating parent:", error);
-    }
-  };
-
-  const handleUnlinkParent = async () => {
-    if (!id) return;
-    try {
-      await updateDoc(doc(db, "students", id), { parentId: null });
-    } catch (error) {
-      console.error("Error unlinking parent:", error);
-    }
-  };
 
   const handleCreateParentInvite = async () => {
     if (!id) return;
@@ -510,67 +436,39 @@ export default function StudentProfile() {
               </div>
             </div>
             <div className="pt-4 border-t border-gray-100">
-              <div className="flex justify-between items-center mb-4">
-                <label className="block text-sm font-medium text-gray-900">Parent / Guardian</label>
-                {!isEditingProfile && (
-                  student.parentId ? (
-                    <button onClick={handleUnlinkParent} className="text-xs text-red-600 hover:text-red-800">Unlink Account</button>
+              <label className="block text-sm font-medium text-gray-900 mb-4">Parent / Guardian</label>
+              <p className="text-xs text-gray-500 mb-4">
+                Contact details shown on invoices and reports. To grant this parent access to the portal
+                (schedule, invoices, payments), use the Parent Portal Access card below.
+              </p>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-500">Parent Name</label>
+                  {isEditingProfile ? (
+                    <input type="text" value={editFormData.parentName || ''} onChange={e => handleInputChange('parentName', e.target.value)} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-3 sm:text-sm" />
                   ) : (
-                    <button onClick={() => setIsLinkParentModalOpen(true)} className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center">
-                      <LinkIcon className="w-3 h-3 mr-1" /> Link Parent Account
-                    </button>
-                  )
-                )}
-              </div>
-              
-              {student.parentId && parentUser ? (
-                <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100">
-                  <div className="flex items-center mb-2">
-                    <User className="w-4 h-4 text-indigo-600 mr-2" />
-                    <span className="font-medium text-indigo-900">{parentUser.name}</span>
-                    <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-200 text-indigo-800">Linked Account</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 mt-2">
-                    <div>
-                      <p className="text-xs text-indigo-700">Email</p>
-                      <p className="text-sm text-indigo-900">{parentUser.email || 'Not provided'}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-indigo-700">Phone</p>
-                      <p className="text-sm text-indigo-900">{parentUser.phone || 'Not provided'}</p>
-                    </div>
-                  </div>
+                    <p className="mt-1 text-sm text-gray-900">{student.parentName || 'Not provided'}</p>
+                  )}
                 </div>
-              ) : (
-                <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-500">Parent Name</label>
+                    <label className="block text-sm font-medium text-gray-500">Parent Phone</label>
                     {isEditingProfile ? (
-                      <input type="text" value={editFormData.parentName || ''} onChange={e => handleInputChange('parentName', e.target.value)} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-3 sm:text-sm" />
+                      <input type="text" value={editFormData.parentPhone || ''} onChange={e => handleInputChange('parentPhone', e.target.value)} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-3 sm:text-sm" />
                     ) : (
-                      <p className="mt-1 text-sm text-gray-900">{student.parentName || 'Not provided'}</p>
+                      <p className="mt-1 text-sm text-gray-900">{student.parentPhone || 'Not provided'}</p>
                     )}
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500">Parent Phone</label>
-                      {isEditingProfile ? (
-                        <input type="text" value={editFormData.parentPhone || ''} onChange={e => handleInputChange('parentPhone', e.target.value)} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-3 sm:text-sm" />
-                      ) : (
-                        <p className="mt-1 text-sm text-gray-900">{student.parentPhone || 'Not provided'}</p>
-                      )}
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500">Parent Email</label>
-                      {isEditingProfile ? (
-                        <input type="email" value={editFormData.parentEmail || ''} onChange={e => handleInputChange('parentEmail', e.target.value)} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-3 sm:text-sm" />
-                      ) : (
-                        <p className="mt-1 text-sm text-gray-900">{student.parentEmail || 'Not provided'}</p>
-                      )}
-                    </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-500">Parent Email</label>
+                    {isEditingProfile ? (
+                      <input type="email" value={editFormData.parentEmail || ''} onChange={e => handleInputChange('parentEmail', e.target.value)} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-3 sm:text-sm" />
+                    ) : (
+                      <p className="mt-1 text-sm text-gray-900">{student.parentEmail || 'Not provided'}</p>
+                    )}
                   </div>
                 </div>
-              )}
+              </div>
             </div>
             <div className="pt-2 border-t border-gray-100">
               <label className="block text-sm font-medium text-gray-500">Emergency Contact</label>
@@ -588,9 +486,7 @@ export default function StudentProfile() {
           </div>
         </div>
 
-        {/* Parent portal invite (E10.1): the real, verified linking path —
-            distinct from the "Link Parent Account" box above, which only
-            sets a display field and grants no portal access. */}
+        {/* Parent portal invite (E10.1): the real, verified linking path. */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <h3 className="text-md font-semibold text-gray-900 mb-1 flex items-center">
             <LinkIcon className="w-5 h-5 mr-2 text-indigo-500" /> Parent Portal Access
@@ -1268,91 +1164,6 @@ export default function StudentProfile() {
         </div>
       )}
 
-      {/* Link Parent Modal */}
-      {isLinkParentModalOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div className="fixed inset-0 transition-opacity" aria-hidden="true">
-              <div className="absolute inset-0 bg-gray-500 opacity-75" onClick={() => setIsLinkParentModalOpen(false)}></div>
-            </div>
-            <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div className="relative z-50 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
-              <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg leading-6 font-medium text-gray-900">Link Parent Account</h3>
-                  <button onClick={() => setIsLinkParentModalOpen(false)} className="text-gray-400 hover:text-gray-500">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-                
-                <div className="mb-4 border-b border-gray-200">
-                  <nav className="-mb-px flex space-x-8">
-                    <button
-                      onClick={() => setIsCreatingParent(false)}
-                      className={`${!isCreatingParent ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}
-                    >
-                      Existing Parent
-                    </button>
-                    <button
-                      onClick={() => setIsCreatingParent(true)}
-                      className={`${isCreatingParent ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}
-                    >
-                      Create New
-                    </button>
-                  </nav>
-                </div>
-
-                {!isCreatingParent ? (
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Select Parent</label>
-                      <select 
-                        value={selectedParentId} 
-                        onChange={(e) => setSelectedParentId(e.target.value)}
-                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-                      >
-                        <option value="">-- Select a parent --</option>
-                        {availableParents.map(parent => (
-                          <option key={parent.id} value={parent.id}>{parent.name} ({parent.email})</option>
-                        ))}
-                      </select>
-                    </div>
-                    <button 
-                      onClick={handleLinkExistingParent}
-                      disabled={!selectedParentId}
-                      className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                    >
-                      Link Selected Parent
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Parent Name</label>
-                      <input type="text" value={newParentName} onChange={e => setNewParentName(e.target.value)} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Email Address</label>
-                      <input type="email" value={newParentEmail} onChange={e => setNewParentEmail(e.target.value)} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Phone Number</label>
-                      <input type="tel" value={newParentPhone} onChange={e => setNewParentPhone(e.target.value)} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
-                    </div>
-                    <button 
-                      onClick={handleCreateAndLinkParent}
-                      disabled={!newParentName || !newParentEmail}
-                      className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                    >
-                      Create & Link Parent
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

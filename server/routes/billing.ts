@@ -6,6 +6,7 @@ import { writeAudit } from "../utils/audit.ts";
 import { applyPayment, type InvoiceStatus } from "../utils/invoiceStatus.ts";
 import { allocateInvoiceNumber } from "../utils/invoiceNumber.ts";
 import { getGatewayCreds, createPaymentLink, fetchPaymentLink } from "../utils/razorpay.ts";
+import { renderInvoicePdf, type InvoicePdfInvoice } from "../utils/invoicePdf.ts";
 
 const router = express.Router();
 router.use(authenticateToken, requireOrg);
@@ -413,6 +414,90 @@ router.post("/invoices/:invoiceId/pay", async (req: AuthRequest, res, next) => {
       });
     }
     res.json({ ok: true, shortUrl: result.shortUrl, reused: result.reused });
+  } catch (err) { next(err); }
+});
+
+// Server-rendered invoice PDF (E6.5). One endpoint for staff and for the
+// parent linked to the invoice's student — parents need the file for their
+// records, staff for support. Students hit 403.
+router.get("/invoices/:invoiceId/pdf", async (req: AuthRequest, res, next) => {
+  try {
+    if (!adminDb) throw new Error("Firebase Admin not initialized");
+    const db = adminDb;
+    const orgId = req.user!.organizationId!;
+    const role = req.user!.role;
+    const STAFF_ROLES = new Set(["owner", "admin", "tutor", "frontdesk", "accountant"]);
+
+    const invRef = db.collection("invoices").doc(req.params.invoiceId);
+    const invSnap = await invRef.get();
+    if (!invSnap.exists || invSnap.data()!.organizationId !== orgId) {
+      return res.status(404).json({ error: { code: "not_found", message: "Invoice not found" } });
+    }
+    const inv = invSnap.data()!;
+
+    if (role === "parent") {
+      const linkSnap = await db.collection("parent_links").doc(`${req.user!.id}_${inv.studentId}`).get();
+      if (!linkSnap.exists) {
+        return res.status(403).json({ error: { code: "forbidden", message: "Not linked to this student" } });
+      }
+      // Tutors may only download their own invoices; admin-tier see all.
+    } else if (role === "tutor") {
+      if (inv.tutorId !== req.user!.id) {
+        return res.status(403).json({ error: { code: "forbidden", message: "Tutors can only download their own invoices" } });
+      }
+    } else if (!STAFF_ROLES.has(role || "")) {
+      return res.status(403).json({ error: { code: "forbidden", message: "No access to invoice PDF" } });
+    }
+
+    const [orgSnap, gwSnap, studentSnap] = await Promise.all([
+      db.collection("organizations").doc(orgId).get(),
+      db.collection("payment_gateways").doc(orgId).get(),
+      inv.studentId ? db.collection("students").doc(inv.studentId).get() : Promise.resolve(null),
+    ]);
+    const orgData = orgSnap.exists ? orgSnap.data()! : {};
+    const tax = gwSnap.exists ? (gwSnap.data()!.tax || {}) : {};
+    const studentData = studentSnap && studentSnap.exists ? studentSnap.data()! : {};
+
+    const createdAt = inv.createdAt?.toDate ? inv.createdAt.toDate() : inv.createdAt;
+
+    const pdf = renderInvoicePdf({
+      invoice: {
+        invoiceNumber: inv.invoiceNumber || null,
+        status: inv.status,
+        createdAt,
+        dueDate: inv.dueDate || null,
+        subtotalPaise: inv.subtotalPaise ?? null,
+        taxPaise: inv.taxPaise ?? null,
+        discountPaise: inv.discountPaise ?? null,
+        totalPaise: inv.totalPaise ?? null,
+        paidPaise: inv.paidPaise ?? null,
+        items: inv.items || null,
+        gstSnapshot: inv.gstSnapshot || null,
+        totalAmount: inv.totalAmount ?? null,
+        subtotal: inv.subtotal ?? null,
+      } as InvoicePdfInvoice,
+      org: {
+        name: tax.legalName || orgData.name || "Tuition Center",
+        address: orgData.address || null,
+        phone: orgData.phone || null,
+        email: orgData.email || null,
+        gstin: tax.gstin || null,
+      },
+      student: {
+        name: studentData.name || null,
+        parentName: studentData.parentName || null,
+        parentPhone: studentData.parentPhone || null,
+        parentEmail: studentData.parentEmail || null,
+        address: studentData.address || null,
+      },
+    });
+
+    const filename = `${inv.invoiceNumber || "invoice-" + req.params.invoiceId}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", String(pdf.byteLength));
+    res.setHeader("Cache-Control", "private, no-store");
+    res.end(pdf);
   } catch (err) { next(err); }
 });
 
