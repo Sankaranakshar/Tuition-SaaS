@@ -14,7 +14,7 @@ export default function Onboarding() {
   
   // State
   const initialRole = user?.role_type || user?.role || null;
-  const [role, setRole] = useState<'tutor' | 'parent' | 'student' | null>(initialRole as any);
+  const [role, setRole] = useState<'tutor' | 'parent' | 'student' | 'admin' | null>(initialRole as any);
   const [step, setStep] = useState(initialRole ? 2 : 1);
   
   // Tutor State

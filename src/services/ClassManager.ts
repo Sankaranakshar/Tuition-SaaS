@@ -1,13 +1,11 @@
 import { db } from "../firebase";
-import { 
-  collection, 
-  doc, 
-  addDoc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where 
+import {
+  collection,
+  getDocs,
+  query,
+  where
 } from "firebase/firestore";
+import { api } from "../lib/api";
 
 export enum ClassType {
   BATCH = "BATCH",
@@ -81,40 +79,14 @@ export class ClassManager {
   
   // Phase 2: Logic Injection by Class Type
   
-  static async enrollStudent(organizationId: string, studentId: string, templateId: string) {
-    const templateRef = doc(db, "class_templates", templateId);
-    const templateSnap = await getDoc(templateRef);
-    
-    if (!templateSnap.exists()) {
-      throw new Error("Class template not found");
-    }
-    
-    const template = templateSnap.data() as ClassTemplate;
-    
-    // Phase 5: Capacity Checks
-    if (template.type === ClassType.BATCH) {
-      const enrollmentsQuery = query(
-        collection(db, "enrollments"), 
-        where("templateId", "==", templateId),
-        where("status", "==", "active")
-      );
-      const enrollmentsSnap = await getDocs(enrollmentsQuery);
-      if (enrollmentsSnap.size >= template.capacity) {
-        throw new Error(`Cannot enroll: ${template.type} is at max capacity (${template.capacity})`);
-      }
-    }
-    
-    // Create enrollment
-    const enrollmentData: Enrollment = {
-      organizationId,
-      studentId,
-      templateId,
-      enrollmentDate: new Date().toISOString(),
-      status: "active"
-    };
-    
-    await addDoc(collection(db, "enrollments"), enrollmentData);
-    
+  // Capacity is checked inside a server-side transaction (DEV_PLAN E3.6):
+  // a client read-then-write here would let two parallel enrollments both
+  // see "capacity OK" before either write lands.
+  static async enrollStudent(_organizationId: string, studentId: string, templateId: string) {
+    await api<{ ok: true; enrollmentId: string }>("/scheduling/enrollments", {
+      method: "POST",
+      body: { studentId, templateId },
+    });
     return true;
   }
 
@@ -170,89 +142,29 @@ export class ClassManager {
     return await this.createSession(sessionData);
   }
 
+  // Conflict detection runs inside a server-side transaction (DEV_PLAN
+  // E3.6): a client read-then-write here would let two parallel bookings
+  // both see "no conflict" before either write lands.
   static async createSession(sessionData: ClassSession) {
-    // Conflict detection over a bounded window (no session exceeds 12h), so
-    // the query cost stays flat as history grows.
-    const windowStart = new Date(new Date(sessionData.startTime).getTime() - 12 * 3600 * 1000).toISOString();
-    const conflictsQuery = query(
-      collection(db, "class_sessions"),
-      where("organizationId", "==", sessionData.organizationId),
-      where("tutorId", "==", sessionData.tutorId),
-      where("status", "==", "scheduled"),
-      where("startTime", ">=", windowStart),
-      where("startTime", "<", sessionData.endTime)
-    );
-
-    const existingSessions = await getDocs(conflictsQuery);
-    const newStart = new Date(sessionData.startTime).getTime();
-    const newEnd = new Date(sessionData.endTime).getTime();
-    
-    for (const docSnap of existingSessions.docs) {
-      const existing = docSnap.data() as ClassSession;
-      const exStart = new Date(existing.startTime).getTime();
-      const exEnd = new Date(existing.endTime).getTime();
-      
-      // Check for overlap
-      if (newStart < exEnd && newEnd > exStart) {
-        throw new Error("Tutor has a conflicting session at this time.");
-      }
-    }
-    
-    // Meeting links are attached server-side via the Google Calendar
-    // integration (Epic 8). Never fabricate a link: a missing link renders
-    // as "link pending", a fake one gets sent to real parents.
-    return await addDoc(collection(db, "class_sessions"), sessionData);
+    return await api<{ ok: true; sessionId: string }>("/scheduling/sessions", {
+      method: "POST",
+      body: {
+        templateId: sessionData.templateId,
+        tutorId: sessionData.tutorId,
+        studentIds: sessionData.studentIds,
+        startTime: sessionData.startTime,
+        endTime: sessionData.endTime,
+        isOnline: sessionData.isOnline,
+        roomNumber: sessionData.roomNumber,
+      },
+    });
   }
 
-  // Phase 3: Scheduling Engine
-  static async generateRecurringSessions(
-    templateId: string, 
-    organizationId: string, 
-    tutorId: string, 
-    startDate: Date, 
-    endDate: Date, 
-    dayOfWeek: number, // 0-6
-    startHour: number,
-    startMinute: number,
-    durationMinutes: number
-  ) {
-    let currentDate = new Date(startDate);
-    // Find first occurrence of dayOfWeek
-    while (currentDate.getDay() !== dayOfWeek) {
-      currentDate.setDate(currentDate.getDate() + 1);
-    }
-    
-    const sessions: ClassSession[] = [];
-    // Conflicts are returned, never swallowed: sessions silently missing
-    // from a series is a trust-destroying bug, not a convenience.
-    const skipped: string[] = [];
-    while (currentDate <= endDate) {
-      const sessionStart = new Date(currentDate);
-      sessionStart.setHours(startHour, startMinute, 0, 0);
-
-      const sessionEnd = new Date(sessionStart);
-      sessionEnd.setMinutes(sessionStart.getMinutes() + durationMinutes);
-
-      const sessionData: ClassSession = {
-        organizationId,
-        templateId,
-        tutorId,
-        startTime: sessionStart.toISOString(),
-        endTime: sessionEnd.toISOString(),
-        status: "scheduled"
-      };
-
-      try {
-        await this.createSession(sessionData);
-        sessions.push(sessionData);
-      } catch (e) {
-        skipped.push(sessionStart.toISOString());
-      }
-
-      currentDate.setDate(currentDate.getDate() + 7);
-    }
-    return { sessions, skipped };
-  }
+  // Recurring session generation is server-side now (DEV_PLAN E3.7): see
+  // POST /api/v1/scheduling/materialize and server/routes/scheduling.ts's
+  // materializeTemplate(). The template's persisted schedule fields
+  // (daysOfWeek/startHour/startMinute/durationMinutes) are the source of
+  // truth; this class no longer bulk-generates sessions client-side.
 
   // Attendance + billing moved server-side: see src/lib/api.ts markAttendance()
   // and server/routes/billing.ts. Client-side wallet mutation is forbidden by rules.

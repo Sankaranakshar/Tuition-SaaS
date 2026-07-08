@@ -98,6 +98,40 @@ export async function downloadInvoicePdf(invoiceId: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+/** Uploads a document to Cloud Storage via the server (DEV_PLAN E3.9): the
+ *  server sniffs the real file signature and sanitizes the filename before
+ *  it ever lands in storage, so this can't go through the JSON `api()`
+ *  helper — it needs a multipart body. */
+export async function uploadDocument(input: { file: File; studentId: string; category: string; notes?: string }) {
+  const token = await auth.currentUser?.getIdToken();
+  if (!token) throw new Error("Not signed in");
+  const form = new FormData();
+  form.append("file", input.file);
+  form.append("studentId", input.studentId);
+  form.append("category", input.category);
+  form.append("notes", input.notes || "");
+
+  const resp = await fetch("/api/v1/documents", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw Object.assign(new Error((data as any)?.error?.message || `Upload failed (${resp.status})`), { status: resp.status });
+  }
+  return data as { ok: true; documentId: string };
+}
+
+/** Mints a short-lived signed URL for viewing/downloading a document. */
+export function getDocumentUrl(documentId: string) {
+  return api<{ ok: true; url: string }>(`/documents/${documentId}/url`);
+}
+
+export function deleteDocument(documentId: string) {
+  return api<{ ok: true }>(`/documents/${documentId}`, { method: "DELETE" });
+}
+
 export function refundPayment(input: { invoiceId: string; amountPaise: number; reason?: string }) {
   return api<{ ok: true; invoiceStatus: string; duplicate: boolean }>("/billing/refunds", {
     method: "POST",

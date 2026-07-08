@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Edit2, FileText, Calendar, DollarSign, MessageSquare, User, BookOpen, Clock, CreditCard, Plus, Save, X, CheckCircle, XCircle, Link as LinkIcon, Award, Download } from "lucide-react";
-import { doc, getDoc, collection, query, where, onSnapshot, updateDoc, addDoc } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, onSnapshot, updateDoc, addDoc, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { jsPDF } from "jspdf";
@@ -69,11 +69,12 @@ export default function StudentProfile() {
     });
 
     // Fetch related sessions
-    const sessionsConstraints = [
+    const sessionsConstraints: any[] = [
       where("studentIds", "array-contains", id),
       where("organizationId", "==", user.organizationId)
     ];
     if (user.role === 'tutor') sessionsConstraints.push(where("tutorId", "==", user.id));
+    sessionsConstraints.push(limit(50));
     const qSessions = query(collection(db, "class_sessions"), ...sessionsConstraints);
     const unsubSessions = onSnapshot(qSessions, (snapshot) => {
       setSessions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -82,11 +83,12 @@ export default function StudentProfile() {
     });
 
     // Fetch related documents
-    const docsConstraints = [
+    const docsConstraints: any[] = [
       where("studentId", "==", id),
       where("organizationId", "==", user.organizationId)
     ];
     if (user.role === 'tutor') docsConstraints.push(where("tutorId", "==", user.id));
+    docsConstraints.push(limit(50));
     const qDocs = query(collection(db, "documents"), ...docsConstraints);
     const unsubDocs = onSnapshot(qDocs, (snapshot) => {
       setDocuments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -95,11 +97,12 @@ export default function StudentProfile() {
     });
 
     // Fetch related invoices
-    const invoicesConstraints = [
+    const invoicesConstraints: any[] = [
       where("studentId", "==", id),
       where("organizationId", "==", user.organizationId)
     ];
     if (user.role === 'tutor') invoicesConstraints.push(where("tutorId", "==", user.id));
+    invoicesConstraints.push(limit(50));
     const qInvoices = query(collection(db, "invoices"), ...invoicesConstraints);
     const unsubInvoices = onSnapshot(qInvoices, (snapshot) => {
       setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -108,10 +111,11 @@ export default function StudentProfile() {
     });
 
     // Fetch related class instances
-    const instancesConstraints = [
+    const instancesConstraints: any[] = [
       where("organizationId", "==", user.organizationId)
     ];
     if (user.role === 'tutor') instancesConstraints.push(where("tutorId", "==", user.id));
+    instancesConstraints.push(limit(100));
     const qInstances = query(collection(db, "class_templates"), ...instancesConstraints);
     const unsubInstances = onSnapshot(qInstances, (snapshot) => {
       setClassInstances(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -120,11 +124,12 @@ export default function StudentProfile() {
     });
 
     // Fetch assessments
-    const assessmentsConstraints = [
+    const assessmentsConstraints: any[] = [
       where("studentId", "==", id),
       where("organizationId", "==", user.organizationId)
     ];
     if (user.role === 'tutor') assessmentsConstraints.push(where("tutorId", "==", user.id));
+    assessmentsConstraints.push(limit(50));
     const qAssessments = query(collection(db, "assessments"), ...assessmentsConstraints);
     const unsubAssessments = onSnapshot(qAssessments, (snapshot) => {
       const sorted = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());

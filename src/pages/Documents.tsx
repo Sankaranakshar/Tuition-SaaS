@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Upload, FileText, Download, Trash2 } from "lucide-react";
-import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
+import { uploadDocument, getDocumentUrl, deleteDocument } from "../lib/api";
+import { toast } from "sonner";
 
 import LoadingSpinner from "../components/LoadingSpinner";
 
@@ -25,8 +27,9 @@ export default function Documents() {
   useEffect(() => {
     if (!user || !user.organizationId) return;
 
-    const studentsConstraints = [where("organizationId", "==", user.organizationId)];
+    const studentsConstraints: any[] = [where("organizationId", "==", user.organizationId)];
     if (user.role === 'tutor') studentsConstraints.push(where("tutorId", "==", user.id));
+    studentsConstraints.push(limit(100));
     const qStudents = query(collection(db, "students"), ...studentsConstraints);
     const unsubStudents = onSnapshot(qStudents, (snapshot) => {
       setStudents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -34,8 +37,9 @@ export default function Documents() {
       console.error("Firestore Error (Students): ", error);
     });
 
-    const docsConstraints = [where("organizationId", "==", user.organizationId)];
+    const docsConstraints: any[] = [where("organizationId", "==", user.organizationId)];
     if (user.role === 'tutor') docsConstraints.push(where("tutorId", "==", user.id));
+    docsConstraints.push(limit(100));
     const qDocs = query(collection(db, "documents"), ...docsConstraints);
     const unsubDocs = onSnapshot(qDocs, (snapshot) => {
       setDocuments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -56,38 +60,20 @@ export default function Documents() {
     setUploadError("");
     if (!file || !user || !user.organizationId) return;
 
-    if (file.size > 1048576) { // 1MB limit for Firestore
-      setUploadError("File size must be less than 1MB.");
+    if (file.size > 5 * 1024 * 1024) {
+      setUploadError("File size must be less than 5MB.");
       return;
     }
 
     try {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const fileUrl = reader.result as string;
-
-        await addDoc(collection(db, "documents"), {
-          organizationId: user.organizationId,
-          tutorId: user.id,
-          studentId,
-          fileName: file.name,
-          fileUrl,
-          category,
-          notes,
-          uploadedBy: user.id,
-          createdAt: new Date().toISOString()
-        });
-        
-        setIsModalOpen(false);
-        setStudentId(""); setCategory("homework"); setNotes(""); setFile(null);
-      };
-      reader.readAsDataURL(file);
+      // Uploads to Cloud Storage via the server, which sniffs the real file
+      // signature and sanitizes the filename before it lands in storage
+      // (DEV_PLAN E3.9). No local base64-into-Firestore path anymore.
+      await uploadDocument({ file, studentId, category, notes });
+      setIsModalOpen(false);
+      setStudentId(""); setCategory("homework"); setNotes(""); setFile(null);
     } catch (error: any) {
-      console.error("Firestore Error: ", JSON.stringify({
-        error: error.message,
-        operationType: "create",
-        path: "documents"
-      }));
+      setUploadError(error.message || "Upload failed");
     }
   };
 
@@ -99,15 +85,20 @@ export default function Documents() {
   const handleDelete = async () => {
     if (!docToDelete) return;
     try {
-      await deleteDoc(doc(db, "documents", docToDelete));
+      await deleteDocument(docToDelete);
       setIsDeleteModalOpen(false);
       setDocToDelete(null);
     } catch (error: any) {
-      console.error("Firestore Error: ", JSON.stringify({
-        error: error.message,
-        operationType: "delete",
-        path: `documents/${docToDelete}`
-      }));
+      toast.error("Could not delete document", { description: error.message });
+    }
+  };
+
+  const handleDownload = async (documentId: string) => {
+    try {
+      const { url } = await getDocumentUrl(documentId);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (error: any) {
+      toast.error("Could not open document", { description: error.message });
     }
   };
 
@@ -171,12 +162,12 @@ export default function Documents() {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(doc.createdAt).toLocaleDateString()}
+                      {new Date(doc.createdAt?.toDate ? doc.createdAt.toDate() : doc.createdAt).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-900 mr-4 inline-block">
+                      <button onClick={() => handleDownload(doc.id)} className="text-indigo-600 hover:text-indigo-900 mr-4 inline-block">
                         <Download className="w-4 h-4" />
-                      </a>
+                      </button>
                       <button onClick={() => confirmDelete(doc.id)} className="text-red-600 hover:text-red-900">
                         <Trash2 className="w-4 h-4" />
                       </button>

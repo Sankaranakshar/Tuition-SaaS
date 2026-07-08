@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, doc, getDoc, limit } from "firebase/firestore";
 import { toast } from "sonner";
 import { CalendarClock, Wallet as WalletIcon, Receipt, Share2, ExternalLink, Users, Download } from "lucide-react";
 import { db } from "../firebase";
@@ -81,7 +81,7 @@ export default function ParentPortal() {
   // Resolve linked children from parent_links, then hydrate each student doc.
   useEffect(() => {
     if (!user?.id) return;
-    const q = query(collection(db, "parent_links"), where("parentUserId", "==", user.id));
+    const q = query(collection(db, "parent_links"), where("parentUserId", "==", user.id), limit(50));
     const unsub = onSnapshot(q, async (snap) => {
       const links = snap.docs.map((d) => d.data() as { studentId: string });
       const resolved = await Promise.all(
@@ -103,7 +103,7 @@ export default function ParentPortal() {
   useEffect(() => {
     if (!user?.id || !selectedId) { setSessions([]); setInvoices([]); setPayments([]); setWallet(null); return; }
 
-    const qSessions = query(collection(db, "class_sessions"), where("parentUserIds", "array-contains", user.id));
+    const qSessions = query(collection(db, "class_sessions"), where("parentUserIds", "array-contains", user.id), limit(50));
     const unsubSessions = onSnapshot(qSessions, (snap) => {
       const upcoming = snap.docs
         .map((d) => ({ id: d.id, ...d.data() } as UpcomingSession))
@@ -113,7 +113,7 @@ export default function ParentPortal() {
       setSessions(upcoming);
     });
 
-    const qInvoices = query(collection(db, "invoices"), where("studentId", "==", selectedId));
+    const qInvoices = query(collection(db, "invoices"), where("studentId", "==", selectedId), limit(50));
     const unsubInvoices = onSnapshot(qInvoices, (snap) => {
       const list = snap.docs
         .map((d) => ({ id: d.id, ...d.data() } as Invoice))
@@ -121,7 +121,7 @@ export default function ParentPortal() {
       setInvoices(list);
     });
 
-    const qPayments = query(collection(db, "payments"), where("studentId", "==", selectedId));
+    const qPayments = query(collection(db, "payments"), where("studentId", "==", selectedId), limit(50));
     const unsubPayments = onSnapshot(qPayments, (snap) => {
       const list = snap.docs
         .map((d) => ({ id: d.id, ...d.data() } as PaymentRecord))
@@ -129,7 +129,7 @@ export default function ParentPortal() {
       setPayments(list);
     });
 
-    const qWallet = query(collection(db, "wallets"), where("studentId", "==", selectedId));
+    const qWallet = query(collection(db, "wallets"), where("studentId", "==", selectedId), limit(1));
     const unsubWallet = onSnapshot(qWallet, (snap) => {
       if (snap.empty) { setWallet(null); return; }
       const w = snap.docs[0].data();

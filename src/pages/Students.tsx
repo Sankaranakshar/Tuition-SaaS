@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Plus, Search, Edit2, Trash2, Users, FileText, Upload, Download } from "lucide-react";
-import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, limit, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
+import { toast } from "sonner";
 
 import LoadingSpinner from "../components/LoadingSpinner";
 
@@ -65,12 +66,15 @@ export default function Students() {
     if (!user || !user.organizationId) return;
     
     const q = query(
-      collection(db, "students"), 
+      collection(db, "students"),
       where("organizationId", "==", user.organizationId),
-      ...(user.role === 'tutor' ? [where("tutorId", "==", user.id)] : [])
+      ...(user.role === 'tutor' ? [where("tutorId", "==", user.id)] : []),
+      limit(100)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const studentsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const studentsData = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as any))
+        .filter((s: any) => !s.archivedAt);
       setStudents(studentsData);
       setLoading(false);
     }, (error) => {
@@ -91,11 +95,12 @@ export default function Students() {
       docsUnsubscribe();
     }
 
-    const docsConstraints = [
+    const docsConstraints: any[] = [
       where("studentId", "==", studentId),
       where("organizationId", "==", user.organizationId)
     ];
     if (user.role === 'tutor') docsConstraints.push(where("tutorId", "==", user.id));
+    docsConstraints.push(limit(50));
     const q = query(collection(db, "documents"), ...docsConstraints);
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -236,15 +241,22 @@ export default function Students() {
   const handleDelete = async () => {
     if (!studentToDelete) return;
     try {
-      await deleteDoc(doc(db, "students", studentToDelete));
+      // Hard deletes are denied by firestore.rules once a student has
+      // financial history (DEV_PLAN E3.10); archive instead so invoices,
+      // attendance, and payment records stay intact and auditable.
+      await updateDoc(doc(db, "students", studentToDelete), {
+        archivedAt: serverTimestamp(),
+      });
       setIsDeleteStudentModalOpen(false);
       setStudentToDelete(null);
+      toast.success("Student archived");
     } catch (error: any) {
       console.error("Firestore Error: ", JSON.stringify({
         error: error.message,
-        operationType: "delete",
+        operationType: "archive",
         path: "students"
       }));
+      toast.error("Could not archive student", { description: error.message });
     }
   };
 
@@ -702,11 +714,11 @@ export default function Students() {
                   </div>
                   <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
                     <h3 className="text-lg leading-6 font-medium text-gray-900" id="modal-title">
-                      Delete Student
+                      Archive Student
                     </h3>
                     <div className="mt-2">
                       <p className="text-sm text-gray-500">
-                        Are you sure you want to delete this student? This action cannot be undone.
+                        This removes the student from active lists. Their attendance, invoice, and payment history is kept.
                       </p>
                     </div>
                   </div>
@@ -718,7 +730,7 @@ export default function Students() {
                   onClick={handleDelete}
                   className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:ml-3 sm:w-auto sm:text-sm"
                 >
-                  Delete
+                  Archive
                 </button>
                 <button
                   type="button"

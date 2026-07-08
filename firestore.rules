@@ -196,7 +196,11 @@ service cloud.firestore {
       allow read: if isStaff(resource.data.organizationId)
         || (resource.data.keys().hasAny(['studentUserIds']) && request.auth.uid in resource.data.studentUserIds)
         || (resource.data.keys().hasAny(['parentUserIds']) && request.auth.uid in resource.data.parentUserIds);
-      allow create: if roleIn(request.resource.data.organizationId, ['owner', 'admin', 'tutor', 'frontdesk']);
+      // Creation goes through POST /api/v1/scheduling/sessions: the
+      // double-booking check must run inside a server transaction, not a
+      // client read-then-write (DEV_PLAN E3.6). The Admin SDK bypasses
+      // these rules, so the server path is unaffected by this deny.
+      allow create: if false;
       // Status transitions to completed (attendance) happen server-side only.
       allow update: if orgUnchanged()
         && roleIn(resource.data.organizationId, ['owner', 'admin', 'tutor', 'frontdesk'])
@@ -216,7 +220,10 @@ service cloud.firestore {
       allow read: if isStaff(resource.data.organizationId)
         || isParentOf(resource.data.studentId)
         || isStudentSelf(resource.data.studentId);
-      allow create: if roleIn(request.resource.data.organizationId, ['owner', 'admin', 'tutor', 'frontdesk']);
+      // Creation goes through POST /api/v1/scheduling/enrollments: the
+      // capacity check must run inside a server transaction, not a client
+      // read-then-write (DEV_PLAN E3.6).
+      allow create: if false;
       allow update: if orgUnchanged() && roleIn(resource.data.organizationId, ['owner', 'admin', 'tutor', 'frontdesk']);
       allow delete: if false;
     }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { BookOpen, FileText, Download, Award } from "lucide-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { format, parseISO } from "date-fns";
@@ -17,7 +17,8 @@ export default function AcademicProgress() {
 
     const qAssessments = query(
       collection(db, "assessments"),
-      where("studentId", "==", user.id)
+      where("studentId", "==", user.id),
+      limit(50)
     );
     
     const unsubAssessments = onSnapshot(qAssessments, (snapshot) => {

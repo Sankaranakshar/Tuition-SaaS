@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Receipt, CheckCircle, Download, FileSpreadsheet, AlertCircle, IndianRupee, Trash2 } from "lucide-react";
-import { collection, query, where, onSnapshot, addDoc, updateDoc, doc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, limit, orderBy } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import jsPDF from "jspdf";
@@ -31,17 +31,17 @@ export default function Invoices() {
 
     const orgId = user.organizationId;
 
-    const qStudents = query(collection(db, "students"), where("organizationId", "==", orgId));
+    const qStudents = query(collection(db, "students"), where("organizationId", "==", orgId), limit(100));
     const unsubStudents = onSnapshot(qStudents, (snapshot) => {
       setStudents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    const qTemplates = query(collection(db, "class_templates"), where("organizationId", "==", orgId));
+    const qTemplates = query(collection(db, "class_templates"), where("organizationId", "==", orgId), limit(100));
     const unsubTemplates = onSnapshot(qTemplates, (snapshot) => {
       setTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    const qWallets = query(collection(db, "wallets"), where("organizationId", "==", orgId));
+    const qWallets = query(collection(db, "wallets"), where("organizationId", "==", orgId), limit(100));
     const unsubWallets = onSnapshot(qWallets, (snapshot) => {
       setWallets(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
@@ -57,8 +57,9 @@ export default function Invoices() {
       }
     });
 
-    const invoicesConstraints = [where("organizationId", "==", orgId)];
+    const invoicesConstraints: any[] = [where("organizationId", "==", orgId)];
     if (user.role === 'tutor') invoicesConstraints.push(where("tutorId", "==", user.id));
+    invoicesConstraints.push(orderBy("createdAt", "desc"), limit(100));
     const qInvoices = query(collection(db, "invoices"), ...invoicesConstraints);
     const unsubInvoices = onSnapshot(qInvoices, (snapshot) => {
       setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));

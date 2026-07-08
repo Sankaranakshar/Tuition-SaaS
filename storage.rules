@@ -17,6 +17,16 @@ service firebase.storage {
       return isMember(orgId) && role(orgId) in ['owner', 'admin', 'tutor', 'frontdesk', 'accountant'];
     }
 
+    // Documents are server-mediated (DEV_PLAN E3.9): the server sniffs the
+    // real file signature before writing via the Admin SDK (which bypasses
+    // these rules) and hands clients a short-lived signed URL for reads
+    // (also outside these rules). Direct client access is denied so nobody
+    // can bypass the content-type sniffing or read without going through
+    // an authorization check first.
+    match /orgs/{orgId}/documents/{allPaths=**} {
+      allow read, write: if false;
+    }
+
     match /orgs/{orgId}/{allPaths=**} {
       allow read: if isMember(orgId);
       // 5MB cap and safe content types enforced at the edge.

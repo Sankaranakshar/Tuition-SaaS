@@ -1,4 +1,5 @@
-import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
+import ErrorBoundary from "./ErrorBoundary";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -24,6 +25,7 @@ export default function Layout() {
   const { user, logout, currentRole, setCurrentRole } = useAuth();
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const [showRoleDropdown, setShowRoleDropdown] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -202,7 +204,9 @@ export default function Layout() {
         </header>
 
         <main className="flex-1 overflow-y-auto p-6">
-          <Outlet />
+          <ErrorBoundary key={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>

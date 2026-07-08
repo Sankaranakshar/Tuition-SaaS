@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { Calendar, DollarSign, Video, BookOpen, Clock, FileText, CheckCircle, AlertTriangle } from "lucide-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { format, isSameDay, parseISO, isAfter, startOfDay } from "date-fns";
 import { Link } from "react-router-dom";
 import LoadingSpinner from "../components/LoadingSpinner";
+import { formatINR } from "../lib/format";
 
 export default function StudentDashboard() {
   const { user } = useAuth();
@@ -21,7 +22,8 @@ export default function StudentDashboard() {
     // Fetch Upcoming Classes
     const qSessions = query(
       collection(db, "class_sessions"),
-      where("studentIds", "array-contains", user.id)
+      where("studentIds", "array-contains", user.id),
+      limit(50)
     );
     
     const unsubSessions = onSnapshot(qSessions, (snapshot) => {
@@ -39,7 +41,8 @@ export default function StudentDashboard() {
     // Fetch Recent Grades
     const qAssessments = query(
       collection(db, "assessments"),
-      where("studentId", "==", user.id)
+      where("studentId", "==", user.id),
+      limit(50)
     );
     
     const unsubAssessments = onSnapshot(qAssessments, (snapshot) => {
@@ -53,7 +56,8 @@ export default function StudentDashboard() {
     // Fetch Wallet & Invoices
     const qInvoices = query(
       collection(db, "invoices"),
-      where("studentId", "==", user.id)
+      where("studentId", "==", user.id),
+      limit(50)
     );
     
     const unsubInvoices = onSnapshot(qInvoices, (snapshot) => {
@@ -68,7 +72,8 @@ export default function StudentDashboard() {
     // Fetch Wallet Balance
     const qWallet = query(
       collection(db, "wallets"),
-      where("studentId", "==", user.id)
+      where("studentId", "==", user.id),
+      limit(1)
     );
 
     const unsubWallet = onSnapshot(qWallet, (snapshot) => {
@@ -224,7 +229,7 @@ export default function StudentDashboard() {
               Wallet Balance
             </h2>
             <div className="text-center py-4">
-              <p className="text-4xl font-bold text-gray-900">${walletBalance.toFixed(2)}</p>
+              <p className="text-4xl font-bold text-gray-900">{formatINR(walletBalance)}</p>
               <p className="text-sm text-gray-500 mt-1">Available Credits</p>
             </div>
             <div className="mt-4">

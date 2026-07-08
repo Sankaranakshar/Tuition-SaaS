@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Search, Edit2, Trash2, Mail, Phone, UserPlus } from "lucide-react";
-import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, doc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, doc, orderBy, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
@@ -35,8 +35,10 @@ export default function Leads() {
     if (!user || !user.organizationId) return;
     
     const q = query(
-      collection(db, "leads"), 
-      where("organizationId", "==", user.organizationId)
+      collection(db, "leads"),
+      where("organizationId", "==", user.organizationId),
+      orderBy("createdAt", "desc"),
+      limit(100)
     );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {

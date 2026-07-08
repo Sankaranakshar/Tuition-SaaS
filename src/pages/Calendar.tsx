@@ -14,11 +14,11 @@ import {
   parseISO,
   addMonths as addMonthsDate
 } from "date-fns";
-import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, limit, orderBy } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { ClassManager, ClassType, PricingModel } from "../services/ClassManager";
-import { markAttendance as apiMarkAttendance, cancelSession } from "../lib/api";
+import { markAttendance as apiMarkAttendance, cancelSession, api } from "../lib/api";
 import { toast } from "sonner";
 import LoadingSpinner from "../components/LoadingSpinner";
 
@@ -175,22 +175,24 @@ export default function Calendar() {
   useEffect(() => {
     if (!user || !user.organizationId) return;
 
-    const studentsConstraints = [where("organizationId", "==", user.organizationId)];
+    const studentsConstraints: any[] = [where("organizationId", "==", user.organizationId)];
     if (user.role === 'tutor') studentsConstraints.push(where("tutorId", "==", user.id));
+    studentsConstraints.push(limit(100));
     const qStudents = query(collection(db, "students"), ...studentsConstraints);
     const unsubStudents = onSnapshot(qStudents, (snapshot) => {
       setStudents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    const sessionsConstraints = [where("organizationId", "==", user.organizationId)];
+    const sessionsConstraints: any[] = [where("organizationId", "==", user.organizationId)];
     if (user.role === 'tutor') sessionsConstraints.push(where("tutorId", "==", user.id));
+    sessionsConstraints.push(orderBy("startTime"), limit(200));
     const qSessions = query(collection(db, "class_sessions"), ...sessionsConstraints);
     const unsubSessions = onSnapshot(qSessions, (snapshot) => {
       setSessions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setLoading(false);
     });
 
-    const qCourses = query(collection(db, "courses"), where("organizationId", "==", user.organizationId));
+    const qCourses = query(collection(db, "courses"), where("organizationId", "==", user.organizationId), limit(100));
     const unsubCourses = onSnapshot(qCourses, (snapshot) => {
       setCourses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
@@ -246,7 +248,14 @@ export default function Calendar() {
     if (!user || !user.organizationId) return;
 
     try {
-      // 1. Create Class Template
+      const [hours, minutes] = startTime.split(':').map(Number);
+
+      // 1. Create Class Template. For a recurring batch this is the source
+      // of truth (DEV_PLAN E3.7): the schedule fields persist here, and a
+      // server-side job (POST /scheduling/materialize, also run daily via
+      // Cloud Scheduler) derives sessions from it going forward, rather
+      // than bulk-creating months of sessions once that go stale the
+      // moment the template is edited.
       const templateData = {
         organizationId: user.organizationId,
         courseId,
@@ -256,24 +265,26 @@ export default function Calendar() {
         feeAmount: Number(feeAmount),
         capacity: classType === ClassType.ONE_ON_ONE ? 1 : Number(capacity),
         recurringPattern: selectedDays.join(","),
+        daysOfWeek: selectedDays,
+        startHour: hours,
+        startMinute: minutes,
+        durationMinutes: duration,
+        isOnline,
+        roomNumber: roomNumber || null,
+        studentIds: selectedStudentIds,
         createdAt: new Date().toISOString()
       };
 
       const templateRef = await addDoc(collection(db, "class_templates"), templateData);
-      
-      // 2. Generate Sessions
       const startD = new Date(startDate);
-      const endD = classType === ClassType.CRASH_COURSE ? new Date(startDate) : addMonthsDate(startD, 3); // Generate for 3 months
-      
-      const [hours, minutes] = startTime.split(':').map(Number);
 
       if (classType === ClassType.ONE_ON_ONE || classType === ClassType.CRASH_COURSE) {
-        // Single session or specific days
+        // Single session or specific one-off date.
         const sessionStart = new Date(startD);
         sessionStart.setHours(hours, minutes, 0, 0);
         const sessionEnd = new Date(sessionStart);
         sessionEnd.setMinutes(sessionStart.getMinutes() + duration);
-        
+
         await ClassManager.createSession({
           organizationId: user.organizationId,
           templateId: templateRef.id,
@@ -284,33 +295,20 @@ export default function Calendar() {
           status: "scheduled",
           isOnline,
           roomNumber,
-          // Real Meet links come from the Google Calendar integration;
-          // an empty link renders as "link pending".
-          meetingLink: ""
         });
       } else {
-        // Recurring Batch
-        const allSkipped: string[] = [];
-        for (const dayOfWeek of selectedDays) {
-          const { skipped } = await ClassManager.generateRecurringSessions(
-            templateRef.id,
-            user.organizationId,
-            user.id,
-            startD,
-            endD,
-            dayOfWeek,
-            hours,
-            minutes,
-            duration
-          );
-          allSkipped.push(...skipped);
-        }
-        if (allSkipped.length > 0) {
-          toast.warning(`${allSkipped.length} session(s) skipped due to conflicts`, {
-            description: allSkipped.slice(0, 3).map(d => new Date(d).toLocaleDateString()).join(", ") + (allSkipped.length > 3 ? "\u2026" : ""),
+        // Recurring batch: fill the rolling window immediately so the
+        // calendar isn't empty until the next cron run.
+        const { conflicts } = await api<{ ok: true; created: string[]; conflicts: { templateId: string; date: string }[] }>(
+          "/scheduling/materialize",
+          { method: "POST" }
+        );
+        if (conflicts.length > 0) {
+          toast.warning(`${conflicts.length} session(s) skipped due to conflicts`, {
+            description: conflicts.slice(0, 3).map(c => new Date(c.date).toLocaleDateString()).join(", ") + (conflicts.length > 3 ? "\u2026" : ""),
           });
         }
-        
+
         // Auto-enroll selected students
         for (const studentId of selectedStudentIds) {
           await ClassManager.enrollStudent(user.organizationId, studentId, templateRef.id);

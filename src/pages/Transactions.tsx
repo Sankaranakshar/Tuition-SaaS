@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { CreditCard, DollarSign, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, getDocs, updateDoc, doc } from "firebase/firestore";
+import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, getDocs, updateDoc, doc, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import LoadingSpinner from "../components/LoadingSpinner";
+import { formatINR } from "../lib/format";
 
 export default function Transactions() {
   const { user } = useAuth();
@@ -19,7 +20,8 @@ export default function Transactions() {
       collection(db, "transactions"),
       where("organizationId", "==", user.organizationId),
       where("studentId", "==", user.id),
-      orderBy("date", "desc")
+      orderBy("date", "desc"),
+      limit(50)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -127,7 +129,7 @@ export default function Transactions() {
                 </div>
                 <div className="flex items-center space-x-3">
                   <span className={`text-sm font-bold ${tx.type === 'topup' ? 'text-green-600' : 'text-gray-900'}`}>
-                    {tx.type === 'topup' ? '+' : '-'}${tx.amount.toFixed(2)}
+                    {tx.type === 'topup' ? '+' : '-'}{formatINR(tx.amount)}
                   </span>
                 </div>
               </li>
@@ -151,7 +153,7 @@ export default function Transactions() {
             <h2 className="text-xl font-bold text-gray-900 mb-4">Top-up Wallet</h2>
             <form onSubmit={handleTopUp}>
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Amount ($)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Amount (₹)</label>
                 <input
                   type="number"
                   min="1"

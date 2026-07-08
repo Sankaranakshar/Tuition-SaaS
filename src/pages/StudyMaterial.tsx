@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { FileText, Download, Upload, Folder, File } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc } from "firebase/firestore";
+import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import LoadingSpinner from "../components/LoadingSpinner";
 
@@ -20,7 +20,8 @@ export default function StudyMaterial() {
       collection(db, "documents"),
       where("organizationId", "==", user.organizationId),
       where("studentId", "==", user.id),
-      orderBy("createdAt", "desc")
+      orderBy("createdAt", "desc"),
+      limit(50)
     );
 
     const unsubscribeMaterials = onSnapshot(qMaterials, (snapshot) => {
@@ -38,7 +39,8 @@ export default function StudyMaterial() {
       where("organizationId", "==", user.organizationId),
       where("studentId", "==", user.id),
       where("type", "==", "assignment"),
-      orderBy("dueDate", "asc")
+      orderBy("dueDate", "asc"),
+      limit(50)
     );
 
     const unsubscribeAssignments = onSnapshot(qAssignments, (snapshot) => {

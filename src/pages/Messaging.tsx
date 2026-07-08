@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Send, Search, User, MessageSquare, Plus } from "lucide-react";
-import { collection, query, where, onSnapshot, addDoc, orderBy, updateDoc, doc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, addDoc, orderBy, updateDoc, doc, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 
@@ -23,14 +23,18 @@ export default function Messaging() {
     // Firestore doesn't easily support OR on different fields without composite indexes,
     // so we'll do two listeners and merge.
     const qSent = query(
-      collection(db, "messages"), 
+      collection(db, "messages"),
       where("organizationId", "==", user.organizationId),
-      where("senderId", "==", user.id)
+      where("senderId", "==", user.id),
+      orderBy("createdAt", "desc"),
+      limit(100)
     );
     const qReceived = query(
-      collection(db, "messages"), 
+      collection(db, "messages"),
       where("organizationId", "==", user.organizationId),
-      where("receiverId", "==", user.id)
+      where("receiverId", "==", user.id),
+      orderBy("createdAt", "desc"),
+      limit(100)
     );
 
     let sentMsgs: any[] = [];
@@ -59,8 +63,9 @@ export default function Messaging() {
     });
 
     // Fetch contacts (students)
-    const studentsConstraints = [where("organizationId", "==", user.organizationId)];
+    const studentsConstraints: any[] = [where("organizationId", "==", user.organizationId)];
     if (user.role === 'tutor') studentsConstraints.push(where("tutorId", "==", user.id));
+    studentsConstraints.push(limit(100));
     const qStudents = query(collection(db, "students"), ...studentsConstraints);
     const unsubStudents = onSnapshot(qStudents, (snapshot) => {
       const contactsList: any[] = [];

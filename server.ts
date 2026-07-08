@@ -4,15 +4,27 @@ import helmet from "helmet";
 import cors from "cors";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import pino from "pino-http";
+import * as Sentry from "@sentry/node";
 import settingsRoutes from "./server/routes/settings.ts";
 import membersRoutes from "./server/routes/members.ts";
 import billingRoutes from "./server/routes/billing.ts";
 import gatewayRoutes from "./server/routes/gateway.ts";
 import parentsRoutes from "./server/routes/parents.ts";
 import webhookRoutes from "./server/routes/webhooks.ts";
+import schedulingRoutes from "./server/routes/scheduling.ts";
+import cronRoutes from "./server/routes/cron.ts";
+import documentsRoutes from "./server/routes/documents.ts";
 import type { AuthRequest } from "./server/middleware/auth.ts";
 
 async function startServer() {
+  if (process.env.SENTRY_DSN) {
+    Sentry.init({
+      dsn: process.env.SENTRY_DSN,
+      environment: process.env.NODE_ENV || "development",
+      tracesSampleRate: 0.1,
+    });
+  }
+
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
   const isProd = process.env.NODE_ENV === "production";
@@ -62,6 +74,9 @@ async function startServer() {
   app.use("/api/v1/billing", billingRoutes);
   app.use("/api/v1/gateway", gatewayRoutes);
   app.use("/api/v1/parents", parentsRoutes);
+  app.use("/api/v1/scheduling", schedulingRoutes);
+  app.use("/api/v1/documents", documentsRoutes);
+  app.use("/api/cron", cronRoutes);
   // Temporary alias while the frontend migrates to /api/v1.
   app.use("/api/settings", settingsRoutes);
 
@@ -84,6 +99,7 @@ async function startServer() {
     const status = typeof err?.status === "number" ? err.status : 500;
     const code = err?.code && typeof err.code === "string" ? err.code : "internal";
     (req as any).log?.error({ err }, "Unhandled API error");
+    if (status >= 500) Sentry.captureException(err);
     res.status(status).json({ error: { code, message: status === 500 ? "Internal Server Error" : err.message } });
   });
 

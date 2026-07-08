@@ -167,6 +167,19 @@ describe("C2: financial collections deny all client writes", () => {
   it("but scheduling updates by staff still work", async () => {
     await assertSucceeds(updateDoc(doc(ctx(uids.tutor), "class_sessions", "sess1"), { roomNumber: "B2" }));
   });
+  // E3.6: capacity/conflict checks must run inside a server transaction, not
+  // a client read-then-write. Direct client create is denied for both
+  // collections; only POST /api/v1/scheduling/* (Admin SDK) can create them.
+  it("class_sessions reject client-side create (capacity/conflict must be server-checked)", async () => {
+    await assertFails(setDoc(doc(ctx(uids.tutor), "class_sessions", "new-sess"), {
+      organizationId: ORG, tutorId: uids.tutor, startTime: "2026-01-01T10:00:00.000Z", endTime: "2026-01-01T11:00:00.000Z", status: "scheduled",
+    }));
+  });
+  it("enrollments reject client-side create (capacity must be server-checked)", async () => {
+    await assertFails(setDoc(doc(ctx(uids.owner), "enrollments", "new-enr"), {
+      organizationId: ORG, studentId: "stu2", templateId: "tmpl1", status: "active", enrollmentDate: new Date().toISOString(),
+    }));
+  });
 });
 
 // ===================================================================

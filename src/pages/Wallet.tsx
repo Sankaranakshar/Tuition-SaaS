@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { DollarSign, Receipt, Download, CreditCard } from "lucide-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { format, parseISO } from "date-fns";
 import { Link } from "react-router-dom";
 import LoadingSpinner from "../components/LoadingSpinner";
+import { formatINR, formatPaise } from "../lib/format";
 
 export default function Wallet() {
   const { user } = useAuth();
@@ -18,7 +19,8 @@ export default function Wallet() {
 
     const qInvoices = query(
       collection(db, "invoices"),
-      where("studentId", "==", user.id)
+      where("studentId", "==", user.id),
+      limit(50)
     );
     
     const unsubInvoices = onSnapshot(qInvoices, (snapshot) => {
@@ -29,7 +31,8 @@ export default function Wallet() {
 
     const qWallet = query(
       collection(db, "wallets"),
-      where("studentId", "==", user.id)
+      where("studentId", "==", user.id),
+      limit(1)
     );
 
     const unsubWallet = onSnapshot(qWallet, (snapshot) => {
@@ -61,7 +64,7 @@ export default function Wallet() {
             <DollarSign className="w-8 h-8" />
           </div>
           <h2 className="text-lg font-medium text-gray-500">Available Balance</h2>
-          <p className="text-4xl font-bold text-gray-900 mt-2">${walletBalance.toFixed(2)}</p>
+          <p className="text-4xl font-bold text-gray-900 mt-2">{formatINR(walletBalance)}</p>
           <div className="mt-6 w-full space-y-3">
             <Link to="/app/transactions" className="w-full flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700">
               <CreditCard className="w-4 h-4 mr-2" />
@@ -101,7 +104,7 @@ export default function Wallet() {
                         {invoice.issueDate ? format(parseISO(invoice.issueDate), 'MMM d, yyyy') : 'N/A'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        ${Number(invoice.amount || 0).toFixed(2)}
+                        {formatPaise(invoice.totalPaise ?? Math.round((invoice.amount || 0) * 100))}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Calendar as CalendarIcon, Clock, Video, CheckCircle, XCircle, AlertCircle } from "lucide-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { format, parseISO, isAfter, isBefore, startOfDay, endOfDay } from "date-fns";
@@ -15,7 +15,8 @@ export default function Timetable() {
 
     const qSessions = query(
       collection(db, "class_sessions"),
-      where("studentIds", "array-contains", user.id)
+      where("studentIds", "array-contains", user.id),
+      limit(50)
     );
     
     const unsubSessions = onSnapshot(qSessions, (snapshot) => {

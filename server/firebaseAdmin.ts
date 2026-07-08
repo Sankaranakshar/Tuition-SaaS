@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 import fs from "fs";
 import path from "path";
 
@@ -33,3 +34,4 @@ if (!getApps().length) {
 
 export const adminAuth = app ? getAuth(app) : null;
 export const adminDb = app ? getFirestore(app, databaseId) : null;
+export const adminStorage = app ? getStorage(app) : null;
