@@ -142,12 +142,14 @@ Dependencies: E5 (shell), E3.4 (attendance endpoint), E4.1 (bounded queries). RE
 ## Epic 10: Parent portal v1, mobile-web-first (Weeks 8-10) — Engineer B
 Dependencies: E6 (payable invoices), E2.5 (parent read rules), E5.
 
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E10.1 | Parent onboarding: phone OTP verification, `parent_links` creation, DPDP consent capture | Consent record stored with timestamp |
-| E10.2 | Children overview: schedule, attendance, outstanding balance per child | Flawless at 375px |
-| E10.3 | Invoice view + pay: Razorpay checkout from the portal and from WhatsApp deep link | Real UPI payment on a phone completes and reconciles |
-| E10.4 | Receipt history + wallet balance view | Matches ledger exactly |
+**✅ BUILT (2026-07-08), not browser-verified.** See HANDOFF.md §3 for the full writeup. Phone OTP itself predates this epic (already in Login.tsx/AuthContext.tsx); what was missing and is now built is the `parent_links` creation path, DPDP consent capture, and the portal UI. Acceptance criteria involving a live phone or a real payment (marked below) are unverified — same live-Firebase/Razorpay gap Epic 6 and Epic 9 already carry.
+
+| ID | Task | Acceptance criteria | Status |
+|----|------|---------------------|--------|
+| E10.1 | Parent onboarding: phone OTP verification, `parent_links` creation, DPDP consent capture | Consent record stored with timestamp | Built — `consentGivenAt`/`consentVersion` on the `parent_links` doc |
+| E10.2 | Children overview: schedule, attendance, outstanding balance per child | Flawless at 375px | Built (`ParentPortal.tsx`, max-w-md); 375px not device-tested |
+| E10.3 | Invoice view + pay: Razorpay checkout from the portal and from WhatsApp deep link | Real UPI payment on a phone completes and reconciles | Built (Pay Now → hosted payment-link page; WhatsApp share via `wa.me`); real payment unverified |
+| E10.4 | Receipt history + wallet balance view | Matches ledger exactly | Built — reads `payments`/`wallets` directly, no derived state |
 
 **Stage 1 exit gate (the wedge demo):** on staging with live-mode Razorpay: tutor marks attendance from Today → invoice auto-drafts → WhatsApp reminder with UPI link hits a real phone → parent pays → invoice self-marks paid → Pulse updates. One unbroken take, no manual steps.
 

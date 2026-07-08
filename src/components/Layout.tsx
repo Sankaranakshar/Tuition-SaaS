@@ -44,15 +44,23 @@ export default function Layout() {
   };
 
   const isStudent = currentRole === "student";
+  const isParent = currentRole === "parent";
 
   // Five workspaces. Leads, Documents, Admin are reachable via the palette;
-  // the rail stays furniture, not a table of contents.
+  // the rail stays furniture, not a table of contents. Parents get a
+  // deliberately short rail (Epic 10): their children overview holds
+  // schedule/invoices/wallet as tabs, so there's nothing else to navigate to.
   const rail = isStudent
     ? [
         { to: "/app", label: t("nav.today"), icon: LayoutDashboard, end: true },
         { to: "/app/timetable", label: t("nav.schedule"), icon: Calendar },
         { to: "/app/study-material", label: t("nav.learn"), icon: BookOpen },
         { to: "/app/wallet", label: t("nav.money"), icon: Wallet },
+        { to: "/app/messaging", label: t("nav.inbox"), icon: MessageSquare },
+      ]
+    : isParent
+    ? [
+        { to: "/app", label: "My children", icon: LayoutDashboard, end: true },
         { to: "/app/messaging", label: t("nav.inbox"), icon: MessageSquare },
       ]
     : [
@@ -63,7 +71,7 @@ export default function Layout() {
         { to: "/app/messaging", label: t("nav.inbox"), icon: MessageSquare },
       ];
 
-  const settingsPath = isStudent ? "/app/preferences" : "/app/settings";
+  const settingsPath = isStudent || isParent ? "/app/preferences" : "/app/settings";
 
   return (
     <div className="flex h-screen bg-[var(--cs-bg)] font-sans">

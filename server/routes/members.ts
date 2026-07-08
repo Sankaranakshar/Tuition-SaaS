@@ -14,7 +14,7 @@ const memberSchema = z.object({
   role: z.enum(ALL_ROLES as [Role, ...Role[]]),
 });
 
-async function setMembership(orgId: string, userId: string, role: Role, actorId: string) {
+export async function setMembership(orgId: string, userId: string, role: Role, actorId: string) {
   if (!adminAuth || !adminDb) throw new Error("Firebase Admin not initialized");
 
   const memberRef = adminDb.collection("organization_members").doc(`${orgId}_${userId}`);

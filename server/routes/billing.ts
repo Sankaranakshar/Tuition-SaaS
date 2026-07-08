@@ -318,62 +318,101 @@ router.post("/invoices/:invoiceId/finalize", requireRole(...CAN_MONEY), async (r
 });
 
 // Create (or return the existing) Razorpay payment link for an invoice's
-// outstanding amount. The parent pays via UPI; the webhook reconciles (E6.1).
+// outstanding amount. Shared by the staff route and the parent-facing route
+// below so both settle to the identical link/idempotency shape.
+async function resolveInvoicePaymentLink(db: FirebaseFirestore.Firestore, orgId: string, invoiceId: string) {
+  const invRef = db.collection("invoices").doc(invoiceId);
+  const snap = await invRef.get();
+  if (!snap.exists || snap.data()!.organizationId !== orgId) {
+    throw Object.assign(new Error("Invoice not found"), { status: 404, code: "not_found" });
+  }
+  const inv = snap.data()!;
+  if (inv.status === "void" || inv.status === "paid") {
+    throw Object.assign(new Error(`Invoice is ${inv.status}`), { status: 422, code: "not_payable" });
+  }
+  // Reuse a still-open link rather than minting duplicates.
+  const existing = inv.paymentLink;
+  if (existing?.shortUrl && ["created", "issued", "partially_paid"].includes(existing.status)) {
+    return { shortUrl: existing.shortUrl as string, reused: true };
+  }
+
+  const creds = await getGatewayCreds(db, orgId);
+  if (!creds) {
+    throw Object.assign(new Error("Connect Razorpay in settings first"), { status: 422, code: "gateway_not_connected" });
+  }
+
+  const totalPaise = inv.totalPaise ?? Math.round((inv.totalAmount || 0) * 100);
+  const outstanding = totalPaise - (inv.paidPaise || 0);
+  if (outstanding <= 0) {
+    throw Object.assign(new Error("Invoice has no outstanding balance"), { status: 422, code: "nothing_due" });
+  }
+
+  // Best-effort customer details for the hosted page.
+  let customer: { name?: string; contact?: string; email?: string } = {};
+  if (inv.studentId) {
+    const st = await db.collection("students").doc(inv.studentId).get();
+    if (st.exists) {
+      const s = st.data()!;
+      customer = { name: s.name || undefined, contact: s.parentPhone || s.phone || undefined, email: s.parentEmail || s.email || undefined };
+    }
+  }
+
+  const link = await createPaymentLink(creds, {
+    amountPaise: outstanding,
+    referenceId: invoiceId,
+    description: `${inv.invoiceNumber || "Invoice"} · ${inv.items?.[0]?.description || "Tuition fees"}`,
+    customer,
+    notes: { organizationId: orgId, invoiceId },
+    callbackUrl: process.env.APP_URL ? `${process.env.APP_URL}/app/invoices` : undefined,
+  });
+
+  await invRef.update({
+    paymentLink: { id: link.id, shortUrl: link.shortUrl, status: link.status, amountPaise: outstanding, createdAt: new Date() },
+  });
+  return { shortUrl: link.shortUrl as string, reused: false, linkId: link.id as string, amountPaise: outstanding };
+}
+
 router.post("/invoices/:invoiceId/payment-link", requireRole(...CAN_MONEY), async (req: AuthRequest, res, next) => {
+  try {
+    if (!adminDb) throw new Error("Firebase Admin not initialized");
+    const orgId = req.user!.organizationId!;
+    const result = await resolveInvoicePaymentLink(adminDb, orgId, req.params.invoiceId);
+    if (!result.reused) {
+      await writeAudit(orgId, req.user!.id, "invoice.payment_link", "invoices", req.params.invoiceId, {
+        linkId: result.linkId, amountPaise: result.amountPaise,
+      });
+    }
+    res.json({ ok: true, shortUrl: result.shortUrl, reused: result.reused });
+  } catch (err) { next(err); }
+});
+
+// Parent-facing equivalent (E10.3): same link resolution, but authorized by
+// parent_links membership on the invoice's student rather than a staff role.
+router.post("/invoices/:invoiceId/pay", async (req: AuthRequest, res, next) => {
   try {
     if (!adminDb) throw new Error("Firebase Admin not initialized");
     const db = adminDb;
     const orgId = req.user!.organizationId!;
-    const invRef = db.collection("invoices").doc(req.params.invoiceId);
-    const snap = await invRef.get();
-    if (!snap.exists || snap.data()!.organizationId !== orgId) {
+    if (req.user!.role !== "parent") {
+      return res.status(403).json({ error: { code: "forbidden", message: "This endpoint is for parent accounts" } });
+    }
+    const invSnap = await db.collection("invoices").doc(req.params.invoiceId).get();
+    if (!invSnap.exists || invSnap.data()!.organizationId !== orgId) {
       return res.status(404).json({ error: { code: "not_found", message: "Invoice not found" } });
     }
-    const inv = snap.data()!;
-    if (inv.status === "void" || inv.status === "paid") {
-      return res.status(422).json({ error: { code: "not_payable", message: `Invoice is ${inv.status}` } });
-    }
-    // Reuse a still-open link rather than minting duplicates.
-    const existing = inv.paymentLink;
-    if (existing?.shortUrl && ["created", "issued", "partially_paid"].includes(existing.status)) {
-      return res.json({ ok: true, shortUrl: existing.shortUrl, reused: true });
+    const studentId = invSnap.data()!.studentId;
+    const linkSnap = await db.collection("parent_links").doc(`${req.user!.id}_${studentId}`).get();
+    if (!linkSnap.exists) {
+      return res.status(403).json({ error: { code: "forbidden", message: "Not linked to this student" } });
     }
 
-    const creds = await getGatewayCreds(db, orgId);
-    if (!creds) {
-      return res.status(422).json({ error: { code: "gateway_not_connected", message: "Connect Razorpay in settings first" } });
+    const result = await resolveInvoicePaymentLink(db, orgId, req.params.invoiceId);
+    if (!result.reused) {
+      await writeAudit(orgId, req.user!.id, "invoice.payment_link.parent", "invoices", req.params.invoiceId, {
+        linkId: result.linkId, amountPaise: result.amountPaise,
+      });
     }
-
-    const totalPaise = inv.totalPaise ?? Math.round((inv.totalAmount || 0) * 100);
-    const outstanding = totalPaise - (inv.paidPaise || 0);
-    if (outstanding <= 0) {
-      return res.status(422).json({ error: { code: "nothing_due", message: "Invoice has no outstanding balance" } });
-    }
-
-    // Best-effort customer details for the hosted page.
-    let customer: { name?: string; contact?: string; email?: string } = {};
-    if (inv.studentId) {
-      const st = await db.collection("students").doc(inv.studentId).get();
-      if (st.exists) {
-        const s = st.data()!;
-        customer = { name: s.name || undefined, contact: s.parentPhone || s.phone || undefined, email: s.parentEmail || s.email || undefined };
-      }
-    }
-
-    const link = await createPaymentLink(creds, {
-      amountPaise: outstanding,
-      referenceId: req.params.invoiceId,
-      description: `${inv.invoiceNumber || "Invoice"} · ${inv.items?.[0]?.description || "Tuition fees"}`,
-      customer,
-      notes: { organizationId: orgId, invoiceId: req.params.invoiceId },
-      callbackUrl: process.env.APP_URL ? `${process.env.APP_URL}/app/invoices` : undefined,
-    });
-
-    await invRef.update({
-      paymentLink: { id: link.id, shortUrl: link.shortUrl, status: link.status, amountPaise: outstanding, createdAt: new Date() },
-    });
-    await writeAudit(orgId, req.user!.id, "invoice.payment_link", "invoices", req.params.invoiceId, { linkId: link.id, amountPaise: outstanding });
-    res.json({ ok: true, shortUrl: link.shortUrl, reused: false });
+    res.json({ ok: true, shortUrl: result.shortUrl, reused: result.reused });
   } catch (err) { next(err); }
 });
 

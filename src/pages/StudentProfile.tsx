@@ -6,8 +6,10 @@ import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { toast } from "sonner";
 
 import LoadingSpinner from "../components/LoadingSpinner";
+import { createParentInvite } from "../lib/api";
 
 export default function StudentProfile() {
   const { id } = useParams<{ id: string }>();
@@ -53,6 +55,10 @@ export default function StudentProfile() {
   const [newParentEmail, setNewParentEmail] = useState("");
   const [newParentPhone, setNewParentPhone] = useState("");
   const [isCreatingParent, setIsCreatingParent] = useState(false);
+
+  // Parent portal invite state (E10.1) — the real, verified linking path.
+  const [parentInvite, setParentInvite] = useState<{ link: string; expiresAt: string } | null>(null);
+  const [isCreatingInvite, setIsCreatingInvite] = useState(false);
 
   useEffect(() => {
     if (!user || !id || !user.organizationId) return;
@@ -208,6 +214,20 @@ export default function StudentProfile() {
       await updateDoc(doc(db, "students", id), { parentId: null });
     } catch (error) {
       console.error("Error unlinking parent:", error);
+    }
+  };
+
+  const handleCreateParentInvite = async () => {
+    if (!id) return;
+    setIsCreatingInvite(true);
+    try {
+      const result = await createParentInvite(id);
+      const link = `${window.location.origin}/onboarding?invite=${result.token}`;
+      setParentInvite({ link, expiresAt: result.expiresAt });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't generate an invite link");
+    } finally {
+      setIsCreatingInvite(false);
     }
   };
 
@@ -566,6 +586,55 @@ export default function StudentProfile() {
               )}
             </div>
           </div>
+        </div>
+
+        {/* Parent portal invite (E10.1): the real, verified linking path —
+            distinct from the "Link Parent Account" box above, which only
+            sets a display field and grants no portal access. */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <h3 className="text-md font-semibold text-gray-900 mb-1 flex items-center">
+            <LinkIcon className="w-5 h-5 mr-2 text-indigo-500" /> Parent Portal Access
+          </h3>
+          <p className="text-sm text-gray-500 mb-4">
+            Generate a one-time invite link. The parent verifies their phone number and gives consent before
+            they can see this student's schedule, invoices, or payments.
+          </p>
+          <button
+            onClick={handleCreateParentInvite}
+            disabled={isCreatingInvite}
+            className="text-sm text-white bg-indigo-600 px-3 py-1.5 rounded hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {isCreatingInvite ? "Generating…" : "Generate invite link"}
+          </button>
+          {parentInvite && (
+            <div className="mt-4 bg-indigo-50 border border-indigo-100 rounded-lg p-3 space-y-2">
+              <p className="text-xs text-indigo-700">
+                Expires {new Date(parentInvite.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  readOnly
+                  value={parentInvite.link}
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                  className="flex-1 min-w-0 text-xs bg-white border border-indigo-200 rounded px-2 py-1.5 font-mono"
+                />
+                <button
+                  onClick={() => { navigator.clipboard.writeText(parentInvite.link); }}
+                  className="text-xs text-indigo-700 bg-white border border-indigo-200 px-2 py-1.5 rounded hover:bg-indigo-100"
+                >
+                  Copy
+                </button>
+              </div>
+              <a
+                href={`https://wa.me/?text=${encodeURIComponent(`Link your parent account to ${student.name || 'your child'}'s tuition profile: ${parentInvite.link}`)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block text-xs text-green-700 bg-white border border-green-200 px-2 py-1.5 rounded hover:bg-green-50"
+              >
+                Share via WhatsApp
+              </a>
+            </div>
+          )}
         </div>
       </div>
     </div>

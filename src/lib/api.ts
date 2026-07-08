@@ -103,3 +103,37 @@ export function saveTaxSettings(tax: {
 }) {
   return api<{ ok: true; tax: unknown }>("/gateway/tax", { method: "PUT", body: tax });
 }
+
+// Parent portal (Epic 10). A parent's only client write path to `students`
+// data is through these three server-mediated calls; parent_links itself has
+// no client write path at all (see firestore.rules).
+
+/** Staff: mint a single-use, 7-day invite token for a student. */
+export function createParentInvite(studentId: string) {
+  return api<{ ok: true; token: string; expiresAt: string; studentName: string | null }>(
+    "/parents/invites",
+    { method: "POST", body: { studentId } }
+  );
+}
+
+/** Preview who an invite links to before a parent consents. */
+export function previewParentInvite(token: string) {
+  return api<{ ok: true; studentName: string | null; organizationName: string | null }>(
+    `/parents/invites/${encodeURIComponent(token)}/preview`
+  );
+}
+
+/** Redeem an invite: creates the parent_links doc and grants the parent role. Requires DPDP consent. */
+export function redeemParentInvite(token: string) {
+  return api<{ ok: true; organizationId: string; studentId: string }>("/parents/redeem", {
+    method: "POST",
+    body: { token, consent: true },
+  });
+}
+
+/** Parent-authorized Razorpay UPI payment link for one of their linked children's invoices. */
+export function payInvoiceAsParent(invoiceId: string) {
+  return api<{ ok: true; shortUrl: string; reused: boolean }>(`/billing/invoices/${invoiceId}/pay`, {
+    method: "POST",
+  });
+}

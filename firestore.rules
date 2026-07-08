@@ -133,6 +133,14 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // E10.1: single-use tokens minted by staff and redeemed by a phone-OTP
+    // verified parent via /api/v1/parents. Never client-readable — the
+    // preview a parent sees on the redeem screen comes from the server
+    // (GET /api/v1/parents/invites/:token/preview), not a direct read.
+    match /parent_invites/{token} {
+      allow read, write: if false;
+    }
+
     // ===============================================================
     // People
     // ===============================================================

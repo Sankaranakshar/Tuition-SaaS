@@ -24,6 +24,7 @@ import { StatChip, StatusChip, AgedBadge, EmptyState, SkeletonRow, Skeleton, Pop
 import { formatPaise, formatTime } from "../lib/format";
 import { markAttendance, type AttendanceStatus } from "../lib/api";
 import StudentDashboard from "./StudentDashboard";
+import ParentPortal from "./ParentPortal";
 import {
   sessionPhase,
   minutesUntilStart,
@@ -58,8 +59,10 @@ const STATUS_META: Record<AttendanceStatus, { label: string; tone: "positive" | 
 export default function Today() {
   const { user, currentRole } = useAuth();
 
-  // Students get the study-focused home; this workspace is for the business.
+  // Students get the study-focused home; parents get their children overview
+  // (Epic 10); this workspace is for the business.
   if (currentRole === "student") return <StudentDashboard />;
+  if (currentRole === "parent") return <ParentPortal />;
 
   return <StaffToday user={user} currentRole={currentRole} />;
 }

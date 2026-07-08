@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router-dom";
-import { doc, updateDoc, setDoc, collection, addDoc } from "firebase/firestore";
-import { db } from "../firebase";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { doc, updateDoc, setDoc } from "firebase/firestore";
+import { auth, db } from "../firebase";
 import { CheckCircle, ChevronRight, User, BookOpen, Users, DollarSign, MapPin, GraduationCap } from "lucide-react";
+import { previewParentInvite, redeemParentInvite } from "../lib/api";
 
 export default function Onboarding() {
   const { user, checkAuth } = useAuth();
@@ -31,13 +32,16 @@ export default function Onboarding() {
     maxBatchSize: 10
   });
 
-  // Parent State
-  const [parentData, setParentData] = useState({
-    fullName: user?.name || "",
-    address: "",
-    children: [] as any[]
-  });
-  const [childForm, setChildForm] = useState({ name: "", grade: "", board: "", dob: "" });
+  // Parent State: linking to a child happens via a staff-issued invite token
+  // (E10.1), not a self-declared profile — parent_links has no client write
+  // path, so this is the only way a parent account gains access to a child.
+  const [searchParams] = useSearchParams();
+  const [inviteToken, setInviteToken] = useState(
+    searchParams.get("invite") || sessionStorage.getItem("pendingParentInvite") || ""
+  );
+  const [invitePreview, setInvitePreview] = useState<{ studentName: string | null; organizationName: string | null } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [consent, setConsent] = useState(false);
 
   // Student State
   const [studentData, setStudentData] = useState({
@@ -75,6 +79,31 @@ export default function Onboarding() {
     }
   };
 
+  const handlePreviewInvite = async () => {
+    const token = inviteToken.trim();
+    if (!token) return;
+    setPreviewLoading(true);
+    setError("");
+    setInvitePreview(null);
+    try {
+      const result = await previewParentInvite(token);
+      setInvitePreview({ studentName: result.studentName, organizationName: result.organizationName });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invite not found or expired.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  // A link opened with ?invite=TOKEN previews itself once the parent has
+  // chosen the parent role and reached step 2.
+  useEffect(() => {
+    if (role === 'parent' && step === 2 && inviteToken && !invitePreview && !previewLoading) {
+      handlePreviewInvite();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, step]);
+
   const handleCompleteOnboarding = async () => {
     if (!user?.id) return;
     setLoading(true);
@@ -96,21 +125,13 @@ export default function Onboarding() {
           is_verified: false
         });
       } else if (role === 'parent') {
-        await setDoc(doc(db, "parent_profiles", user.id), {
-          user_id: user.id,
-          full_name: parentData.fullName,
-          address: parentData.address
-        });
-        // Add children
-        for (const child of parentData.children) {
-          await addDoc(collection(db, "student_profiles"), {
-            full_name: child.name,
-            grade: child.grade,
-            board: child.board,
-            dob: child.dob,
-            parent_id: user.id
-          });
-        }
+        if (!invitePreview || !consent) return;
+        await redeemParentInvite(inviteToken.trim());
+        sessionStorage.removeItem("pendingParentInvite");
+        // The redeem call just granted custom claims server-side; force a
+        // fresh ID token so the very next API call carries them (mirrors the
+        // tutor/admin bootstrap refresh above).
+        await auth.currentUser?.getIdToken(true);
       } else if (role === 'student') {
         await setDoc(doc(db, "student_profiles", user.id), {
           user_id: user.id,
@@ -233,72 +254,63 @@ export default function Onboarding() {
   };
 
   const renderParentSteps = () => {
-    if (step === 2) {
-      return (
-        <div className="space-y-4">
-          <h3 className="text-xl font-bold">Parent Information</h3>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Full Name</label>
-            <input type="text" value={parentData.fullName} onChange={e => setParentData({...parentData, fullName: e.target.value})} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Address</label>
-            <textarea value={parentData.address} onChange={e => setParentData({...parentData, address: e.target.value})} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border" rows={3}></textarea>
-          </div>
-          <button onClick={() => setStep(3)} className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700">Next</button>
-        </div>
-      );
-    }
-    if (step === 3) {
-      return (
-        <div className="space-y-4">
-          <h3 className="text-xl font-bold">Add Children</h3>
-          <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 space-y-3">
-            <input type="text" placeholder="Child's Full Name" value={childForm.name} onChange={e => setChildForm({...childForm, name: e.target.value})} className="block w-full border-gray-300 rounded-md shadow-sm p-2 border sm:text-sm" />
-            <div className="grid grid-cols-2 gap-3">
-              <input type="text" placeholder="Grade" value={childForm.grade} onChange={e => setChildForm({...childForm, grade: e.target.value})} className="block w-full border-gray-300 rounded-md shadow-sm p-2 border sm:text-sm" />
-              <input type="text" placeholder="Board" value={childForm.board} onChange={e => setChildForm({...childForm, board: e.target.value})} className="block w-full border-gray-300 rounded-md shadow-sm p-2 border sm:text-sm" />
-            </div>
-            <input type="date" value={childForm.dob} onChange={e => setChildForm({...childForm, dob: e.target.value})} className="block w-full border-gray-300 rounded-md shadow-sm p-2 border sm:text-sm" />
-            <button 
-              onClick={() => {
-                if (childForm.name) {
-                  setParentData({...parentData, children: [...parentData.children, childForm]});
-                  setChildForm({ name: "", grade: "", board: "", dob: "" });
-                }
-              }}
-              className="w-full py-2 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+    if (step !== 2) return null;
+    return (
+      <div className="space-y-4">
+        <h3 className="text-xl font-bold">Link to your child's account</h3>
+        <p className="text-sm text-gray-500">
+          Ask your tutoring center for an invite link or code — they generate one from your child's profile.
+        </p>
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Invite code</label>
+          <div className="mt-1 flex gap-2">
+            <input
+              type="text"
+              value={inviteToken}
+              onChange={e => { setInviteToken(e.target.value); setInvitePreview(null); }}
+              placeholder="Paste the code from your center"
+              className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border"
+            />
+            <button
+              onClick={handlePreviewInvite}
+              disabled={previewLoading || !inviteToken.trim()}
+              className="whitespace-nowrap py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
             >
-              Add Child
-            </button>
-          </div>
-          
-          {parentData.children.length > 0 && (
-            <div className="mt-4">
-              <h4 className="text-sm font-medium text-gray-700 mb-2">Added Children:</h4>
-              <ul className="space-y-2">
-                {parentData.children.map((child, idx) => (
-                  <li key={idx} className="bg-white border border-gray-200 p-3 rounded-md flex justify-between items-center">
-                    <span>{child.name} ({child.grade})</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          
-          <div className="flex justify-between mt-6">
-            <button onClick={() => setStep(2)} className="py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">Back</button>
-            <button 
-              onClick={handleCompleteOnboarding} 
-              disabled={loading || parentData.children.length === 0} 
-              className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
-            >
-              Complete Profile
+              {previewLoading ? "Looking up…" : "Look up"}
             </button>
           </div>
         </div>
-      );
-    }
+
+        {invitePreview && (
+          <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4 space-y-3">
+            <p className="text-sm text-indigo-900">
+              This will link your account to <span className="font-semibold">{invitePreview.studentName || "this student"}</span> at{" "}
+              <span className="font-semibold">{invitePreview.organizationName || "this tutoring center"}</span>.
+            </p>
+            <label className="flex items-start gap-2 text-sm text-indigo-900">
+              <input
+                type="checkbox"
+                checked={consent}
+                onChange={e => setConsent(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span>
+                I consent to my child's attendance, invoices, and payment records being shared with my account,
+                per the tutoring center's privacy policy (DPDP Act, 2023).
+              </span>
+            </label>
+          </div>
+        )}
+
+        <button
+          onClick={handleCompleteOnboarding}
+          disabled={loading || !invitePreview || !consent}
+          className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {loading ? "Linking…" : "Link account"}
+        </button>
+      </div>
+    );
   };
 
   const renderStudentSteps = () => {
@@ -376,7 +388,7 @@ export default function Onboarding() {
                   <div className={`flex items-center justify-center w-8 h-8 rounded-full ${step >= 1 ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-500'}`}>1</div>
                   <div className={`w-12 h-1 ${step >= 2 ? 'bg-indigo-600' : 'bg-gray-200'}`}></div>
                   <div className={`flex items-center justify-center w-8 h-8 rounded-full ${step >= 2 ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-500'}`}>2</div>
-                  {role !== 'student' && (
+                  {role !== 'student' && role !== 'parent' && (
                     <>
                       <div className={`w-12 h-1 ${step >= 3 ? 'bg-indigo-600' : 'bg-gray-200'}`}></div>
                       <div className={`flex items-center justify-center w-8 h-8 rounded-full ${step >= 3 ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-500'}`}>3</div>

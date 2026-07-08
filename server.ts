@@ -8,6 +8,7 @@ import settingsRoutes from "./server/routes/settings.ts";
 import membersRoutes from "./server/routes/members.ts";
 import billingRoutes from "./server/routes/billing.ts";
 import gatewayRoutes from "./server/routes/gateway.ts";
+import parentsRoutes from "./server/routes/parents.ts";
 import webhookRoutes from "./server/routes/webhooks.ts";
 import type { AuthRequest } from "./server/middleware/auth.ts";
 
@@ -60,6 +61,7 @@ async function startServer() {
   app.use("/api/v1/members", membersRoutes);
   app.use("/api/v1/billing", billingRoutes);
   app.use("/api/v1/gateway", gatewayRoutes);
+  app.use("/api/v1/parents", parentsRoutes);
   // Temporary alias while the frontend migrates to /api/v1.
   app.use("/api/settings", settingsRoutes);
 

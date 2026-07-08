@@ -266,6 +266,22 @@ describe("Parent and student access", () => {
       organizationId: ORG, parentUserId: uids.anon, studentId: "stu1",
     }));
   });
+
+  // E10.1: parent_invites is a token store minted/redeemed only by
+  // /api/v1/parents (Admin SDK). It has zero client read or write path,
+  // including for the staff who created the invite or the owner.
+  it("parent_invites has no client read or write path at all", async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), "parent_invites", "tok1"), {
+        organizationId: ORG, studentId: "stu1", createdBy: uids.owner, used: false,
+      });
+    });
+    await assertFails(getDoc(doc(ctx(uids.owner), "parent_invites", "tok1")));
+    await assertFails(getDoc(doc(ctx(uids.admin), "parent_invites", "tok1")));
+    await assertFails(setDoc(doc(ctx(uids.owner), "parent_invites", "tok2"), {
+      organizationId: ORG, studentId: "stu1", used: false,
+    }));
+  });
 });
 
 // ===================================================================

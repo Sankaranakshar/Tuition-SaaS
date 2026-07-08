@@ -72,6 +72,16 @@ const LoadingFallback = () => (
   </div>
 );
 
+// A logged-out parent opening /onboarding?invite=TOKEN gets bounced through
+// /login → /app before landing on /onboarding, and none of those redirects
+// preserve the query string. Stash the token once, up front, so Onboarding
+// can recover it after the hop (see src/pages/Onboarding.tsx).
+function capturePendingParentInvite() {
+  const token = new URLSearchParams(window.location.search).get("invite");
+  if (token) sessionStorage.setItem("pendingParentInvite", token);
+}
+capturePendingParentInvite();
+
 export default function App() {
   return (
     <AuthProvider>
