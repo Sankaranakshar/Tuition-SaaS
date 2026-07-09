@@ -1,23 +1,25 @@
 # ClassStackr — Engineering Handoff
 
-_Last updated: 2026-07-08. Author: Stage 0/1 gap-closing pass (audit-driven fixes against DEV_PLAN.md)._
+_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11)._
 
 This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked on you, and what comes next.
 
-**Read order for a newcomer:** this file → [DEV_PLAN.md](DEV_PLAN.md) (the executable plan) → [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) (why) → [REDESIGN.md](REDESIGN.md) (product experience). Then `firestore.rules` and `tests/rules/rbac.test.ts`.
+**⚠️ Infrastructure changed since §1–§10 below were written.** Sections 1–10 describe the app as it existed on Firebase/Firestore and are kept as historical record — most of the *product* facts in them (which epics are built, what workflows exist) are still accurate, but every reference to Firestore, `firestore.rules`, Firebase Auth/Storage, and the Java-based rules emulator is **stale infrastructure detail**, superseded by §11. **Read §11 first**, then treat §1–§10 as product history only.
+
+**Read order for a newcomer:** this file (**§11 first**, then §1–§10 as history) → [DEV_PLAN.md](DEV_PLAN.md) (the executable plan, itself Firestore-era — read for product intent, not infra specifics) → [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) (why) → [REDESIGN.md](REDESIGN.md) (product experience). Then [supabase/README.md](supabase/README.md) and `tests/integration/rbac.test.ts`.
 
 ---
 
-## 1. Current state in one paragraph
+## 1. Current state in one paragraph (AS OF 2026-07-08, Firestore era — see §11 for current infra)
 
-The repository is a fresh, safe foundation. **Stage 0 of DEV_PLAN.md is complete** (Epics 1–5: security, server money, SQLite removal, query hygiene, and the full design foundation — tokens, shell, palette, component kit, and i18n wrapper), **Stage 1 Epic 6 (Payments) is built server-side** (Razorpay payment links, signature-verified idempotent webhooks, reconciliation poll, gap-free invoice numbering, tax/GST snapshot, manual refunds), **Epic 9 (Today workspace) is built** — the tutor/owner home with the live session Line, one-tap attendance (optimistic + undo), the rules-based attention queue, the three-number Pulse, the attendance-debt counter, and the admin per-tutor lanes; the legacy Dashboard is retired — and **Epic 10 (Parent portal v1) is built**: staff mint a single-use invite from a student's profile, a phone-OTP-verified parent redeems it (with explicit DPDP consent) to get real `parent_links` access and the `parent` custom-claim role, and lands on a mobile-first portal (children overview, invoices with a Razorpay pay button + WhatsApp share, wallet + payment history). **Epics 7 (Outbound comms) and 8 (Real scheduling integrations) are explicitly DEFERRED** — both are blocked on external provider onboarding (WhatsApp/SMS/email; Google Calendar+Meet OAuth verification) that cannot be finished from a dev machine. The four Critical security vulnerabilities (C1–C5) are fixed in `firestore.rules` and codified as an executable test suite (now 38 cases with the Epic 10 addition). SQLite is gone; the app runs on Firestore + a slim stateless Express API. Money and attendance are server-authoritative. The product builds, typechecks clean (0 errors, project-wide — see §10, `@types/react` was missing and has been fixed), unit-tests green (51/51), and boots with all routes wired. It has **not** been deployed to a live Firebase project; the payment loop, the Today workspace, and the parent portal have **not** been exercised in a browser (all three need a live/emulated Firebase project with seeded data + a connected Razorpay account — phone OTP specifically also needs a real Firebase Auth project, since it can't be emulated meaningfully without one). A **Stage 0/1 gap-closing pass** (§10) has since fixed several audit-flagged gaps (server-side enrollment/session-conflict checks, session materialization, soft deletes, Cloud Storage document uploads, Sentry, error boundaries, bounded queries). **All work through this pass is committed and pushed to GitHub `main` (`b28c3a1`).**
+The repository is a fresh, safe foundation. **Stage 0 of DEV_PLAN.md is complete** (Epics 1–5: security, server money, SQLite removal, query hygiene, and the full design foundation — tokens, shell, palette, component kit, and i18n wrapper), **Stage 1 Epic 6 (Payments) is built server-side** (Razorpay payment links, signature-verified idempotent webhooks, reconciliation poll, gap-free invoice numbering, tax/GST snapshot, manual refunds), **Epic 9 (Today workspace) is built** — the tutor/owner home with the live session Line, one-tap attendance (optimistic + undo), the rules-based attention queue, the three-number Pulse, the attendance-debt counter, and the admin per-tutor lanes; the legacy Dashboard is retired — and **Epic 10 (Parent portal v1) is built**: staff mint a single-use invite from a student's profile, a phone-OTP-verified parent redeems it (with explicit DPDP consent) to get real `parent_links` access and the `parent` custom-claim role, and lands on a mobile-first portal (children overview, invoices with a Razorpay pay button + WhatsApp share, wallet + payment history). **Epics 7 (Outbound comms) and 8 (Real scheduling integrations) are explicitly DEFERRED** — both are blocked on external provider onboarding (WhatsApp/SMS/email; Google Calendar+Meet OAuth verification) that cannot be finished from a dev machine. The four Critical security vulnerabilities (C1–C5) are fixed in `firestore.rules` and codified as an executable test suite (now 38 cases with the Epic 10 addition). SQLite is gone; the app runs on Firestore + a slim stateless Express API. Money and attendance are server-authoritative. The product builds, typechecks clean (0 errors, project-wide — see §10, `@types/react` was missing and has been fixed), unit-tests green (51/51), and boots with all routes wired. It has **not** been deployed to a live Firebase project; the payment loop, the Today workspace, and the parent portal have **not** been exercised in a browser (all three need a live/emulated Firebase project with seeded data + a connected Razorpay account — phone OTP specifically also needs a real Firebase Auth project, since it can't be emulated meaningfully without one). A **Stage 0/1 gap-closing pass** (§10) has since fixed several audit-flagged gaps (server-side enrollment/session-conflict checks, session materialization, soft deletes, Cloud Storage document uploads, Sentry, error boundaries, bounded queries). **All work through this pass is committed and pushed to GitHub `main` (`b28c3a1`).** **This entire paragraph is Firestore-era history — see §11 for what's actually running now.**
 
 ---
 
 ## 2. Repository & git state
 
 - **Remote:** `https://github.com/Sankaranakshar/Tuition-SaaS.git` (private), branch `main`, upstream tracking set. Working tree is clean — everything below is pushed.
-- **History (12 commits):**
+- **History (15 commits):**
   1. `96865ce` Baseline — code as received + planning docs
   2. `0fb8d01` Stage 0 — security, server money, SQLite removal
   3. `7c98726` Epic 5 (partial) — tokens, shell, palette
@@ -29,7 +31,10 @@ The repository is a fresh, safe foundation. **Stage 0 of DEV_PLAN.md is complete
   9. `da0d887` Epic 10 — Parent portal v1 (invite-based linking, DPDP consent, mobile portal)
   10. `e7cfaeb` Epic 6.5 — server-side invoice PDF + StudentProfile cleanup
   11. `b28c3a1` Stage 0/1 gap-closing pass — server-side scheduling, storage, hardening (see §10)
-  12. (this commit) Update HANDOFF.md for the gap-closing pass
+  12. `eaa6a5b` Update HANDOFF.md for the Stage 0/1 gap-closing pass
+  13. `97e3281` **Migrate from Firebase/Firestore to self-hosted Supabase/Postgres** (see §11)
+  14. `7bac7c9` Fix class_sessions id-space bug found post-migration (see §11)
+  15. (this commit) Update HANDOFF.md for the Supabase migration
 - **⚠️ History note:** the build started from a fresh `git init`, so `main`'s previous AI-Studio commit history (~10 commits) was replaced by this clean history. **No code was lost** — commit 1 is byte-identical to the old remote HEAD plus the planning docs. The old commits likely still exist as unreferenced objects on GitHub for now; ask if you want them grafted back onto a `legacy-history` branch.
 
 ---
@@ -132,6 +137,10 @@ Dependencies were E6 (payable invoices, already built) and E2.5/parent rules (al
 
 
 
+## 4. Dev commands (STALE — see §11 for the current set)
+
+The block below is Firestore-era (`npm run test:rules` no longer exists). Current commands are in §11.4.
+
 ```bash
 npm install
 cp .env.example .env          # fill Firebase + Google OAuth + secrets
@@ -145,11 +154,11 @@ npm run build                  # vite build + esbuild server bundle
 
 **Secrets:** generate `JWT_SECRET` and `ENCRYPTION_KEY` with `openssl rand -hex 32`. Production → Google Secret Manager, never a file.
 
-**Deploy rules/indexes:** `firebase deploy --only firestore:rules,firestore:indexes,storage`.
+**Deploy rules/indexes:** ~~`firebase deploy --only firestore:rules,firestore:indexes,storage`~~ — obsolete, see §11.
 
 ---
 
-## 5. Verification status
+## 5. Verification status (STALE, Firestore era — see §11.6 for current)
 
 | Check | Status |
 |---|---|
@@ -167,13 +176,13 @@ npm run build                  # vite build + esbuild server bundle
 
 ---
 
-## 6. Blocked on you (cannot be done from a dev machine)
+## 6. Blocked on you (STALE, Firestore era — see §11.5 for the current list)
 
-1. **Firebase projects** for `dev`/`staging`/`prod` (separate projects), then `firebase deploy` the new rules. **The currently-live rules still contain C1–C5.** Deploying the new rules is the single most urgent real-world action.
-2. **Existing-user migration:** users created before this change have **no custom claims**. After deploy, each org owner must pass through `POST /api/v1/members/bootstrap` once (or run a one-off backfill script — ask and I'll write it). Until then they won't resolve an `organizationId`.
-3. **Stage 1 long-lead items** (start now, they take weeks): Razorpay live KYC, WhatsApp Business API onboarding + template approval, SMS DLT registration, CA review of GST invoice format, privacy policy + ToS.
-4. Confirm CI is green on GitHub Actions (needs the repo's Actions enabled; the workflow provisions Java itself).
-5. **Wire the Epic 6 payment loop to real infrastructure** (cannot be finished from a dev machine): per pilot org, connect its Razorpay keys via `PUT /api/v1/gateway/razorpay` (key id + secret + webhook secret); in the Razorpay dashboard, register the webhook URL `${APP_URL}/api/webhooks/razorpay/{orgId}` for the `payment_link.paid` and `payment.captured` events using that same webhook secret; schedule the reconciliation poll (Cloud Scheduler → authenticated `POST /api/v1/billing/reconcile` hourly). Then run the wedge demo end-to-end on staging with a real ₹ payment.
+1. **Firebase projects** for `dev`/`staging`/`prod` (separate projects), then `firebase deploy` the new rules. **The currently-live rules still contain C1–C5.** Deploying the new rules is the single most urgent real-world action. — *Obsolete: there is no Firebase project anymore. See §11.5.*
+2. **Existing-user migration:** users created before this change have **no custom claims**. After deploy, each org owner must pass through `POST /api/v1/members/bootstrap` once (or run a one-off backfill script — ask and I'll write it). Until then they won't resolve an `organizationId`. — *Obsolete: no existing users, pre-launch, this concern doesn't apply to the Supabase model (see §11.2).*
+3. **Stage 1 long-lead items** (start now, they take weeks): Razorpay live KYC, WhatsApp Business API onboarding + template approval, SMS DLT registration, CA review of GST invoice format, privacy policy + ToS. — *Still applies, unrelated to infra.*
+4. Confirm CI is green on GitHub Actions (needs the repo's Actions enabled; the workflow provisions Java itself). — *Stale detail: CI no longer needs Java (see §11.7); still confirm Actions is enabled and green.*
+5. **Wire the Epic 6 payment loop to real infrastructure** (cannot be finished from a dev machine): per pilot org, connect its Razorpay keys via `PUT /api/v1/gateway/razorpay` (key id + secret + webhook secret); in the Razorpay dashboard, register the webhook URL `${APP_URL}/api/webhooks/razorpay/{orgId}` for the `payment_link.paid` and `payment.captured` events using that same webhook secret; schedule the reconciliation poll (Cloud Scheduler → authenticated `POST /api/v1/billing/reconcile` hourly). Then run the wedge demo end-to-end on staging with a real ₹ payment. — *Still applies as written, on top of §11.5's new item 1 (stand up Supabase first).*
 
 ---
 
@@ -188,27 +197,31 @@ npm run build                  # vite build + esbuild server bundle
 
 ---
 
-## 8. Security invariants — do not regress
+## 8. Security invariants — do not regress (UPDATED for Supabase, §11)
 
-1. Roles set **only** via `/api/v1/members` (claims + membership doc, tokens revoked on change).
-2. Money mutations **only** via `/api/v1/billing`, idempotency-keyed, each writing an `audit_events` record.
-3. Attendance = one Firestore transaction covering attendance records + wallet debit + invoice accrual.
-4. Amounts are **integer paise** in new fields (`totalPaise`, `paidPaise`, `subtotalPaise`); rupee floats are legacy display only.
-5. `google_tokens` and `audit_events` have **no** client access path. `firestore.rules` default-denies unmatched collections — keep it that way.
+1. Roles set **only** via `/api/v1/members` — a plain upsert/delete on `organization_members` via `server/supabaseAdmin.ts` (service_role, bypasses RLS). No more custom claims/token revocation: role is read fresh from `organization_members` on every request by `server/middleware/auth.ts`, so a role change or removal takes effect on the *next* API call, not after a token refresh.
+2. Money mutations **only** via `/api/v1/billing`, idempotency-keyed (unique constraint on `(organization_id, idempotency_key)`), each writing an `audit_events` record. `invoices`/`payments`/`wallets`/`wallet_ledger`/`refunds` have no client INSERT/UPDATE/DELETE RLS policy at all — see `supabase/migrations/0002_rls.sql`.
+3. Attendance = one real Postgres transaction (`server/db.ts`'s `withTransaction`) covering attendance records + wallet debit + invoice accrual — PostgREST can't hold a lock across a read-then-write, which is why this route uses a direct `pg` connection (`DATABASE_URL`) instead of the Supabase REST client.
+4. Amounts are **integer paise** columns (`total_paise`, `paid_paise`, `subtotal_paise`, `tax_paise`, `discount_paise`, `amount_paise`); `total_amount`/`subtotal` rupee columns are legacy display mirrors only.
+5. `google_tokens`, `audit_events`, `payment_gateways`, `refunds`, `invoice_counters`, `parent_invites` have **no** client access path — Postgres RLS is enabled on every `public` table (`0002_rls.sql`'s enable-RLS loop) and these simply have no policy, which means default-deny for every role except `service_role`. Do not add a client SELECT/INSERT/UPDATE/DELETE policy to any of these without a specific reason.
 6. Never fabricate meeting links, invoice numbers, or payment confirmations client-side.
 7. Gateway secrets (`payment_gateways`) are AES-GCM-encrypted, server-only, and never returned to the client — the API exposes connection state and the public key id only.
-8. Every inbound webhook is HMAC-signature-verified against the org's stored secret **before** its body is trusted, and settled idempotently by gateway payment id. The raw-body mount in `server.ts` (before JSON parsing) is load-bearing for this — do not reorder it.
+8. Every inbound webhook is HMAC-signature-verified against the org's stored secret **before** its body is trusted, and settled idempotently by gateway payment id (unique constraint, not a doc-id trick). The raw-body mount in `server.ts` (before JSON parsing) is load-bearing for this — do not reorder it.
+9. **New (§11):** `class_sessions.student_ids` holds student RECORD ids; `student_user_ids`/`parent_user_ids` hold the auth uids RLS actually matches against. Never write a user id into `student_ids` or a record id into `student_user_ids`/`parent_user_ids` — that exact confusion caused the bug fixed in commit `7bac7c9` (empty student/parent schedules). Any new code path that creates a `class_sessions` row must populate all three via `resolveUserIds()` in `server/routes/scheduling.ts` (or its equivalent), not just `student_ids`.
+10. **New (§11):** RLS policy/trigger changes must keep `tests/integration/rbac.test.ts` green — see §11.3. This is the enforceable version of "do not regress" for this whole section; a PR that touches `supabase/migrations/*.sql` or a privileged server route should run `npm run test:rls` before merge.
 
 ---
 
-## 9. Known tech debt carried forward (tracked, not yet addressed)
+## 9. Known tech debt carried forward
 
 - Old pages (StudentProfile 1,289 lines, Calendar, Students, Invoices) still exist and function but are slated for rebuild in Stages 2–3 (REDESIGN.md). They work inside the new shell but are not token-styled.
-- Legacy rupee fields coexist with new paise fields on invoices/wallets during migration; a cleanup pass removes the floats once all readers use paise.
+- Legacy rupee fields coexist with new paise fields on invoices/wallets; a cleanup pass removes the floats once all readers use paise.
 - ~~No Sentry wired yet~~ **done (2026-07-08)** — see §10.
-- Data migration script for Timestamp-vs-ISO-string on existing session docs not yet written (new writes are fine).
-- **Wallet top-up flow is dead** ([src/pages/Transactions.tsx](src/pages/Transactions.tsx) `handleTopUp`): writes directly to `wallets`/`transactions`, which `firestore.rules` denies for clients (Epic 2.3). The button silently fails. Needs a product decision: build a server top-up endpoint (Razorpay-backed, like invoice payment links), or remove the UI — this page is retired anyway in Epic 12 (Stage 2). Flagged, not fixed, in this pass.
-- Rules test suite (`npm run test:rules`) still **not run locally** in this pass either — this dev machine has no Java runtime for the Firestore emulator. New rbac tests were added (see §10) but only typechecked/reviewed by eye, not executed. First Java-equipped run should confirm the whole suite, not just the new cases.
+- Data migration script for Timestamp-vs-ISO-string on existing session docs — **moot now**, there's no existing data to migrate (pre-launch, fresh Postgres DB).
+- ~~**Wallet top-up flow is dead**~~ **Resolved differently in §11, not "fixed" as originally scoped.** Self-service top-up was deliberately *not* wired to a real endpoint — instantly crediting your own wallet with no payment behind it is a fraud vector. Instead: (a) a real staff-only `POST /api/v1/billing/wallets/topup` endpoint now exists (manual-payment-style, idempotency-keyed, credits `wallets.balance_currency`), and (b) [Transactions.tsx](src/pages/Transactions.tsx)'s self-service button now shows an explanatory message directing the user to contact the tuition center, instead of silently failing. If self-serve top-up becomes a real product requirement, it needs a Razorpay-payment-link flow like invoices have, not a bare balance increment.
+- ~~Rules test suite not run locally~~ **Resolved in §11.3**: the whole Firestore rules-testing approach (Firebase emulator + Java) is gone. `npm run test:rls` runs a real, executable Postgres RLS suite locally with zero external dependencies (PGlite, no Docker/Java) — see §11.3 for what it covers and how it was verified to actually catch regressions (not just pass vacuously).
+- **New in §11:** nothing in the Supabase migration has been runtime-verified against a live Supabase instance, a browser, or real GoTrue auth — only `tsc`, unit tests, the RLS suite (against PGlite, not the real Postgres image), and a production build. See §11.6.
+- **New in §11:** `profiles.organization_id` is a vestigial column — nothing in the app trusts it for authorization (real membership lives in `organization_members`), and it's now write-protected by a trigger (`0012_profiles_org_immutable.sql`) rather than removed. Consider dropping the column entirely in a later cleanup pass rather than leaving an unused-but-guarded field around.
 
 ---
 
@@ -229,3 +242,77 @@ A user-requested audit compared the actual codebase against every task ID in DEV
 - **Not fixed, flagged separately**: the wallet top-up dead-button (see above) and re-verifying the rules test suite on a Java-equipped machine.
 
 **Verification this pass:** `npx tsc --noEmit` clean project-wide (0 errors), `npm test` 51/51 green throughout every step. No browser/emulator verification was done (same constraint as every prior pass — no live Firebase project, no Java for the rules emulator in this environment).
+
+---
+
+## 11. Firebase/Firestore → self-hosted Supabase/Postgres migration (2026-07-10)
+
+**Why:** eliminate Google-platform lock-in and make the whole stack (app + auth + DB + storage) movable between hosting providers without an application rewrite. Self-hosted Supabase (Postgres + GoTrue auth + Realtime + Storage, all Docker containers) was chosen over a Neon+Vercel-style roll-your-own stack because it's close to a 1:1 replacement for what Firebase provided (Firestore → Postgres+RLS, Firebase Auth → GoTrue, Firebase Storage → Supabase Storage, `onSnapshot` → Realtime `postgres_changes`), rather than requiring auth/storage/realtime to be built from scratch. Full commit: `97e3281`; a real bug found immediately after (`7bac7c9`) is covered in §11.4.
+
+### 11.1 What moved where
+
+| Firebase concept | Supabase/Postgres equivalent |
+|---|---|
+| Firestore collections | Postgres tables, `supabase/migrations/0001_schema.sql` (~30 tables) |
+| `firestore.rules` | Postgres RLS policies, `0002_rls.sql`, `0009_rls_fixes.sql`, `0011_rls_role_matrix_fixes.sql`, `0012_profiles_org_immutable.sql`, `0013_class_sessions_id_space_fix.sql` |
+| Firebase custom claims + `organization_members` doc | **Collapsed into one**: `organization_members` table, read fresh by RLS + `server/middleware/auth.ts` on every request — no token-refresh staleness |
+| Firebase Auth (email/password, Google OAuth, phone/OTP) | Supabase Auth (GoTrue) — same three methods; phone OTP needs an SMS provider configured in self-hosted GoTrue (Twilio etc., see `supabase/README.md`) |
+| Firebase Storage | Supabase Storage, private bucket, signed URLs — `server/routes/documents.ts`, bucket created in `0004_storage.sql` |
+| `db.runTransaction()` | Two paths: simple CRUD → `supabaseAdmin`/PostgREST (`server/supabaseAdmin.ts`); multi-statement transactions needing row locks (billing, scheduling) → a real `pg` connection + `BEGIN/COMMIT` (`server/db.ts`'s `withTransaction`), because PostgREST is one request per call and can't hold a lock across a read-then-write |
+| `onSnapshot` (63 call sites, 16 files) | `.select()` + `.channel(...).on('postgres_changes', ...)` — refetch-on-any-change pattern, not diff-reconciliation |
+
+`googleapis`/`google-auth-library` (the Google Calendar OAuth integration in `server/routes/settings.ts`) was **out of scope** — isolated product feature, not infrastructure. It was still touched, because its token storage (`google_tokens`) was on Firestore via `firebaseAdmin.ts` and needed the same infra swap.
+
+### 11.2 Auth model change (read this before touching `server/middleware/auth.ts`)
+
+The old model: Firebase custom claims (`role`, `organizationId`) embedded in the ID token, set via `adminAuth.setCustomUserClaims()` + `revokeRefreshTokens()`. Removing a member required revoking their tokens for the removal to take effect, and granting a role required the client to force a token refresh.
+
+The new model: **no claims at all.** `organization_members(organization_id, user_id, role)` is the single source of truth. `authenticateToken` middleware verifies the Supabase JWT locally (HS256, `SUPABASE_JWT_SECRET`, no network call) to get just the user's identity (`sub`), then does a fresh `organization_members` lookup on *every request* to get role/org. A role change or member removal takes effect on the very next API call — no revocation step, no client-side refresh dance. This is strictly simpler and was verified via the RLS suite's `organization_members` tests (§11.3).
+
+### 11.3 The RLS test suite (`tests/integration/`) — read this before touching any migration file
+
+The old `tests/rules/rbac.test.ts` (Firestore rules, run against the Firebase emulator via `@firebase/rules-unit-testing`) was deleted with the rest of the Firestore infra. It was rebuilt as `tests/integration/rbac.test.ts` — **not a re-audit, an actual running test suite**, using `@electric-sql/pglite` (real Postgres compiled to WASM, not an emulation or a mock). `npm run test:rls` boots a fresh in-memory Postgres, applies `supabase/test/auth_shim.sql` (a minimal `auth.uid()`/`auth.users`/role shim matching real Supabase behavior) + every real `supabase/migrations/*.sql` file, then runs 40 assertions ported 1:1 from the old suite (organization role escalation, financial-table write denial, the leads/audit_events role matrix, conversation privacy, org-scoped tutor profiles, parent/student self-access, every server-only table). No Docker, no Java, no external services — it's a devDependency and runs in plain CI.
+
+**This is load-bearing, not decorative** — while building it, it caught two real gaps that had shipped silently:
+1. `profiles.organization_id` was self-writable with no column-level protection (nothing currently trusts that column for authorization, but it's exactly the kind of landmine that becomes exploitable the moment someone adds a policy that does). Fixed with a `BEFORE UPDATE` trigger (`0012_profiles_org_immutable.sql`) — RLS's `WITH CHECK` genuinely cannot express "this column is immutable" via a self-referential subquery (verified empirically: it silently doesn't work, the subquery sees the row as already updated).
+2. The `class_sessions` id-space bug (§11.4).
+
+Both fixes were verified with a **deliberate regression check**: temporarily re-break the policy/trigger, confirm the suite fails exactly the expected test (not more, not fewer, not vacuously green), then restore. Do this again for any future RLS change you're not 100% sure about — it's cheap (`npm run test:rls` runs in ~2s) and it's the only way to know the suite isn't just passing by accident.
+
+**Two Postgres RLS behaviors that differ from Firestore rules and will surprise you:**
+- A table with RLS enabled and **no policy** for a role doesn't error — `SELECT` silently returns zero rows, `INSERT`/`UPDATE`/`DELETE` silently affect zero rows (or error, for `INSERT` without a matching `WITH CHECK`... actually behavior varies — read the actual test assertions in `rbac.test.ts` rather than assuming). Firestore rules deny by throwing; Postgres denies by filtering.
+- Postgres **aborts the whole transaction** after any single error until `ROLLBACK` (or `ROLLBACK TO SAVEPOINT`). If a test needs to assert two separate "this should be denied" operations in one scenario, wrap each in `expectDenied()` (in `tests/integration/db.ts`) — it uses a `SAVEPOINT` internally so the transaction can keep going afterward. Forgetting this produces a confusing `"current transaction is aborted, commands ignored until end of transaction block"` error on the *next* unrelated query, not on the one that actually failed.
+
+### 11.4 Bug found and fixed post-migration: `class_sessions` id-space confusion (commit `7bac7c9`)
+
+The original Firestore `class_sessions` doc kept **three** separate arrays — `studentIds` (student record ids), `studentUserIds` (student auth uids), `parentUserIds` (parent auth uids) — specifically so record-id lookups (staff UI) and `auth.uid()`-based RLS checks never collided. The Postgres migration collapsed `studentIds`/`studentUserIds` into one `student_ids` column. Consequence: the booking UI (`Calendar.tsx`) populates `student_ids` with student *record* ids, but the RLS policy and `Timetable.tsx`/`StudentDashboard.tsx` compared it against `auth.uid()` — the wrong id space — so **a student's own timetable and dashboard silently showed zero sessions**, and `parent_user_ids` was never written at all so **the parent portal always showed zero upcoming sessions.**
+
+Fixed by restoring the three-array shape: `0013_class_sessions_id_space_fix.sql` adds `student_user_ids` and repoints the RLS policy at it; `server/routes/scheduling.ts` gained a `resolveUserIds()` helper that populates `student_user_ids`/`parent_user_ids` at session-creation time (both the direct booking route and the recurring-session `materializeTemplate`) by resolving each student's `student_user_id` and linked `parent_links`. **If you add any new code path that inserts a `class_sessions` row, it must go through this resolver (or populate all three arrays itself) — see security invariant #9 in §8.**
+
+### 11.5 Blocked on you (current, replaces the stale §6)
+
+1. **Stand up self-hosted Supabase** per `supabase/README.md` (clone `supabase/supabase`'s `docker` dir, configure `.env`, `docker compose up`), then apply every file in `supabase/migrations/` in order.
+2. Configure Google OAuth for GoTrue (reuse the existing Google OAuth client, add the new redirect URI) if "Sign in with Google" needs to keep working.
+3. Configure an SMS provider (Twilio etc.) in self-hosted GoTrue for phone/OTP login — Firebase Auth's phone OTP had this bundled; GoTrue doesn't.
+4. Set the new env vars app-wide: `SUPABASE_URL`, `SUPABASE_ANON_KEY`/`VITE_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `DATABASE_URL` — see `.env.example`.
+5. **Run an actual end-to-end pass once Supabase is live** — this migration has never been runtime-verified against real infra (see §11.6). Priority walkthrough: signup → org bootstrap → student enrollment → session booking → Today workspace (does a student see their own upcoming session now? — this is exactly what §11.4 broke) → attendance → invoice → payment webhook.
+6. Everything in the old §6 items 3 and 5 (Razorpay live KYC, WhatsApp/SMS/email onboarding, wiring the payment loop to a real gateway) still applies, on top of item 1 above.
+
+### 11.6 Verification status (current, replaces the stale §5)
+
+| Check | Status |
+|---|---|
+| `npx tsc --noEmit` | ✅ clean, project-wide |
+| `npm test` (unit) | ✅ 51/51 |
+| `npm run test:rls` (RLS/RBAC integration, PGlite) | ✅ 40/40 — verified to actually catch regressions via deliberate revert-and-check (§11.3) |
+| `npm run build` | ✅ clean (frontend + server bundle) |
+| Runtime against a live Supabase instance | ⚠️ **never done** — no Docker/Postgres available in the environment this migration was built in |
+| Browser walkthrough (any workspace) | ⚠️ **never done**, same constraint |
+| Real GoTrue auth (email/password, Google OAuth, phone/OTP) | ⚠️ **never done** — only the JWT-verification code path was reasoned about, not exercised against a real token |
+| Supabase Realtime (`postgres_changes` subscriptions, 63 call sites) | ⚠️ **never done** — written correctly per the API, never connected to a live Realtime server |
+| Supabase Storage (signed URLs, document upload/download) | ⚠️ **never done** |
+| Razorpay webhook / reconcile against the new Postgres transaction code | ⚠️ **never done** (same gap as the original Firestore-era item, now on new infra) |
+
+### 11.7 CI change
+
+`.github/workflows/ci.yml` dropped the Java + Firebase-emulator step (`actions/setup-java` + `firebase-tools emulators:exec`) and added `npm run test:rls` as a plain step — no external dependencies, since PGlite runs embedded in Node. CI is now simpler and faster than the Firestore-era pipeline, not just different.
