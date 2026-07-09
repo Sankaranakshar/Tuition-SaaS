@@ -81,10 +81,17 @@ export async function seed(tx: PGlite) {
      values ($1, $2, $3, 5, 0)`,
     [ids.wal1, ORG, ids.stu1]
   );
+  // student_ids holds STUDENT RECORD ids (what the booking UI/staff views
+  // key off); student_user_ids/parent_user_ids are the separate,
+  // auth-uid-keyed arrays RLS matches against a logged-in student/parent —
+  // see 0013_class_sessions_id_space_fix.sql. Seeding this the way the real
+  // scheduling.ts route actually populates it, not shortcut-seeding user ids
+  // straight into student_ids the way this fixture used to (which matched
+  // the bug, not the fix).
   await tx.query(
-    `insert into class_sessions (id, organization_id, tutor_id, student_ids, parent_user_ids, start_time, end_time, status)
-     values ($1, $2, $3, $4, $5, '2026-07-01T10:00:00Z', '2026-07-01T11:00:00Z', 'scheduled')`,
-    [ids.sess1, ORG, uids.tutor, [uids.student], [uids.parent]]
+    `insert into class_sessions (id, organization_id, tutor_id, student_ids, student_user_ids, parent_user_ids, start_time, end_time, status)
+     values ($1, $2, $3, $4, $5, $6, '2026-07-01T10:00:00Z', '2026-07-01T11:00:00Z', 'scheduled')`,
+    [ids.sess1, ORG, uids.tutor, [ids.stu1], [uids.student], [uids.parent]]
   );
   await tx.query(
     `insert into attendance_records (organization_id, session_id, student_id, tutor_id, status, billed, session_start)

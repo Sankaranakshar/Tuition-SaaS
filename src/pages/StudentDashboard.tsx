@@ -24,7 +24,7 @@ export default function StudentDashboard() {
       const { data, error } = await supabase
         .from("class_sessions")
         .select("*")
-        .contains("student_ids", [user.id])
+        .contains("student_user_ids", [user.id])
         .limit(50);
       if (cancelled) return;
       if (error) {

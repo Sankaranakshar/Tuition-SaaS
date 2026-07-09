@@ -432,9 +432,9 @@ export default function Calendar() {
 
   const updateSessionTime = async (sessionId: string, newStart: Date, newEnd: Date) => {
     try {
-      // NOTE: class_sessions has no client-facing update RLS policy (session
-      // create/status-transition is server-only per supabase/migrations/0002_rls.sql);
-      // this write will be rejected until a reschedule endpoint exists server-side.
+      // Reschedule (time/room) is staff-writable directly — see the
+      // class_sessions_update policy in supabase/migrations/0009_rls_fixes.sql.
+      // Only *creating* a session or flipping status to completed is server-only.
       const { error } = await supabase
         .from("class_sessions")
         .update({ start_time: newStart.toISOString(), end_time: newEnd.toISOString() })

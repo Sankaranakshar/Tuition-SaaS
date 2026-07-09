@@ -364,9 +364,23 @@ describe("Parent and student access", () => {
   );
 
   it(
-    "student reads own session via denormalized student_ids",
+    "student reads own session via denormalized student_user_ids",
     withFixtures(async (tx, as) => {
       await as(uids.student, "authenticated");
+      const res = await tx.query(`select * from class_sessions where id = $1`, [ids.sess1]);
+      expect(res.rows.length).toBe(1);
+    })
+  );
+
+  // Regression test for a real bug found post-migration: student_ids holds
+  // student RECORD ids (what the booking UI populates), so RLS/client
+  // queries matching a logged-in user must go through the separate
+  // student_user_ids/parent_user_ids arrays instead — see
+  // 0013_class_sessions_id_space_fix.sql.
+  it(
+    "parent reads their child's session via denormalized parent_user_ids",
+    withFixtures(async (tx, as) => {
+      await as(uids.parent, "authenticated");
       const res = await tx.query(`select * from class_sessions where id = $1`, [ids.sess1]);
       expect(res.rows.length).toBe(1);
     })

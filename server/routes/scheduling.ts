@@ -77,6 +77,34 @@ const sessionSchema = z.object({
   roomNumber: z.string().optional(),
 });
 
+/**
+ * class_sessions.student_ids holds student RECORD ids (what the booking UI
+ * and staff views key off). RLS needs to match a logged-in student/parent's
+ * auth uid instead, so student_user_ids/parent_user_ids are separate,
+ * derived columns populated here at insert time — mirrors the three-array
+ * shape the old Firestore docs used (studentIds/studentUserIds/parentUserIds)
+ * rather than conflating record ids and auth ids into one column.
+ */
+async function resolveUserIds(
+  client: PoolClient,
+  studentIds: string[]
+): Promise<{ studentUserIds: string[]; parentUserIds: string[] }> {
+  if (studentIds.length === 0) return { studentUserIds: [], parentUserIds: [] };
+
+  const studentsRes = await client.query(
+    `select student_user_id from students where id = any($1::uuid[]) and student_user_id is not null`,
+    [studentIds]
+  );
+  const parentsRes = await client.query(
+    `select distinct parent_user_id from parent_links where student_id = any($1::uuid[])`,
+    [studentIds]
+  );
+  return {
+    studentUserIds: studentsRes.rows.map((r) => r.student_user_id as string),
+    parentUserIds: parentsRes.rows.map((r) => r.parent_user_id as string),
+  };
+}
+
 /** Range-overlap conflict check for a tutor, scoped by an advisory lock on (org, tutor). */
 async function checkTutorConflictAndInsert(
   client: PoolClient,
@@ -116,14 +144,16 @@ router.post("/sessions", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, 
 
     const sessionId = await withTransaction((client) =>
       checkTutorConflictAndInsert(client, orgId, body.tutorId, body.startTime, body.endTime, async () => {
+        const studentIds = body.studentIds || [];
+        const { studentUserIds, parentUserIds } = await resolveUserIds(client, studentIds);
         // Meeting links are attached server-side via the Google Calendar
         // integration (Epic 8, deferred). Never fabricate one here.
         const insertRes = await client.query(
           `insert into class_sessions
-             (organization_id, template_id, tutor_id, student_ids, start_time, end_time, status, is_online, room_number)
-           values ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8)
+             (organization_id, template_id, tutor_id, student_ids, student_user_ids, parent_user_ids, start_time, end_time, status, is_online, room_number)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, 'scheduled', $9, $10)
            returning id`,
-          [orgId, body.templateId, body.tutorId, body.studentIds || [], body.startTime, body.endTime, body.isOnline ?? false, body.roomNumber ?? null]
+          [orgId, body.templateId, body.tutorId, studentIds, studentUserIds, parentUserIds, body.startTime, body.endTime, body.isOnline ?? false, body.roomNumber ?? null]
         );
         return insertRes.rows[0].id as string;
       })
@@ -193,12 +223,14 @@ async function materializeTemplate(template: Template): Promise<MaterializeResul
         await checkTutorConflictAndInsert(
           client, template.organization_id, template.tutor_id!, sessionStart.toISOString(), sessionEnd.toISOString(),
           async () => {
+            const studentIds = template.student_ids || [];
+            const { studentUserIds, parentUserIds } = await resolveUserIds(client, studentIds);
             const insertRes = await client.query(
               `insert into class_sessions
-                 (organization_id, template_id, tutor_id, student_ids, start_time, end_time, status, is_online, room_number, materialized_date)
-               values ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8, $9)
+                 (organization_id, template_id, tutor_id, student_ids, student_user_ids, parent_user_ids, start_time, end_time, status, is_online, room_number, materialized_date)
+               values ($1, $2, $3, $4, $5, $6, $7, $8, 'scheduled', $9, $10, $11)
                returning id`,
-              [template.organization_id, template.id, template.tutor_id, template.student_ids || [],
+              [template.organization_id, template.id, template.tutor_id, studentIds, studentUserIds, parentUserIds,
                 sessionStart.toISOString(), sessionEnd.toISOString(), template.is_online ?? false, template.room_number ?? null, dateKey]
             );
             return insertRes.rows[0].id as string;
