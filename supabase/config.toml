@@ -1,0 +1,47 @@
+# Supabase CLI config. Required by `supabase link` / `supabase db push`.
+# Most sections here only affect local dev (`supabase start`); the hosted project
+# (ref cwugpiernnwrhcximjwh) is the deploy target — see supabase/README.md Option A.
+project_id = "tuition-saas"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+enabled = false
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+# Set to your deployed app origin in the hosted dashboard, not here.
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+
+# Google OAuth and Phone/OTP are configured in the hosted dashboard
+# (Authentication → Providers), not in this file — see supabase/README.md Option A §3.
+
+[storage]
+enabled = true
+
+[analytics]
+enabled = false

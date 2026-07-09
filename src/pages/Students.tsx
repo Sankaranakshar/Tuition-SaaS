@@ -4,6 +4,7 @@ import { Plus, Search, Edit2, Trash2, Users, FileText, Upload, Download } from "
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
+import { uploadDocument, getDocumentUrl, deleteDocument } from "../lib/api";
 
 import LoadingSpinner from "../components/LoadingSpinner";
 
@@ -131,8 +132,7 @@ export default function Students() {
   // Map a documents row (snake_case) to the flat shape the docs modal reads.
   const mapDoc = (row: any) => ({
     id: row.id,
-    fileName: row.name,
-    fileUrl: row.file_url,
+    fileName: row.file_name,
     category: row.category,
     notes: row.notes,
     uploadedBy: row.uploaded_by_user_id,
@@ -206,45 +206,22 @@ export default function Students() {
     setUploadError("");
     if (!docFile || !selectedStudentForDocs || !user || !user.organizationId) return;
 
-    if (docFile.size > 1048576) { // 1MB limit for Firestore
-      setUploadError("File size must be less than 1MB.");
-      return;
-    }
-
+    // Uploads go through the server storage route (magic-byte sniff, filename
+    // sanitization, private bucket) — never a direct client insert. The server
+    // caps size at 5MB and rejects spoofed MIME types.
     try {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const fileUrl = reader.result as string;
-
-        const { error } = await supabase.from("documents").insert({
-          organization_id: user.organizationId,
-          student_id: selectedStudentForDocs.id,
-          uploaded_by_user_id: user.id,
-          name: docFile.name,
-          file_url: fileUrl,
-          category: docCategory,
-          notes: docNotes,
-        });
-        if (error) {
-          console.error("Supabase Error: ", JSON.stringify({
-            error: error.message,
-            operationType: "create",
-            path: "documents"
-          }));
-          return;
-        }
-
-        setDocFile(null);
-        setDocCategory("homework");
-        setDocNotes("");
-      };
-      reader.readAsDataURL(docFile);
+      await uploadDocument({
+        file: docFile,
+        studentId: selectedStudentForDocs.id,
+        category: docCategory,
+        notes: docNotes,
+      });
+      // The Realtime subscription on `documents` refetches the list.
+      setDocFile(null);
+      setDocCategory("homework");
+      setDocNotes("");
     } catch (error: any) {
-      console.error("Supabase Error: ", JSON.stringify({
-        error: error.message,
-        operationType: "create",
-        path: "documents"
-      }));
+      setUploadError(error?.message || "Upload failed. Please try again.");
     }
   };
 
@@ -256,16 +233,24 @@ export default function Students() {
   const handleDeleteDoc = async () => {
     if (!docToDelete) return;
     try {
-      const { error } = await supabase.from("documents").delete().eq("id", docToDelete);
-      if (error) throw error;
+      // Server route removes both the Storage object and the row (owner/admin
+      // only). The Realtime subscription on `documents` refetches the list.
+      await deleteDocument(docToDelete);
       setIsDeleteDocModalOpen(false);
       setDocToDelete(null);
     } catch (error: any) {
-      console.error("Supabase Error: ", JSON.stringify({
-        error: error.message,
-        operationType: "delete",
-        path: "documents"
-      }));
+      toast.error(error?.message || "Could not delete the document.");
+    }
+  };
+
+  // Documents live in a private Storage bucket; open a short-lived signed URL
+  // minted by the server rather than a permanent link.
+  const handleDownloadDoc = async (documentId: string) => {
+    try {
+      const { url } = await getDocumentUrl(documentId);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (error: any) {
+      toast.error(error?.message || "Could not open the document.");
     }
   };
 
@@ -624,15 +609,13 @@ export default function Students() {
                                 </div>
                               </div>
                               <div className="flex items-center space-x-2">
-                                <a 
-                                  href={doc.fileUrl} 
-                                  download={doc.fileName}
+                                <button
+                                  onClick={() => handleDownloadDoc(doc.id)}
                                   className="text-gray-400 hover:text-gray-600 p-2"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
+                                  title="Download"
                                 >
                                   <Download className="w-4 h-4" />
-                                </a>
+                                </button>
                                 <button onClick={() => confirmDeleteDoc(doc.id)} className="text-red-400 hover:text-red-600 p-2">
                                   <Trash2 className="w-4 h-4" />
                                 </button>

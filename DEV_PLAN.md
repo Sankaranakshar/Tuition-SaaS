@@ -1,267 +1,198 @@
-# ClassStackr Unified Development Plan
-## One executable plan merging REDESIGN.md (experience) and GO_TO_MARKET_BLUEPRINT.md (foundation, security, GTM)
+# ClassStackr Development Plan (Supabase era)
 
-**How this document works.** REDESIGN.md defines what the product should feel like (phases R0-R6). GO_TO_MARKET_BLUEPRINT.md defines what must be true underneath it (phases 1-5, security findings C1-C5, the money loop). This plan interleaves both into a single 24-week schedule of epics with tasks, owners, dependencies, and acceptance criteria, so nothing is built twice and nothing insecure ships under a beautiful surface.
+_Rewritten from scratch on 2026-07-10, after the Firebase → self-hosted Supabase/Postgres migration (HANDOFF.md §11). The previous DEV_PLAN.md was Firestore-era and is superseded by this document; its product intent survives in REDESIGN.md and GO_TO_MARKET_BLUEPRINT.md. This plan treats the current repository as the baseline: completed work is listed as status, not as future tasks._
 
-**Team assumption:** Engineer A (backend/infra lead), Engineer B (frontend/product lead), Founder (design decisions, GTM, pilot management). Adjust week counts proportionally for a different team.
+**Stack (current, verified):** React 19 + Vite + Tailwind 4 SPA, stateless Express API (`server/`), self-hosted Supabase (Postgres + RLS, GoTrue auth, Realtime, Storage), direct `pg` transactions for money/scheduling, Razorpay per-org payment links.
 
-**Two non-negotiable sequencing rules:**
-1. **No feature work ships to any external user before Epics 1-4 are complete** (the security and data-integrity epics). A polished UI on top of client-writable money is a liability, not a product.
-2. **Every new surface is built on the new shell and design tokens from Epic 5 onward.** No screen gets built twice: old pages are retired when their replacement workspace lands, never restyled in place.
-
-**Ticket ID convention used below:** `E<epic>.<task>`. Each epic lists its blocking dependencies.
+**Audit basis:** every claim in "Current Status" was re-verified against the code on 2026-07-10: `tsc --noEmit` clean, 51/51 unit tests, 40/40 RLS integration tests (PGlite), production build passing. Nothing in this repo has ever run against a live Supabase instance or a browser; that gap defines the blocker list.
 
 ---
 
-# Stage 0: Foundation and Safety (Weeks 1-4)
-*Blueprint Phase 1 + REDESIGN Phase 0. Nothing here is user-visible except the shell. Everything here is load-bearing.*
+## 1. Current Status
 
-## Epic 1: Repository, environments, CI (Week 1) — Engineer A
-Dependencies: none. This is day one.
+### Done and verified (locally, static + test-suite level)
 
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E1.1 | `git init`, push to GitHub, branch protection on `main` | Repo exists; PRs required |
-| E1.2 | Rename package (`react-example` → `classstackr`), set version 0.1.0, remove dead deps (`bcryptjs`, `jsonwebtoken`, `@google/genai`, `xlsx` → `exceljs`) | `npm ls` clean; build passes |
-| E1.3 | Delete duplicate `/components/ui` tree; single source in `src/components/ui` | One ui directory; imports fixed |
-| E1.4 | Firebase emulator suite config (auth, firestore, storage) + seed script with demo org | `npm run dev:emulators` boots a working local app |
-| E1.5 | Three Firebase projects: dev/staging/prod; per-env `.env`; separate OAuth clients | Staging deploy reachable; prod empty |
-| E1.6 | GitHub Actions: lint (`tsc` + eslint) → unit tests → rules tests → build; deploy to staging on merge | Red PR cannot merge |
-| E1.7 | Sentry (frontend + Express), pino → Cloud Logging with request IDs | A thrown test error appears in Sentry from staging |
-| E1.8 | Dockerfile for Express API, Cloud Run deploy, Firebase Hosting for SPA, `/api/v1` prefix | One-command deploy documented and rehearsed |
+- **Migration complete.** Zero Firebase/Firestore code remains (comments only). No firebase deps in package.json. Auth is GoTrue JWT (HS256, verified locally per request) + a fresh `organization_members` lookup per API call; no custom claims, no token-revocation dance.
+- **Database:** 37 tables in `supabase/migrations/0001_schema.sql`, RLS enabled on every table (`0002_rls.sql` + fix migrations 0009/0011/0012/0013), money tables server-only (no client write policies), composite indexes (`0003_indexes.sql`), private storage bucket (`0004_storage.sql`).
+- **Server-authoritative money:** attendance, manual payments, wallet top-up, refunds, invoice finalize/void/payment-link, all inside real `pg` transactions with `FOR UPDATE` row locks, idempotency keys, and `audit_events` writes.
+- **Payments (Epic 6):** per-org Razorpay creds (AES-GCM encrypted, write-only), payment links, HMAC-verified webhooks mounted on a raw-body parser before JSON/rate-limit middleware, hourly reconcile endpoint, gap-free invoice numbering, GST snapshot, server-side PDF invoices.
+- **Scheduling:** server-side enrollment capacity + tutor conflict checks in transactions; session materialization (rolling 8-week window, idempotent, cron-triggered); the `class_sessions` three-array id-space model (`student_ids` record ids, `student_user_ids`/`parent_user_ids` auth uids) with `resolveUserIds()` as the mandatory write path.
+- **Today workspace (Epic 9):** pure tested core (`src/lib/today.ts`, 26 tests), session Line, one-tap optimistic attendance with undo-then-flush, attention queue, Pulse, admin per-tutor lanes. Legacy Dashboard deleted.
+- **Parent portal (Epic 10):** staff-minted single-use invites, phone-OTP redeem with DPDP consent capture, mobile-first portal (overview/invoices/wallet), Pay Now via hosted Razorpay page, WhatsApp share, PDF download.
+- **Security test suite:** `npm run test:rls` (40 assertions, PGlite, no Docker/Java) is the constitution. It has caught two real shipped bugs (profiles org immutability, class_sessions id-space). CI runs typecheck → unit → RLS → build.
+- **Hygiene:** Sentry (both sides, DSN-gated), pino with redaction, helmet, per-user rate limiting, JSON 404s, central error handler with Zod → 422, graceful shutdown, error boundaries per route, bounded + org-scoped queries throughout, INR formatting everywhere.
 
-## Epic 2: Security rules rewrite, spec-first (Weeks 1-2) — Engineer A
-Dependencies: E1.4 (emulators), E1.6 (CI). Fixes blueprint findings C1-C5.
+### Deferred by design (external blockers, not engineering)
 
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E2.1 | Encode the RBAC matrix (blueprint 9.3) as a Firestore rules test suite with `@firebase/rules-unit-testing`; one test per matrix cell plus explicit regression tests for C1-C5 | Suite runs in CI; fails against current rules (proving it tests the real vulns) |
-| E2.2 | Roles move to custom claims + `organization_members`, set only by a server endpoint; `users` doc update rule restricted to `hasOnlyAllowedFields(['name','phone','timezone','photoUrl'])` | C1 test green: self-role-escalation write is denied |
-| E2.3 | Deny ALL client writes to `wallets`, `invoices`, `payments`, `transactions`, `attendance_records`, `wallet_ledger`, `billing_events` | C2 tests green |
-| E2.4 | Role-aware rules per the matrix for students, sessions, templates, leads, programs, courses (replace flat `isOrgMember`) | C3 tests green |
-| E2.5 | `conversations`/`messages` readable only by `participantIds`; fix parent→student read path (map through `parent_links`, not auth-UID-in-studentIds) | C4 tests green; parent can read own child's sessions, not others |
-| E2.6 | Remove `tutor_profiles` world-read (FindTutors is cut); delete FindTutors page and route | C5 test green; route gone |
-| E2.7 | Auth middleware: role from verified custom claims only; `requireRole` accepts a role set, not string-equals-admin; revoke refresh tokens on role change/member removal | Middleware unit tests green |
-| E2.8 | Drop cookie-token path in API auth (header only); fix crypto error message; add key-version prefix to ciphertext format | No `req.cookies.token` reads; decrypt handles both formats |
+- **Epic 7, outbound comms** (WhatsApp Business API, SMS DLT, email domain verification): blocked on provider onboarding. Manual UPI-link sharing covers the gap.
+- **Epic 8, Google Calendar/Meet:** blocked on OAuth consent-screen verification. Sessions degrade to "link pending".
 
-## Epic 3: One data model, server-authoritative money (Weeks 2-4) — Engineer A
-Dependencies: E2 (rules must exist before privileged endpoints trust them).
+### Built but never runtime-verified (the single biggest risk)
 
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E3.1 | Kill SQLite: migrate `google_refresh_token` (AES-GCM encrypted) to a server-only Firestore collection; delete `server/db.ts`, all SQLite tables, the user-sync block in auth middleware, and SQLite-backed routes (students, invoices, messages, dashboard) | `better-sqlite3` removed from package.json; API stateless; app still works via Firestore |
-| E3.2 | New collections per blueprint 8.1: `attendance_records`, `payments`, `wallet_ledger` (append-only), `billing_events`, `parent_links`, `audit_events`; typed Firestore converters in `src/lib/firestore.ts` for every collection | Types compile; no raw `doc.data() as X` casts in new code |
-| E3.3 | Money as integer paise everywhere; single `lib/format.ts` (₹ Indian grouping, relative dates); purge every `$` render | grep for `$$\{` and `toFixed(2)` on money returns zero hits |
-| E3.4 | Server endpoint `POST /api/v1/billing/attendance`: transaction that writes attendance_records + wallet_ledger debit or billing_event invoice line, idempotent on (sessionId, studentId), audit-logged | Marking twice bills once; attendance persists; ClassManager client-side billing deleted |
-| E3.5 | Server endpoints: record manual payment, adjust wallet, void invoice, approve invoice batch; all idempotency-keyed and audit-logged | Rules tests + supertest integration tests green |
-| E3.6 | Move conflict detection + capacity check server-side: bounded query (orgId + tutorId + time window), capacity checked inside the enrollment transaction, applies to all class types | Race test (two parallel enrollments at capacity 1) admits exactly one |
-| E3.7 | Session materialization: template as source of truth; Cloud Scheduler job materializes 8 weeks rolling; conflict skips surface as `conflicts[]` in the API response, never silent console.warn | Editing a template reshapes future sessions; skipped dates visible |
-| E3.8 | Firestore Timestamps replace ISO strings on new writes; `firestore.indexes.json` committed (sessions, invoices, attendance, enrollments composites); migration script for existing data | Indexed queries verified in emulator; deploy includes indexes |
-| E3.9 | Documents to Cloud Storage: storage rules mirroring org isolation, signed URLs, magic-byte MIME sniffing, filename sanitization; delete local-disk upload path | Upload/download works on staging; server has no `uploads/` dir |
-| E3.10 | Soft deletes: `archivedAt` on students/enrollments; deny hard deletes of anything with financial history | Rules test green |
+Everything above passes static checks and tests, but **no code in this repository has ever executed against a live Supabase instance, a real browser, real GoTrue auth, Realtime, Storage, or Razorpay.** The 63 `onSnapshot` call sites were rewritten to `postgres_changes` refetch patterns without ever connecting to a Realtime server. Treat every feature as "expected working" until Blocker 1 below is cleared.
 
-## Epic 4: Query hygiene and error honesty (Week 3, parallel) — Engineer B
-Dependencies: E1.
+### Not started
 
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E4.1 | Every Firestore listener gets `limit()` + date bounds; Dashboard's four unbounded `onSnapshot`s replaced with one bounded hook pattern (TanStack Query + listener hooks) | No unbounded query in `src/`; dashboard reads this-week data only |
-| E4.2 | Error boundaries per route; Firestore errors surface as visible retry states, not console.error + silent zeros | Killing emulator mid-session shows error UI, not fake zeros |
-| E4.3 | Purge `alert()` / `window.confirm()` (5 call sites: Calendar ×3, Leads, Contact); toast + undo pattern component (`UndoToast`) | grep returns zero; undo works on lead delete |
-| E4.4 | Route-level code splitting; recharts/jspdf/exceljs dynamic imports | Initial bundle <200KB gzipped, enforced by size-limit in CI |
-
-## Epic 5: Design foundation and app shell (Weeks 3-4) — Engineer B + Founder
-Dependencies: E1.3. This is REDESIGN Phase 0.
-
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E5.1 | `tokens.css`: type scale (12/13/14/16/20/28, weights 450/600, tabular-nums), color system (slate base + single indigo accent + semantic amber/red/green), 4px spacing grid, radii (6/10), dark theme variables | No raw hex or arbitrary Tailwind values in new components; dark mode toggles |
-| E5.2 | Shell rewrite replacing `Layout.tsx`: 56px icon rail (5 workspaces + settings, badge dots), topbar, role-adaptive menus | Old sidebar deleted; fake search input gone |
-| E5.3 | Command palette (`Cmd+K`, shadcn Command): navigation + entity jump (people, invoices) + create actions; `/` focuses list filter; `?` shortcut map | Palette reaches every route and every person by name |
-| E5.4 | Core component kit: `EmptyState`, `Skeleton` patterns, `StatChip`, `PersonRow`, `AgedBadge`, `ContextCard`, popover-edit primitive | Storybook-style demo route renders all states |
-| E5.5 | i18n wrapper (react-i18next) on all new strings; en locale file | New components have zero hardcoded user-facing strings |
-| E5.6 | Old pages mounted inside new shell unchanged (temporary) | App fully navigable; nothing lost |
-
-**Stage 0 exit gate:** rules test suite green in CI proving the RBAC matrix; no client can write money; attendance persists; SQLite gone; one-command deploy to staging; app runs inside the new shell. *Founder demo: log in as a student in the console, attempt to self-promote and edit an invoice, show both denied.*
+- Stage 2 workspaces (Student Story, People, Money, Inbox, Onboarding rebuild): Epics 11 to 14.
+- Stage 3 (Schedule rebuild, SaaS subscription billing, super-admin, hardening gauntlet): Epics 15 to 17.
+- Stage 4 (mobile polish, growth loop, AI brief): Epics 18 to 20.
+- Legacy pages still live inside the new shell, functional but not token-styled: StudentProfile (1,308 lines), Calendar, Students, Invoices, Bookings, Timetable, Wallet, Transactions, Messaging, Notifications, Settings/Profile/Preferences.
 
 ---
 
-# Stage 1: The Money Loop and Today (Weeks 5-10)
-*Blueprint Phase 2 + REDESIGN Phase 1. The wedge becomes real: attendance → invoice → WhatsApp UPI link → self-reconciling payment, driven from the new Today surface.*
+## 2. Immediate Blockers (ranked)
 
-**Week 5, day 1, Founder tasks (long lead times, start immediately):** Razorpay live KYC application; WhatsApp Business API onboarding (Interakt/Gupshup) + template approvals; SMS DLT registration; engage CA for GST invoice format review; draft privacy policy + ToS with DPDP parental-consent language.
-
-## Epic 6: Payments (Weeks 5-7) — Engineer A
-Dependencies: E3.5 (money endpoints), E2.3.
-
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E6.1 | Razorpay integration: payment link per invoice, order creation, test-mode e2e | Test payment marks invoice paid |
-| E6.2 | Webhook endpoint: signature verification, idempotency by gateway payment id, reconciliation to `payments` + invoice status machine (draft→sent→partially_paid→paid|void) | Duplicate webhook delivery processed once; partial payments accumulate correctly |
-| E6.3 | Hourly reconciliation poll for missed webhooks | Kill webhook delivery in test; invoice still reconciles within the hour |
-| E6.4 | Invoice numbering (INV-{org}-{YYYY}-{seq}, transactional counter), GST fields, org tax settings | CA-reviewed sample invoice approved |
-| E6.5 | PDF receipt/invoice generation endpoint (server-side, org logo) | Parent-quality PDF downloads from staging |
-| E6.6 | Refund and void flows (manual, audit-logged) | Void leaves immutable record; ledger balances |
-
-## Epic 7: Outbound communications (Weeks 6-8) — Engineer A
-**⚠️ DEFERRED (2026-07-07).** Blocked on external provider onboarding (WhatsApp Business API template approval, SMS DLT registration, Resend/SES domain verification) — none of which can be finished from a dev machine. Sequenced after the Today workspace (Epic 9) so the wedge demo can be exercised with manually-sent UPI links until the router lands. Resume once the founder's provider accounts clear KYC.
-
-Dependencies: E6.1 (payment links to send), founder's provider onboarding.
-
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E7.1 | Channel router: notification event → WhatsApp template / SMS fallback / email (Resend or SES), per-user channel prefs, Cloud Tasks queue with retry | Failed sends retry; delivery status stored |
-| E7.2 | Templates: fee reminder (with payment link), payment receipt, schedule change, session reminder | All approved by WhatsApp; rendered with real data on staging |
-| E7.3 | Anti-spam: max 2 WhatsApp/day per parent, digest batching, quiet hours | Config enforced in router tests |
-| E7.4 | Bulk fee-reminder endpoint: select N invoices → N personalized sends, one audit event | 30 reminders send in one action from the API |
-
-## Epic 8: Real scheduling integrations (Week 8) — Engineer A
-**⚠️ DEFERRED (2026-07-07).** Blocked on Google Cloud OAuth verification + Calendar API conferenceData scopes (Meet link creation requires a verified consent screen). The safe placeholder-link removal already shipped in Epic 3, so sessions render "link pending" rather than a fake Meet — no user-facing regression from deferring. The Today workspace (Epic 9) Join action degrades gracefully when a session has no `meetingLink`. Resume once the OAuth consent screen is verified.
-
-Dependencies: E3.7.
-
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E8.1 | Google Calendar event creation on session create/update/cancel; real Meet links via Calendar API conferenceData; placeholder-link code deleted | Joining the link from a session opens a real Meet |
-| E8.2 | Token revocation handling: expired/revoked refresh token → user-visible reconnect prompt, sessions still function without sync | Revoking access in Google account does not break scheduling |
-| E8.3 | Timezone correctness: org IANA zone + user zone, UTC storage, viewer-local render | A session created in Kolkata renders correctly for a viewer in Dubai |
-
-## Epic 9: Today workspace (Weeks 6-9) — Engineer B
-Dependencies: E5 (shell), E3.4 (attendance endpoint), E4.1 (bounded queries). REDESIGN sections 5 and 6.1-partial.
-
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E9.1 | The Line: today's session timeline with real-time now-cursor; state-aware action per block (Join → Mark attendance → "N unmarked") | State transitions happen live as clock passes session boundaries |
-| E9.2 | One-tap attendance: roster popover, all-present default + exception taps, optimistic with undo, calls E3.4 | Marking a 12-student batch takes under 10 seconds; undo reverses billing event |
-| E9.3 | Attention queue v1, rules-based: overdue invoices (aged), unmarked past sessions, absence streaks (3+), quiet leads (6+ days), schedule conflicts; each item has inline action + snooze/dismiss | Every item type renders with a working action; queue empties to the rewarding empty state |
-| E9.4 | The Pulse: collected ₹ this month, outstanding ₹, sessions this week vs last; links into Money/Schedule | Three numbers, no charts, correct against ledger |
-| E9.5 | Attendance debt counter + backdated marking (7-day window, audit-logged) | Unmarked sessions from yesterday appear and clear |
-| E9.6 | Admin variant: stacked tutor timelines | Org owner sees all tutors' days |
-| E9.7 | Retire old Dashboard page | Route removed |
-
-## Epic 10: Parent portal v1, mobile-web-first (Weeks 8-10) — Engineer B
-Dependencies: E6 (payable invoices), E2.5 (parent read rules), E5.
-
-**✅ BUILT (2026-07-08), not browser-verified.** See HANDOFF.md §3 for the full writeup. Phone OTP itself predates this epic (already in Login.tsx/AuthContext.tsx); what was missing and is now built is the `parent_links` creation path, DPDP consent capture, and the portal UI. Acceptance criteria involving a live phone or a real payment (marked below) are unverified — same live-Firebase/Razorpay gap Epic 6 and Epic 9 already carry.
-
-| ID | Task | Acceptance criteria | Status |
-|----|------|---------------------|--------|
-| E10.1 | Parent onboarding: phone OTP verification, `parent_links` creation, DPDP consent capture | Consent record stored with timestamp | Built — `consentGivenAt`/`consentVersion` on the `parent_links` doc |
-| E10.2 | Children overview: schedule, attendance, outstanding balance per child | Flawless at 375px | Built (`ParentPortal.tsx`, max-w-md); 375px not device-tested |
-| E10.3 | Invoice view + pay: Razorpay checkout from the portal and from WhatsApp deep link | Real UPI payment on a phone completes and reconciles | Built (Pay Now → hosted payment-link page; WhatsApp share via `wa.me`); real payment unverified |
-| E10.4 | Receipt history + wallet balance view | Matches ledger exactly | Built — reads `payments`/`wallets` directly, no derived state |
-
-**Stage 1 exit gate (the wedge demo):** on staging with live-mode Razorpay: tutor marks attendance from Today → invoice auto-drafts → WhatsApp reminder with UPI link hits a real phone → parent pays → invoice self-marks paid → Pulse updates. One unbroken take, no manual steps.
+1. **Apply the migrations to the hosted project and run the app for the first time.** As of 2026-07-10 no migration has ever been applied to any live database — the Supabase Cloud project (`cwugpiernnwrhcximjwh`) exists but is empty. Direction is now decided (hosted Cloud) and the repo is prepared: migrations renamed to `db push` format, `supabase/config.toml` added, `.env.example` + `supabase/README.md` updated for hosted (see §Option A). What remains **needs your Supabase login/DB password and cannot be done from here**:
+   - `brew install supabase/tap/supabase` → `supabase login` → `supabase link --project-ref cwugpiernnwrhcximjwh` → `supabase db push` (or paste the migrations into the SQL editor in filename order).
+   - Fill real env values (`VITE_SUPABASE_URL`, anon key, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `DATABASE_URL` pooler URI) from Dashboard → Project Settings.
+   Nothing else on this list is meaningful until this works.
+2. **First end-to-end walkthrough:** signup → org bootstrap → add student → book session → student sees own session (the exact §11.4 regression) → Today attendance → invoice accrual → manual payment → ledger. Fix whatever breaks; expect breakage in Realtime subscriptions and auth flows since they have never run.
+3. **GoTrue configuration:** Google OAuth redirect URI; SMS provider (Twilio or MSG91) for phone OTP, which the parent portal hard-depends on.
+4. **Payment loop wiring:** Razorpay live KYC (long lead, start now), per-org key connection, webhook URL registration, real ₹ test payment, hourly reconcile + session-materialization cron jobs (any scheduler that can POST with the `CRON_SECRET` header).
+5. **Production hosting decision.** The Dockerfile is Cloud Run-era; the stack now needs a box or VPS for Supabase (Docker compose) plus the Express app, TLS, backups. Decide and document the deploy story.
+6. **Legal:** privacy policy, ToS, DPDP parental-consent language (the portal already captures consent; the document it references must exist), refund policy.
 
 ---
 
-# Stage 2: The Lovable Product (Weeks 11-16)
-*REDESIGN Phases 2-3 + blueprint Phase 3. The surfaces that sell.*
+## 3. MVP Launch Tasks (before the first paying customer)
 
-## Epic 11: Student Story + People (Weeks 11-13) — Engineer B
-Dependencies: E3.2 (attendance/payments data to render), E5. REDESIGN 6.2-6.3. Retires StudentProfile (1,289 lines), Students, Leads pages.
+Effort in engineer-days (ed).
 
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E11.1 | Timeline component: reverse-chron interleave of sessions/attendance, homework, payments/invoices, messages, notes, milestones; filter chips; virtualized | 2 years of history scrolls at 60fps |
-| E11.2 | Pinned header: batches, parent contact (tap to call/message), wallet, outstanding, attendance rate | Parent-call prep under 10 seconds |
-| E11.3 | Inline composers: note, homework assignment, record payment (via E3.5) | No modals for the three common cases |
-| E11.4 | Permission-lensed variants: parent view (no private notes), student view; replaces AcademicProgress + StudyMaterial pages | Same component, three roles, rules-verified |
-| E11.5 | People directory: four lenses (Students/Leads/Parents/Tutors), needs-attention default sort, hover actions, bulk select + bulk message/invoice | Keyboard navigable end to end |
-| E11.6 | Lead funnel strip + going-cold list; `lastTouchedAt`/`nextActionAt`; one-action convert (atomic student + enrollment + notes carry-over); public per-org inquiry form feeding leads | Kanban deleted; convert is one click; form submission appears in funnel |
-| E11.7 | CSV student import with dry-run preview and phone dedup | A 200-row messy CSV imports with a comprehensible error report |
+### Critical
 
-## Epic 12: Money workspace (Weeks 13-15) — Engineer B (front) + A (batch drafting)
-Dependencies: E6 complete. REDESIGN 6.4. Retires Invoices, Wallet, Transactions pages.
+| Task | Effort | Notes |
+|---|---|---|
+| Blockers 1 and 2 (infra up + e2e walkthrough + fixes) | 3 to 7 ed | Budget for surprises; Realtime and GoTrue paths are unexercised |
+| Browser QA: Today, Parent portal (375px), Calendar booking, invoice lifecycle | 2 ed | The three built-not-verified epics |
+| Real-device parent flow: OTP → invite redeem → Pay Now → webhook reconcile | 1 ed | Needs Blockers 3 and 4 |
+| ~~Fix: Students.tsx legacy base64 document upload~~ **DONE (2026-07-10)** | — | Upload/download/delete now route through the server storage API (`uploadDocument`/`getDocumentUrl`/`deleteDocument`); no more base64-into-Postgres or direct client insert/delete. Typecheck clean |
+| Backup/restore: nightly `pg_dump` + storage sync, one rehearsed restore | 1 ed | Self-hosted means no Firebase safety net; do this before real data exists |
+| Staging vs prod environments (two Supabase stacks or two projects) | 1 ed | |
 
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E12.1 | Outstanding segment: grouped by payer, aging buckets (0-7/8-30/30+) with escalating temperature, sticky selection-total footer, bulk remind (E7.4) | Select-all-30+-days → one click → reminders sent |
-| E12.2 | Monthly batch drafting job (Cloud Scheduler) + one-screen approval flow | Month-end for 30 students under 10 minutes, measured |
-| E12.3 | Inline record-payment popover (two fields, optimistic, undo) | Cash payment recorded in under 5 seconds, receipt auto-sent |
-| E12.4 | Wallets segment: balances, depletion projection ("covers 3 more sessions"), threshold alerts feeding the Today queue | Projection matches template pricing |
-| E12.5 | Invoice detail as document: Stripe-style activity trail (sent→viewed→reminded→paid), PDF download | Trail complete for a full lifecycle |
-| E12.6 | Insights segment: revenue trend, collection rate, aging, revenue per class type, all from nightly `org_stats_daily` aggregates + XLSX/CSV export | Zero unbounded queries; charts load <500ms |
+### High
 
-## Epic 13: Inbox + homework loop (Weeks 14-16) — Engineer B
-Dependencies: E2.5, E7. REDESIGN 6.5. Retires Messaging + Notifications pages.
+| Task | Effort | Notes |
+|---|---|---|
+| **Fix: client-side jsPDF invoice/report generation** (Invoices.tsx, StudentProfile.tsx, AcademicProgress.tsx) | 1 ed | Duplicates the server PDF with a different (non-GST-snapshot) layout; also statically imports jspdf + autotable (~620KB of chunks). Invoices should call `downloadInvoicePdf`; progress reports either move server-side or dynamic-import |
+| Seed script for demo/staging data | 1 ed | Unblocks all QA; no seed exists |
+| Uptime monitoring + Sentry DSNs wired in prod, alert on 5xx | 0.5 ed | |
+| Onboarding walkthrough polish after first real signup attempt | 1 ed | Bootstrap flow has never run |
+| Manual send of payment reminders (copy-link UX on Invoices page) documented as the interim Epic 7 | 0.5 ed | |
 
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E13.1 | Threads with context anchors (student/session/invoice/homework) rendering `ContextCard` with inline actions | "Record payment" works from inside a fee thread |
-| E13.2 | Class broadcast channels with delivery/read state | Batch announcement reaches all parents via router |
-| E13.3 | Notifications become actionable inbox items; deep links; triage keys (unread-first, `E` archive, snooze) | No dead-end notification exists |
-| E13.4 | Homework loop: assign (files + due date) → student submits (upload to Storage) → grade (points + comment) → parent visibility; feeds Student Story and the queue ("2 submissions waiting") | Full loop demo across three roles |
+### Medium
 
-## Epic 14: Onboarding + settings (Week 16) — Engineer B
-Dependencies: E11.7. REDESIGN 6.6-6.7.
+| Task | Effort | Notes |
+|---|---|---|
+| Bundle budget: dynamic-import jspdf, drop `recharts` (imported nowhere), verify exceljs stays lazy, add size check to CI | 1 ed | Main chunk is 678KB raw today; the old plan's 200KB-gzip gate was never enforced |
+| Delete `/api/settings` alias once frontend confirmed on `/api/v1` | 0.2 ed | |
+| Sweep stale Firestore-era comments (~20 files) and the `.env.example` AI-Studio header | 0.5 ed | Cheap, prevents newcomer confusion |
+| Resume Epic 7 (comms router) when provider KYC clears | 5 ed | Was fully specced in the old plan; templates, fallback, quiet hours, bulk remind |
+| Resume Epic 8 (Calendar/Meet) when OAuth verification clears | 3 ed | Token storage already migrated |
 
-| ID | Task | Acceptance criteria |
-|----|------|---------------------|
-| E14.1 | Three-beat setup (solo/center → first class from template gallery → add students/import) + demo-data workspace with one-click wipe | New center reaches a booked calendar in 3 minutes |
-| E14.2 | Checklist aha: "send yourself a test fee reminder" | Test WhatsApp arrives during onboarding |
-| E14.3 | Unified Settings (merges Settings/Profile/Preferences + org/billing/availability components), palette-searchable sections | Three old routes retired |
+### Low
 
-**Stage 2 exit gate:** the three REDESIGN journey benchmarks measured and passing (parent-call prep <10s; month-end billing 30 students <10min; self-onboarding <30min), all legacy pages for replaced surfaces deleted, E2E suite covers the five golden journeys.
+| Task | Effort |
+|---|---|
+| Drop vestigial `profiles.organization_id` column (currently trigger-guarded) | 0.5 ed |
+| Remove legacy rupee mirror columns once all readers use paise (see Tech Debt) | 1 ed |
+| i18n: move remaining hardcoded strings in legacy pages through `t()` as they are rebuilt | rolls into Stage 2 |
 
 ---
 
-# Stage 3: Pilot Hardening (Weeks 17-20)
-*Blueprint Phase 4 + REDESIGN Phase 4. Five paying pilot centers using it daily.*
+## 4. Phase 2: Operate and Harden (post first customer, pre scale)
 
-## Epic 15: Schedule workspace rebuild — Engineer B (Weeks 17-19)
-Dependencies: E3.6/E3.7/E8. REDESIGN 6.1. Retires Calendar, Timetable, Bookings.
-- E15.1 Week-default calendar, day/week/month via `1/2/3`, dnd-kit drag create/move/resize with server conflict check on drop (snap-back + ghost highlight on conflict)
-- E15.2 Availability overlay (dimmed out-of-hours) + drag-editable availability in Settings sharing the same interaction
-- E15.3 Recurring edit scopes (this one / this and future / all) inline
-- E15.4 One-popover class creation (template → students with capacity meter → slots) + "find a gap" slot picker
-- Acceptance: rescheduling a recurring batch is a 15-second alert-free operation; keyboard equivalents for all drag actions.
+- **Stage 2 workspaces** (the old plan's Epics 11 to 14, still the right product spec, see REDESIGN.md 6.2 to 6.7): Student Story timeline, People directory with lead funnel, Money workspace (aging buckets, batch drafting, insights from `org_stats_daily`), Inbox + homework loop, three-beat onboarding. Delete each legacy page in the same PR as its replacement. ~8 to 10 engineer-weeks.
+- **Observability:** structured request IDs end to end, slow-query logging (`pg_stat_statements`), Realtime connection-count metrics, dashboard for webhook failures and reconcile catches.
+- **Infra hardening:** Postgres tuning for the VPS, connection-pool sizing (PgBouncer if needed; `pg.Pool` + PostgREST both hit the same DB), automated offsite backups with tested restore, TLS renewal automation, container restart policies.
+- **Performance:** replace refetch-on-any-change Realtime handlers with targeted row merges on the chattiest tables (messages, class_sessions); consider caching the per-request `organization_members` lookup (60s TTL) once request volume justifies it; k6 load test of the Monday-6pm attendance burst (old E17.1 target: p95 API < 400ms).
+- **Scalability decision point:** single-box Supabase serves pilots comfortably; document the migration path (managed Postgres or Supabase Cloud) before passing ~50 orgs.
+- **Security:** external pentest after Stage 2 surfaces land; axe accessibility pass in CI; quarterly RLS-suite review against new tables.
 
-## Epic 16: Operate-the-business layer — Engineer A (Weeks 17-19)
-- E16.1 SaaS subscription billing: org plans, Razorpay subscriptions, feature gating hooks, free tier limits
-- E16.2 Super-admin app: org list with health metrics, audited impersonation, per-org feature flags, usage metering
-- E16.3 Org data export (full JSON/XLSX) + offboarding deletion job honoring retention (financial 8y)
-- E16.4 Audit log viewer (super-admin; org-admin read of own org)
-- Acceptance: you can answer a support ticket without touching the database console; an org can be gated, exported, and offboarded.
+## 5. Phase 3: Growth and Intelligence
 
-## Epic 17: Hardening gauntlet — both (Weeks 19-20)
-- E17.1 Load test (k6): Monday-6pm attendance burst + cold Today load at 5x pilot volume; fix to p95 API <400ms, Today interactive <2s on mid-range Android
-- E17.2 External pentest; triage and fix criticals/highs
-- E17.3 Accessibility pass: axe in CI + manual keyboard sweep per REDESIGN 14 (focus rings, contrast tokens, aria-live on toasts, 44px touch targets)
-- E17.4 Backup/restore rehearsal (restore staging from prod export; document RPO 24h / RTO 4h); incident response one-pager; release smoke script
-- E17.5 Docs package: architecture, schema/ER, rules rationale, deployment + rollback runbook, onboarding guide (EN + HI), support macros; legal live (privacy, ToS, refund policy)
-
-**Stage 3 exit gate = the blueprint section 14 launch checklist, every line green.** Pilots renewing at full price is the human gate.
+- **Schedule workspace rebuild** (old Epic 15): drag-based week calendar, recurring edit scopes, availability overlay.
+- **SaaS subscription billing** (old E16.1): org plans on Razorpay subscriptions, feature gating, free-tier limits.
+- **Super-admin console** (old E16.2): org health, audited impersonation, feature flags (`feature_flags` table already exists).
+- **Org export/offboarding** (old E16.3): full JSON/XLSX export, deletion honoring 8-year financial retention.
+- **Mobile polish** (old E18): bottom tab bar, swipe attendance, payment bottom sheet.
+- **Growth loop** (old E19): payment-link referral footer, activation funnel analytics (PostHog or self-hosted equivalent).
+- **AI morning brief** (old E20): Claude API narrative over the existing rules-based queue, per-org toggle, evidence links. The queue itself is already live; this is a narration layer only.
+- **Reporting:** nightly `org_stats_daily` aggregation job (table exists, nothing populates it yet), revenue/collection/aging insights.
 
 ---
 
-# Stage 4: Launch and Listen (Weeks 21-24)
-*Blueprint Phase 5 + REDESIGN Phases 5-6.*
+## 6. Technical Debt Backlog
 
-- **E18 Mobile-web polish (B):** bottom tab bar (Today/Schedule/Inbox/More), swipe-to-mark-attendance agenda, record-payment bottom sheet, push-to-actionable-sheet deep links; front-desk tablet layout for attendance.
-- **E19 Growth loop (A + Founder):** payment-link footer referral, PostHog activation funnel (signup→first class→first attendance→first payment) with weekly review, public launch to the metro ICP, weekly release cadence using the smoke script.
-- **E20 Intelligence v1 (A):** morning brief via Claude API (Haiku-class) summarizing the already-rules-based queue; per-org AI toggle; evidence links on every output. (Queue anomalies are already live from E9.3; this epic only adds the narrative layer. Reply drafting and forecasting stay post-launch per blueprint 12.)
-
-**Success criteria (from the blueprint):** 25 paying orgs, week-4 retention >80% of activated orgs, >₹10L monthly fee volume collected through the platform.
+| # | Item | Priority | Risk | Effort | Impact | Depends on |
+|---|---|---|---|---|---|---|
+| 1 | ~~Students.tsx base64 document upload~~ **DONE (2026-07-10)** — now on the server storage API | — | — | — | Resolved | — |
+| 2 | Client-side jsPDF invoices diverge from server GST invoice | High | A parent and an accountant can hold two different PDFs for the same invoice | 1 ed | One canonical invoice artifact | none |
+| 3 | Legacy pages awaiting Stage 2 rebuild (StudentProfile et al.) | High | 1,300-line files, direct client writes, not token-styled | Stage 2 | Velocity, consistency | Stage 2 schedule |
+| 4 | Dual money columns: `wallets.balance_currency` numeric rupees + `Math.round(x*100)` conversions in billing, legacy `total_amount`/`subtotal` mirrors on invoices | High | Rounding drift between ledger paise and wallet rupees | 2 ed | Invariant #4 becomes true instead of aspirational | e2e verified first |
+| 5 | Realtime refetch-on-any-change (63 call sites) | Medium | Thundering refetch on busy orgs | 3 ed | Perf at scale | live Realtime observed |
+| 6 | `recharts` dead dependency; jspdf/html2canvas static chunks | Medium | 1MB+ of avoidable JS | 0.5 ed | Bundle size | none |
+| 7 | Membership lookup per API request, single-membership assumption (`limit(1)`) | Medium | Multi-org users silently get one org | 1 ed | Correctness for multi-branch future | product decision |
+| 8 | `profiles.organization_id` vestigial column | Low | Confusion landmine (trigger-guarded) | 0.5 ed | Schema clarity | none |
+| 9 | Firestore-era comments, stale `.env.example` header, `/api/settings` alias | Low | Newcomer confusion | 0.5 ed | Readability | none |
+| 10 | `metadata.json` and other AI-Studio scaffolding remnants | Low | none | 0.1 ed | Cleanliness | none |
+| 11 | ~~Hosted vs self-hosted direction unresolved~~ **DONE (2026-07-10)** — hosted Cloud chosen; `.env.example`/`README` updated, self-hosted kept as Option B | — | — | — | Resolved | — |
+| 12 | ~~Migration filenames incompatible with `supabase db push`~~ **DONE (2026-07-10)** — renamed to `<timestamp>_name.sql`, added `supabase/config.toml`; RLS suite still 40/40. Remaining: install CLI + `supabase link` (needs your login) | — | — | — | Resolved (repo side) | — |
 
 ---
 
-# Cross-cutting rules of engagement
+## 7. Architecture Improvements
 
-1. **Definition of done, every task:** typed, rules-tested if it touches Firestore, unit-tested if it touches money math, i18n-wrapped strings, dark-mode-checked, keyboard-reachable, Sentry-clean on staging for 24h.
-2. **The rules test suite is the constitution.** Any PR touching `firestore.rules` or a privileged endpoint must add or update matrix tests first.
-3. **Money invariants, enforced by tests:** integer paise only; ledgers append-only; every mutation idempotency-keyed and audit-logged; invoice statuses move only along the state machine.
-4. **Delete on replace.** When a new workspace lands, its legacy pages are removed in the same PR. The retirement list: Dashboard (E9.7), StudentProfile/Students/Leads (E11), Invoices/Wallet/Transactions (E12), Messaging/Notifications (E13), Settings/Profile/Preferences (E14), Calendar/Timetable/Bookings (E15), FindTutors (E2.6).
-5. **No em dashes in product copy;** UX writing follows REDESIGN.md tone (calm, plain language, relative dates).
-6. **Weekly cadence:** Monday scope check against this plan, Friday staging demo of the week's acceptance criteria. Slippage handling: cut scope inside a stage, never reorder stages, and never let Stage 0/1 work leak past its gate unfinished.
+- **Module boundaries are healthy; keep them.** Pure logic in `src/lib/today.ts` and `server/utils/*` (unit-tested, IO-free) is the pattern to extend: every new workspace gets a pure core module + a thin page.
+- **Shared types:** there is no shared type package between `server/` and `src/`; API request/response shapes are duplicated informally. Introduce a `shared/` directory with Zod schemas used by both (server validates, client infers types). ~2 ed, do before Stage 2 to stop drift.
+- **API organization:** routes are cleanly split by domain. When Epic 7 lands, put the channel router in `server/jobs/` rather than routes, and formalize the cron surface (`/api/cron/*`) with a job registry.
+- **Data access on the client:** pages talk to `supabase-js` directly with ad-hoc queries. Extract per-entity query hooks (`useSessions`, `useInvoices`) so Realtime subscription, bounding, and error handling live in one place each; adopt during Stage 2 rebuilds, not as a big-bang refactor.
+- **Testing strategy:** keep the three-layer pyramid (unit for money math and today-derivations, PGlite RLS suite for authorization, supertest for route contracts). Add Playwright E2E for the five golden journeys once a seeded staging exists; E2E is the only layer that can catch the "never ran in a browser" class of bug.
+- **CI/CD:** CI is solid (typecheck, unit, RLS, build, no external deps). Add: bundle-size check, `npm audit` gate, deploy-to-staging on merge once hosting exists, migration-ordering lint (applying 0001..N to a fresh PGlite already happens in the RLS suite, which is an excellent migration test; keep it mandatory).
+- **Deployment:** write the runbook: compose up Supabase, run migrations, boot Express, smoke script (`/api/health`, login, one read per table group). One command, documented, rehearsed twice.
 
-## Dependency spine (the critical path)
+---
 
-```
-E1 CI/envs → E2 rules(+tests) → E3 server-money → E6 Razorpay → E7 WhatsApp → Stage 1 gate
-                          ↘ E5 shell → E9 Today ↗
-E3 data model → E11 Student Story → E12 Money UI → Stage 2 gate
-E3.7 + E8 → E15 Schedule;  E6 → E16 SaaS billing → Stage 3 gate → Launch
-```
+## 8. Production Readiness Checklist
 
-Long-lead external items to start week 5 day 1 regardless of engineering state: Razorpay KYC, WhatsApp template approval, SMS DLT registration, CA invoice review, legal docs.
+**Infrastructure:** □ Supabase stack live with restart policies □ TLS + domain □ staging environment □ resource monitoring (disk, RAM, connections) □ documented rebuild-from-scratch procedure
+
+**Security:** □ RLS suite green in CI (standing) □ service-role key only on server □ `SUPABASE_JWT_SECRET` rotated from default □ GoTrue email-confirmation + rate limits on □ secrets in a manager, not files □ dependency audit clean □ pentest scheduled (Phase 2)
+
+**Payments:** □ Razorpay live KYC □ per-org webhook secrets set □ webhook URL registered (payment_link.paid, payment.captured) □ real ₹1 payment reconciled on staging □ hourly reconcile cron □ refund flow rehearsed □ CA-approved GST invoice sample
+
+**Database:** □ migrations applied and versioned □ nightly `pg_dump` offsite □ restore rehearsed (RPO 24h / RTO 4h) □ `pg_stat_statements` on □ connection limits sized
+
+**Monitoring/Observability:** □ Sentry receiving from both sides □ uptime probe on `/api/health` □ 5xx alerting □ webhook-failure alerting □ log retention defined
+
+**Performance:** □ e2e walkthrough under 3G throttle on mid-range Android □ main bundle budget enforced in CI □ slow-query log reviewed once under seed load
+
+**Testing:** □ 51 unit + 40 RLS green □ supertest route contracts for billing/scheduling/parents □ Playwright golden journeys on staging □ manual QA script for the wedge demo
+
+**Compliance/Legal:** □ privacy policy + ToS live □ DPDP consent doc versioned (portal already stamps `consentVersion`) □ refund policy □ financial-data retention (8y) documented
+
+**Deployment:** □ one-command deploy □ rollback procedure □ release smoke script □ incident one-pager (who restarts what)
+
+**Product:** □ demo org with wipe □ onboarding tested with a stranger □ support channel (WhatsApp number) staffed
+
+---
+
+## 9. Testing Plan
+
+- **Unit (vitest, standing, 51 tests):** money math, invoice status machine, invoice numbering, webhook signatures, PDF composer, Today derivations. Rule: any new money math or queue rule lands with unit tests in the same PR.
+- **RLS/RBAC integration (PGlite, standing, 40 tests):** the constitution. Any PR touching `supabase/migrations/*.sql` or a privileged route runs `npm run test:rls`; for uncertain policy changes, deliberately re-break and confirm the expected test fails (HANDOFF §11.3 procedure).
+- **Route contracts (supertest, partial):** expand to cover every privileged endpoint's auth matrix (401 unauthenticated, 403 wrong role, 200 happy path, 409/422 idempotency and validation) against a PGlite-backed test app. ~3 ed.
+- **E2E (Playwright, new):** five golden journeys on seeded staging: (1) signup → org bootstrap → first class, (2) book → student sees session → attendance → invoice, (3) invoice → payment link → webhook → paid, (4) parent invite → OTP → consent → portal → pay, (5) template edit → materialization reshapes future sessions. Required before first paying customer.
+- **Load (k6, Phase 2):** Monday-6pm attendance burst at 5x pilot volume; p95 API < 400ms, Today interactive < 2s on mid-range Android.
+- **Security testing:** RLS suite (standing), `npm audit` in CI, external pentest in Phase 2 after Stage 2 surfaces land.
+- **Manual QA:** wedge-demo script run before every release; 375px parent portal pass on a real device.
+- **Coverage bar for production:** all standing suites green, route contracts for every money endpoint, E2E journeys 1 to 4 passing on staging, one rehearsed restore.
+
+---
+
+## 10. Obsolete documentation
+
+- **This file's predecessor** (Firestore-era DEV_PLAN.md): superseded, recoverable from git history.
+- **HANDOFF.md §1 to §10:** already correctly marked historical; keep as-is, §11 is current.
+- **GO_TO_MARKET_BLUEPRINT.md:** GTM strategy, RBAC matrix, pricing, and wedge positioning remain valid; all architecture/security sections (Firestore rules, Cloud Functions, SQLite dual-store findings) are historical. Add a banner noting this rather than rewriting.
+- **REDESIGN.md:** still the active product-experience spec for Stages 2 to 4. Keep.
+- **`metadata.json`:** AI-Studio scaffolding, delete.

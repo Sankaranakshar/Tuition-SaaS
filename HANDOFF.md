@@ -1,6 +1,6 @@
 # ClassStackr — Engineering Handoff
 
-_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11)._
+_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), then a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12)._
 
 This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked on you, and what comes next.
 
@@ -291,7 +291,7 @@ Fixed by restoring the three-array shape: `0013_class_sessions_id_space_fix.sql`
 
 ### 11.5 Blocked on you (current, replaces the stale §6)
 
-1. **Stand up self-hosted Supabase** per `supabase/README.md` (clone `supabase/supabase`'s `docker` dir, configure `.env`, `docker compose up`), then apply every file in `supabase/migrations/` in order.
+1. **Stand up a Supabase instance and apply the migrations — this has NOT been done (§12.2).** A Supabase **Cloud** project (`cwugpiernnwrhcximjwh`) now exists but its database is **empty** — no migration has ever been applied anywhere. Before it can be, resolve two setup mismatches: **(a)** decide hosted-vs-self-hosted. The repo was built for self-hosted Docker (`supabase/README.md`, `.env.example` → `localhost:8000`); the Cloud project ref implies a pivot to hosted, which is simpler and ports cleanly, but no repo config is wired for it yet. **(b)** The CLI is not set up (no `supabase/config.toml`, never `supabase init`/`link`, CLI not installed) and the migration files are named `0001_*.sql … 0013_*.sql`, which `supabase db push` will not track — it expects `<14-digit-timestamp>_name.sql`. Either rename all 13 in order, or apply them as raw SQL (`psql`/SQL editor) exactly as the PGlite RLS suite already does. Original self-hosted path: clone `supabase/supabase`'s `docker` dir, configure `.env`, `docker compose up`, then apply every file in `supabase/migrations/` in order.
 2. Configure Google OAuth for GoTrue (reuse the existing Google OAuth client, add the new redirect URI) if "Sign in with Google" needs to keep working.
 3. Configure an SMS provider (Twilio etc.) in self-hosted GoTrue for phone/OTP login — Firebase Auth's phone OTP had this bundled; GoTrue doesn't.
 4. Set the new env vars app-wide: `SUPABASE_URL`, `SUPABASE_ANON_KEY`/`VITE_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `DATABASE_URL` — see `.env.example`.
@@ -316,3 +316,39 @@ Fixed by restoring the three-array shape: `0013_class_sessions_id_space_fix.sql`
 ### 11.7 CI change
 
 `.github/workflows/ci.yml` dropped the Java + Firebase-emulator step (`actions/setup-java` + `firebase-tools emulators:exec`) and added `npm run test:rls` as a plain step — no external dependencies, since PGlite runs embedded in Node. CI is now simpler and faster than the Firestore-era pipeline, not just different.
+
+---
+
+## 12. Engineering audit + DEV_PLAN rewrite + Supabase provisioning status (2026-07-10)
+
+A user-requested Lead-Staff-Engineer audit re-verified the whole repo against the docs and rewrote [DEV_PLAN.md](DEV_PLAN.md) from scratch for the Supabase era (the old plan was Firestore-era; its product intent lives on in REDESIGN.md / GO_TO_MARKET_BLUEPRINT.md). This section records what the audit re-confirmed, what it newly found, and the current provisioning reality.
+
+### 12.1 Re-verified green (static + test-suite level)
+
+All HANDOFF claims that can be checked without live infra hold: `tsc --noEmit` clean project-wide, `npm test` 51/51, `npm run test:rls` 40/40 (PGlite), `npm run build` passing. Zero Firebase deps in `package.json`; only explanatory comments reference Firebase/Firestore. The server-authoritative money model, HMAC-verified raw-body webhooks, per-request `organization_members` auth, and the three-array `class_sessions` id-space fix are all present as described.
+
+### 12.2 Supabase provisioning reality — NOT stood up
+
+The migration has **never been applied to any live database.** A Supabase Cloud project (`cwugpiernnwrhcximjwh`) exists but is empty (dashboard still shows the "run your first migration" onboarding). This is now Blocker 1 in DEV_PLAN.md and the first item of §11.5 above. Two mismatches gate it: the hosted-vs-self-hosted direction decision (repo assumes self-hosted `localhost:8000`), and CLI setup (no `config.toml`, never linked, migration filenames `0001_*.sql` are not `supabase db push`-compatible — the CLI wants 14-digit-timestamp prefixes). Details and fix steps in DEV_PLAN.md Blocker 1 + Tech Debt #11/#12.
+
+### 12.3 New defects found (were not in §1–§11)
+
+1. **Live legacy document-upload bypass — FIXED (§12.5).** [Students.tsx](src/pages/Students.tsx) `handleUploadDoc` used to `FileReader`-base64 files straight into `documents.file_url` via a direct client `supabase.from("documents").insert(...)`, bypassing the Epic 3.9 server storage route and writing megabyte base64 blobs into Postgres; its download link and delete handler were also direct-client (and delete would have silently no-op'd — no client delete RLS policy). All three now route through the server storage API (`uploadDocument`/`getDocumentUrl`/`deleteDocument`). The Documents.tsx flow had been migrated earlier; this second, older path in Students.tsx was missed until the audit.
+2. **Client-side jsPDF duplicates the server invoice** — [Invoices.tsx](src/pages/Invoices.tsx), [StudentProfile.tsx](src/pages/StudentProfile.tsx), [AcademicProgress.tsx](src/pages/AcademicProgress.tsx) each statically import `jspdf` + `jspdf-autotable` and render their own PDFs, diverging from the server's GST-snapshot invoice ([server/utils/invoicePdf.ts](server/utils/invoicePdf.ts)) and pulling ~620KB of chunks into the client bundle. Invoices.tsx should call `downloadInvoicePdf`. DEV_PLAN Tech Debt #2.
+3. **`recharts` is a dead dependency** — imported by no route since the Dashboard was deleted in Epic 9, still in `package.json`. Main client chunk is ~678KB raw with no size gate in CI (the old plan's 200KB-gzip budget was never enforced). DEV_PLAN Tech Debt #6.
+
+None of these are regressions from the migration; all three predate it and survived because the legacy pages haven't been rebuilt yet (Stage 2). #1 was fixed in this pass (§12.5); #2 and #3 are logged in DEV_PLAN.md with effort/priority.
+
+### 12.4 Audit scores (0–100)
+
+Repo health 78 · Production readiness 40 · Security 82 · Technical debt 68 · Performance 70 · Maintainability 76 · Architecture 85. **Launchable in ~2–4 weeks of turning-on work** (Blockers 1–4 + the base64 fix + a rehearsed backup restore + the wedge demo on real infra) — the engineering foundation is sound; it has simply never been run.
+
+### 12.5 Hosting-prep changes committed alongside this audit
+
+The working directory `~/Downloads/Tuition-SaaS-main/` **is** the real clone (remote `Sankaranakshar/Tuition-SaaS`, branch `main`) — an earlier note here mistakenly called it a git-less snapshot; that was wrong. The audit + the following hosting-prep changes were committed and pushed together:
+
+- **Supabase direction set to hosted (Cloud).** `supabase/README.md` now leads with the hosted-Cloud path (project ref `cwugpiernnwrhcximjwh`); self-hosted Docker demoted to Option B. `.env.example` updated for hosted values (was `localhost:8000` + a stale AI-Studio `APP_URL` header).
+- **Migrations renamed to CLI format.** `0001_*.sql … 0013_*.sql` → `<14-digit-timestamp>_name.sql` (order preserved), so `supabase db push` tracks them. Added `supabase/config.toml` (needed by `supabase link`/`db push`). The RLS harness (`tests/integration/db.ts`) now skips the storage migration by `_storage.sql` suffix instead of the old hardcoded `0004_storage.sql`; `npm run test:rls` re-verified 40/40 after the rename.
+- **Base64 upload bypass fixed** (was §12.3 defect #1): `Students.tsx` document upload/download/delete now route through the server storage API (`uploadDocument`/`getDocumentUrl`/`deleteDocument`), not direct client inserts/deletes. Typecheck clean.
+
+Still not done (needs the live project): applying the migrations to the Cloud DB, setting the real env values, configuring Google/Phone auth providers, and the first end-to-end runtime walkthrough (§11.5 / §11.6).

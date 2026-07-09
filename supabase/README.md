@@ -1,4 +1,70 @@
-# Self-hosted Supabase setup
+# Supabase setup
+
+Two ways to run the backend. **Hosted (Supabase Cloud) is the recommended path**
+for pilots — no Docker/ops to maintain. Self-hosted (below) trades that convenience
+for full control and portability.
+
+---
+
+# Option A — Hosted (Supabase Cloud) — RECOMMENDED
+
+A project already exists: ref `cwugpiernnwrhcximjwh`. The SQL migrations here reference
+only standard Postgres plus the `auth.*` and `storage.*` schemas that hosted Supabase
+provides out of the box, so they apply with no changes.
+
+## 1. Apply the migrations (CLI, tracked)
+
+```bash
+brew install supabase/tap/supabase        # or: npm i -g supabase
+supabase login                            # opens browser for an access token
+supabase link --project-ref cwugpiernnwrhcximjwh   # prompts for the DB password
+supabase db push                          # applies migrations/*.sql in timestamp order
+```
+
+Migration files are named `<14-digit-timestamp>_name.sql` (e.g. `20260709020100_schema.sql`),
+which is the format `supabase db push` tracks in `supabase_migrations.schema_migrations`.
+The 13 files apply in filename order; the storage migration creates the private
+`documents` bucket used by `server/routes/documents.ts`.
+
+_Alternative (no CLI):_ paste each file, in filename order, into the project's SQL editor.
+
+## 2. App env vars
+
+Copy the project's values from **Dashboard → Project Settings → API** and **→ Database**
+into the app repo's `.env` (see `.env.example`):
+
+```
+VITE_SUPABASE_URL=https://cwugpiernnwrhcximjwh.supabase.co
+SUPABASE_URL=https://cwugpiernnwrhcximjwh.supabase.co
+VITE_SUPABASE_ANON_KEY=<Project API keys → anon public>
+SUPABASE_SERVICE_ROLE_KEY=<Project API keys → service_role — server only, never shipped to the client>
+SUPABASE_JWT_SECRET=<Project Settings → API → JWT Settings → JWT Secret>
+DATABASE_URL=<Project Settings → Database → Connection string (URI), session/pooler mode>
+```
+
+- Client (`src/`) uses `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` — subject to RLS.
+- Server (`server/`) uses `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` — bypasses RLS.
+- Billing/scheduling routes need `DATABASE_URL` for real `BEGIN`/`COMMIT` row-locking
+  transactions (`server/db.ts`); use the pooler URI so serverless/short-lived
+  connections don't exhaust Postgres.
+
+## 3. Auth providers (Dashboard → Authentication → Providers)
+
+- **Google:** enable Google, paste the existing OAuth client id/secret, and add
+  `https://cwugpiernnwrhcximjwh.supabase.co/auth/v1/callback` as an authorized redirect
+  URI in the Google Cloud Console.
+- **Phone/OTP:** enable Phone and configure an SMS provider (Twilio/MSG91/Vonage). The
+  parent portal depends on phone OTP, so this is required before that flow works.
+
+## 4. Storage
+
+The `documents` bucket is created by the storage migration. It is private; all
+reads/writes go through the server (`server/routes/documents.ts`) via the service-role
+key and short-lived signed URLs — do not add public bucket policies.
+
+---
+
+# Option B — Self-hosted Supabase
 
 Infra (Docker containers) is not vendored into this repo — it lives in Supabase's
 own maintained `docker` directory so you get their fixes/upgrades for Kong, Realtime,

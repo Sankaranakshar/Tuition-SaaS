@@ -17,16 +17,17 @@ const AUTH_SHIM = join(REPO_ROOT, "supabase", "test", "auth_shim.sql");
 export async function bootDb(): Promise<PGlite> {
   const db = new PGlite({ extensions: { pgcrypto } });
 
-  // auth schema/table/roles must exist before 0001_schema.sql's `references
+  // auth schema/table/roles must exist before the schema migration's `references
   // auth.users(id)` foreign keys; the grant statement inside is a harmless
   // no-op here since no public tables exist yet.
   await db.exec(readFileSync(AUTH_SHIM, "utf8"));
 
-  // 0004_storage.sql targets storage.buckets, part of the real Supabase
+  // The storage migration targets storage.buckets, part of the real Supabase
   // Storage extension's schema — not present here and irrelevant to RLS/RBAC
-  // testing (it creates a bucket row, not a policy).
-  const SKIP = new Set(["0004_storage.sql"]);
-  const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql") && !SKIP.has(f)).sort();
+  // testing (it creates a bucket row, not a policy). Matched by suffix so the
+  // timestamp prefix (see `supabase db push` naming) doesn't matter.
+  const SKIP = (f: string) => f.endsWith("_storage.sql");
+  const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql") && !SKIP(f)).sort();
   for (const file of files) {
     await db.exec(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
   }
