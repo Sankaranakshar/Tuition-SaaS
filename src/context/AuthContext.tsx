@@ -223,27 +223,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const registerWithEmail = async (email: string, password: string, name: string) => {
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { name } },
-      });
-      if (error) throw error;
-      if (!data.user) return;
-
-      const { error: insertErr } = await supabase.from("profiles").insert({
-        id: data.user.id,
-        name,
-        email,
-        phone: "",
-        role_type: null,
-        profile_status: 'incomplete',
-        is_active: true,
-      });
-      if (insertErr) throw insertErr;
-    } catch (error) {
-      handleSupabaseError(error, OperationType.CREATE, "profiles");
+    // Deliberately does not insert the profiles row itself: right after
+    // signUp(), if the project requires email confirmation, there is no
+    // active session yet (auth.uid() is null), so an insert here would
+    // always fail RLS's `id = auth.uid()` check with a 401 — even though
+    // signup succeeded. loadUser() (wired to onAuthStateChange above)
+    // creates the profile once a real session exists, whether that's
+    // immediately (confirmation disabled) or after the user clicks the
+    // confirmation link (confirmation enabled).
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { name } },
+    });
+    if (error) throw error;
+    if (data.user && !data.session) {
+      throw new Error("Check your email to confirm your account before signing in.");
     }
   };
 
