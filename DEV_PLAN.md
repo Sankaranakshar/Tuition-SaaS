@@ -49,7 +49,7 @@ Everything above passes static checks and tests, but **no code in this repositor
 2. **First end-to-end walkthrough:** signup → org bootstrap → add student → book session → student sees own session (the exact §11.4 regression) → Today attendance → invoice accrual → manual payment → ledger. Fix whatever breaks; expect breakage in Realtime subscriptions and auth flows since they have never run.
 3. **GoTrue configuration:** Google OAuth redirect URI; SMS provider (Twilio or MSG91) for phone OTP, which the parent portal hard-depends on.
 4. **Payment loop wiring:** Razorpay live KYC (long lead, start now), per-org key connection, webhook URL registration, real ₹ test payment, hourly reconcile + session-materialization cron jobs (any scheduler that can POST with the `CRON_SECRET` header).
-5. **Production hosting decision.** The Dockerfile is Cloud Run-era; the stack now needs a box or VPS for Supabase (Docker compose) plus the Express app, TLS, backups. Decide and document the deploy story.
+5. ~~Production hosting decision.~~ **DECIDED (2026-07-10): Vercel (app) + Supabase Cloud (backend).** The Express server was restructured to run as a Vercel serverless function (`api/index.ts` + `server/app.ts` + `vercel.json`); the Vite SPA deploys as static. Remaining: create the Vercel project from the repo, set env vars in Vercel (not a local `.env`), and point `DATABASE_URL` at Supabase's **transaction pooler (port 6543)** — the direct 5432 connection will exhaust under serverless concurrency. Untested until a real deploy (see Blocker 2).
 6. **Legal:** privacy policy, ToS, DPDP parental-consent language (the portal already captures consent; the document it references must exist), refund policy.
 
 ---

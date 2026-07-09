@@ -10,7 +10,14 @@ if (!connectionString) {
   console.warn("DATABASE_URL not set — transactional Postgres routes will fail.");
 }
 
-export const pool = new Pool({ connectionString });
+// Cap connections per process: on serverless (Vercel) many function instances
+// run concurrently, each with its own pool, so a large max would exhaust the
+// Supabase pooler. Point DATABASE_URL at Supabase's transaction pooler (port
+// 6543), not the direct 5432 connection, when deploying serverless.
+export const pool = new Pool({
+  connectionString,
+  max: Number(process.env.PG_POOL_MAX) || 3,
+});
 
 /**
  * Run `fn` inside a single Postgres transaction. Commits on success, rolls
