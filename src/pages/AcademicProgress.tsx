@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { BookOpen, FileText, Download, Award } from "lucide-react";
-import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { format, parseISO } from "date-fns";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+
+const ASSESSMENT_SELECT =
+  "id, studentId:student_id, organizationId:organization_id, date, title, type, score, totalScore:total_score, maxScore:max_score, feedback, comments, createdAt:created_at";
 
 export default function AcademicProgress() {
   const { user } = useAuth();
@@ -15,19 +17,36 @@ export default function AcademicProgress() {
   useEffect(() => {
     if (!user) return;
 
-    const qAssessments = query(
-      collection(db, "assessments"),
-      where("studentId", "==", user.id),
-      limit(50)
-    );
-    
-    const unsubAssessments = onSnapshot(qAssessments, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      setAssessments(data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-      setLoading(false);
-    });
+    let cancelled = false;
 
-    return () => unsubAssessments();
+    const load = async () => {
+      const { data, error } = await supabase
+        .from("assessments")
+        .select(ASSESSMENT_SELECT)
+        .eq("student_id", user.id)
+        .limit(50);
+      if (cancelled) return;
+      if (error) {
+        console.error("Supabase Error (Assessments): ", error);
+        setLoading(false);
+        return;
+      }
+      const rows = (data || []) as any[];
+      setAssessments(rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+      setLoading(false);
+    };
+
+    load();
+
+    const channel = supabase
+      .channel(`assessments-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "assessments", filter: `student_id=eq.${user.id}` }, load)
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   const generateProgressReport = () => {

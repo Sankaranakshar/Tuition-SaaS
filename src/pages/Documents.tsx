@@ -1,12 +1,20 @@
 import React, { useState, useEffect } from "react";
 import { Upload, FileText, Download, Trash2 } from "lucide-react";
-import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { uploadDocument, getDocumentUrl, deleteDocument } from "../lib/api";
 import { toast } from "sonner";
 
 import LoadingSpinner from "../components/LoadingSpinner";
+
+// NOTE: uploadDocument / getDocumentUrl / deleteDocument (from ../lib/api) call
+// the server, which is the one that talks to Firebase/Cloud Storage for the
+// actual file bytes (see the comment above handleSubmit). This file has no
+// direct Firebase Storage SDK calls (no uploadBytes/getDownloadURL/ref) — only
+// the Firestore "documents" collection listeners below needed migrating.
+
+const DOCUMENT_SELECT =
+  "id, organizationId:organization_id, studentId:student_id, fileName:name, category, createdAt:created_at, uploadedByUserId:uploaded_by_user_id";
 
 export default function Documents() {
   const { user } = useAuth();
@@ -27,31 +35,54 @@ export default function Documents() {
   useEffect(() => {
     if (!user || !user.organizationId) return;
 
-    const studentsConstraints: any[] = [where("organizationId", "==", user.organizationId)];
-    if (user.role === 'tutor') studentsConstraints.push(where("tutorId", "==", user.id));
-    studentsConstraints.push(limit(100));
-    const qStudents = query(collection(db, "students"), ...studentsConstraints);
-    const unsubStudents = onSnapshot(qStudents, (snapshot) => {
-      setStudents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (error) => {
-      console.error("Firestore Error (Students): ", error);
-    });
+    let cancelled = false;
 
-    const docsConstraints: any[] = [where("organizationId", "==", user.organizationId)];
-    if (user.role === 'tutor') docsConstraints.push(where("tutorId", "==", user.id));
-    docsConstraints.push(limit(100));
-    const qDocs = query(collection(db, "documents"), ...docsConstraints);
-    const unsubDocs = onSnapshot(qDocs, (snapshot) => {
-      setDocuments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const loadStudents = async () => {
+      let studentsQuery = supabase
+        .from("students")
+        .select("*")
+        .eq("organization_id", user.organizationId)
+        .limit(100);
+      if (user.role === 'tutor') studentsQuery = studentsQuery.eq("tutor_id", user.id);
+      const { data, error } = await studentsQuery;
+      if (cancelled) return;
+      if (error) console.error("Supabase Error (Students): ", error);
+      else setStudents(data || []);
+    };
+
+    // documents has no tutor_id column; for a tutor we scope to documents
+    // they uploaded (uploaded_by_user_id) as the closest equivalent to the
+    // old Firestore tutorId filter.
+    const loadDocs = async () => {
+      let docsQuery = supabase
+        .from("documents")
+        .select(DOCUMENT_SELECT)
+        .eq("organization_id", user.organizationId)
+        .limit(100);
+      if (user.role === 'tutor') docsQuery = docsQuery.eq("uploaded_by_user_id", user.id);
+      const { data, error } = await docsQuery;
+      if (cancelled) return;
+      if (error) console.error("Supabase Error (Documents): ", error);
+      else setDocuments(data || []);
       setLoading(false);
-    }, (error) => {
-      console.error("Firestore Error (Documents): ", error);
-      setLoading(false);
-    });
+    };
+
+    loadStudents();
+    loadDocs();
+
+    const studentsChannel = supabase
+      .channel(`documents-students-${user.organizationId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `organization_id=eq.${user.organizationId}` }, loadStudents)
+      .subscribe();
+    const docsChannel = supabase
+      .channel(`documents-${user.organizationId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `organization_id=eq.${user.organizationId}` }, loadDocs)
+      .subscribe();
 
     return () => {
-      unsubStudents();
-      unsubDocs();
+      cancelled = true;
+      supabase.removeChannel(studentsChannel);
+      supabase.removeChannel(docsChannel);
     };
   }, [user]);
 

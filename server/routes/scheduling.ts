@@ -1,51 +1,52 @@
 import express from "express";
 import { z } from "zod";
-import { adminDb } from "../firebaseAdmin.ts";
+import type { PoolClient } from "pg";
+import { pool, withTransaction } from "../db.ts";
 import { authenticateToken, requireRole, requireOrg, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
 
 // Capacity and double-booking checks used to run client-side (read-then-write
 // from the browser SDK), which is a race: two parallel enrollments/bookings
 // could both read "capacity OK" before either write landed. Both checks now
-// run inside a Firestore transaction on the server so only one wins.
+// run inside a real Postgres transaction on the server so only one wins —
+// same guarantee the old Firestore db.runTransaction() gave, via row locks
+// (enrollment capacity) and an advisory lock (session conflicts) instead.
 const router = express.Router();
 router.use(authenticateToken, requireOrg);
 
 const CAN_SCHEDULE = ["owner", "admin", "tutor", "frontdesk"] as const;
 
 const enrollSchema = z.object({
-  studentId: z.string().min(1),
-  templateId: z.string().min(1),
+  studentId: z.string().uuid(),
+  templateId: z.string().uuid(),
 });
 
 router.post("/enrollments", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, next) => {
   try {
-    if (!adminDb) throw new Error("Firebase Admin not initialized");
-    const db = adminDb;
     const { studentId, templateId } = enrollSchema.parse(req.body);
     const orgId = req.user!.organizationId!;
 
-    const templateRef = db.collection("class_templates").doc(templateId);
-
-    const enrollmentRef = await db.runTransaction(async (tx) => {
-      const templateSnap = await tx.get(templateRef);
-      if (!templateSnap.exists) {
+    const enrollmentId = await withTransaction(async (client) => {
+      // Row lock on the template serializes concurrent enrollment attempts
+      // against it, so the capacity count read below is race-free.
+      const templateRes = await client.query(
+        `select organization_id, type, capacity from class_templates where id = $1 for update`,
+        [templateId]
+      );
+      if (templateRes.rowCount === 0) {
         throw Object.assign(new Error("Class template not found"), { status: 404, code: "not_found" });
       }
-      const template = templateSnap.data()!;
-      if (template.organizationId !== orgId) {
+      const template = templateRes.rows[0];
+      if (template.organization_id !== orgId) {
         throw Object.assign(new Error("Template belongs to another organization"), { status: 403, code: "forbidden" });
       }
 
       if (template.type === "BATCH") {
-        // Bounded by capacity, which is always a small integer, so
-        // fetching the count inside the transaction stays cheap.
-        const enrollmentsSnap = await tx.get(
-          db.collection("enrollments")
-            .where("templateId", "==", templateId)
-            .where("status", "==", "active")
+        const countRes = await client.query(
+          `select count(*)::int as n from enrollments where template_id = $1 and status = 'active'`,
+          [templateId]
         );
-        if (enrollmentsSnap.size >= template.capacity) {
+        if (countRes.rows[0].n >= template.capacity) {
           throw Object.assign(
             new Error(`Cannot enroll: ${template.type} is at max capacity (${template.capacity})`),
             { status: 409, code: "capacity_full" }
@@ -53,81 +54,82 @@ router.post("/enrollments", requireRole(...CAN_SCHEDULE), async (req: AuthReques
         }
       }
 
-      const ref = db.collection("enrollments").doc();
-      tx.set(ref, {
-        organizationId: orgId,
-        studentId,
-        templateId,
-        enrollmentDate: new Date().toISOString(),
-        status: "active",
-      });
-      return ref;
+      const insertRes = await client.query(
+        `insert into enrollments (organization_id, student_id, template_id, status)
+         values ($1, $2, $3, 'active') returning id`,
+        [orgId, studentId, templateId]
+      );
+      return insertRes.rows[0].id as string;
     });
 
-    await writeAudit(orgId, req.user!.id, "enrollment.create", "enrollments", enrollmentRef.id, { studentId, templateId });
-    res.json({ ok: true, enrollmentId: enrollmentRef.id });
+    await writeAudit(orgId, req.user!.id, "enrollment.create", "enrollments", enrollmentId, { studentId, templateId });
+    res.json({ ok: true, enrollmentId });
   } catch (err) { next(err); }
 });
 
 const sessionSchema = z.object({
-  templateId: z.string().min(1),
-  tutorId: z.string().min(1),
-  studentIds: z.array(z.string().min(1)).optional(),
+  templateId: z.string().uuid(),
+  tutorId: z.string().uuid(),
+  studentIds: z.array(z.string().uuid()).optional(),
   startTime: z.string().min(1),
   endTime: z.string().min(1),
   isOnline: z.boolean().optional(),
   roomNumber: z.string().optional(),
 });
 
+/** Range-overlap conflict check for a tutor, scoped by an advisory lock on (org, tutor). */
+async function checkTutorConflictAndInsert(
+  client: PoolClient,
+  orgId: string,
+  tutorId: string,
+  startTime: string,
+  endTime: string,
+  insert: () => Promise<string>
+): Promise<string> {
+  // pg_advisory_xact_lock serializes all session-creation attempts for this
+  // (org, tutor) pair and auto-releases at COMMIT/ROLLBACK — no manual unlock.
+  await client.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [`${orgId}:${tutorId}`]);
+
+  const windowStart = new Date(new Date(startTime).getTime() - 12 * 3600 * 1000).toISOString();
+  const conflicts = await client.query(
+    `select start_time, end_time from class_sessions
+     where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
+       and start_time >= $3 and start_time < $4`,
+    [orgId, tutorId, windowStart, endTime]
+  );
+  const newStart = new Date(startTime).getTime();
+  const newEnd = new Date(endTime).getTime();
+  for (const row of conflicts.rows) {
+    const exStart = new Date(row.start_time).getTime();
+    const exEnd = new Date(row.end_time).getTime();
+    if (newStart < exEnd && newEnd > exStart) {
+      throw Object.assign(new Error("Tutor has a conflicting session at this time."), { status: 409, code: "conflict" });
+    }
+  }
+  return insert();
+}
+
 router.post("/sessions", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, next) => {
   try {
-    if (!adminDb) throw new Error("Firebase Admin not initialized");
-    const db = adminDb;
     const body = sessionSchema.parse(req.body);
     const orgId = req.user!.organizationId!;
 
-    const sessionRef = await db.runTransaction(async (tx) => {
-      // Conflict window is bounded (no session exceeds 12h), so this read
-      // stays flat-cost regardless of tutor history size.
-      const windowStart = new Date(new Date(body.startTime).getTime() - 12 * 3600 * 1000).toISOString();
-      const conflictsSnap = await tx.get(
-        db.collection("class_sessions")
-          .where("organizationId", "==", orgId)
-          .where("tutorId", "==", body.tutorId)
-          .where("status", "==", "scheduled")
-          .where("startTime", ">=", windowStart)
-          .where("startTime", "<", body.endTime)
-      );
+    const sessionId = await withTransaction((client) =>
+      checkTutorConflictAndInsert(client, orgId, body.tutorId, body.startTime, body.endTime, async () => {
+        // Meeting links are attached server-side via the Google Calendar
+        // integration (Epic 8, deferred). Never fabricate one here.
+        const insertRes = await client.query(
+          `insert into class_sessions
+             (organization_id, template_id, tutor_id, student_ids, start_time, end_time, status, is_online, room_number)
+           values ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8)
+           returning id`,
+          [orgId, body.templateId, body.tutorId, body.studentIds || [], body.startTime, body.endTime, body.isOnline ?? false, body.roomNumber ?? null]
+        );
+        return insertRes.rows[0].id as string;
+      })
+    );
 
-      const newStart = new Date(body.startTime).getTime();
-      const newEnd = new Date(body.endTime).getTime();
-      for (const docSnap of conflictsSnap.docs) {
-        const existing = docSnap.data();
-        const exStart = new Date(existing.startTime).getTime();
-        const exEnd = new Date(existing.endTime).getTime();
-        if (newStart < exEnd && newEnd > exStart) {
-          throw Object.assign(new Error("Tutor has a conflicting session at this time."), { status: 409, code: "conflict" });
-        }
-      }
-
-      // Meeting links are attached server-side via the Google Calendar
-      // integration (Epic 8, deferred). Never fabricate one here.
-      const ref = db.collection("class_sessions").doc();
-      tx.set(ref, {
-        organizationId: orgId,
-        templateId: body.templateId,
-        tutorId: body.tutorId,
-        studentIds: body.studentIds || [],
-        startTime: body.startTime,
-        endTime: body.endTime,
-        status: "scheduled",
-        isOnline: body.isOnline ?? false,
-        roomNumber: body.roomNumber ?? null,
-      });
-      return ref;
-    });
-
-    res.json({ ok: true, sessionId: sessionRef.id });
+    res.json({ ok: true, sessionId });
   } catch (err) { next(err); }
 });
 
@@ -136,26 +138,37 @@ router.post("/sessions", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, 
 // Rather than bulk-generating months of sessions once at template creation
 // (which goes stale the moment the template's schedule is edited), this
 // keeps a rolling window of sessions materialized from the template, and
-// is safe to call repeatedly: existing sessions are never duplicated
-// (deterministic per-template-per-date IDs) and conflicts are returned to
-// the caller, never swallowed into a console.warn.
+// is safe to call repeatedly: existing sessions are never duplicated (the
+// `unique (template_id, materialized_date)` constraint replaces the old
+// deterministic Firestore doc id) and conflicts are returned to the caller,
+// never swallowed into a console.warn.
 const WEEKS_AHEAD = 8;
+
+interface Template {
+  id: string;
+  organization_id: string;
+  type: string;
+  tutor_id: string | null;
+  student_ids: string[];
+  days_of_week: number[];
+  start_hour: number | null;
+  start_minute: number;
+  duration_minutes: number;
+  is_online: boolean;
+  room_number: string | null;
+}
 
 interface MaterializeResult {
   created: string[];
   conflicts: { templateId: string; date: string }[];
 }
 
-async function materializeTemplate(
-  db: FirebaseFirestore.Firestore,
-  templateId: string,
-  template: FirebaseFirestore.DocumentData
-): Promise<MaterializeResult> {
+async function materializeTemplate(template: Template): Promise<MaterializeResult> {
   const result: MaterializeResult = { created: [], conflicts: [] };
-  const daysOfWeek: number[] = Array.isArray(template.daysOfWeek) ? template.daysOfWeek : [];
-  if (template.type !== "BATCH" || daysOfWeek.length === 0 || template.startHour == null) return result;
+  const daysOfWeek = template.days_of_week || [];
+  if (template.type !== "BATCH" || daysOfWeek.length === 0 || template.start_hour == null || !template.tutor_id) return result;
 
-  const durationMinutes = template.durationMinutes ?? 60;
+  const durationMinutes = template.duration_minutes ?? 60;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const horizon = new Date(today.getTime() + WEEKS_AHEAD * 7 * 24 * 3600 * 1000);
@@ -164,50 +177,42 @@ async function materializeTemplate(
     if (!daysOfWeek.includes(d.getDay())) continue;
 
     const sessionStart = new Date(d);
-    sessionStart.setHours(template.startHour, template.startMinute ?? 0, 0, 0);
+    sessionStart.setHours(template.start_hour, template.start_minute ?? 0, 0, 0);
     if (sessionStart < new Date()) continue; // don't materialize into the past
     const sessionEnd = new Date(sessionStart.getTime() + durationMinutes * 60 * 1000);
     const dateKey = sessionStart.toISOString().split("T")[0];
-    const sessionRef = db.collection("class_sessions").doc(`${templateId}_${dateKey}`);
 
-    const outcome = await db.runTransaction(async (tx) => {
-      const existing = await tx.get(sessionRef);
-      if (existing.exists) return "exists" as const;
-
-      const windowStart = new Date(sessionStart.getTime() - 12 * 3600 * 1000).toISOString();
-      const conflictsSnap = await tx.get(
-        db.collection("class_sessions")
-          .where("organizationId", "==", template.organizationId)
-          .where("tutorId", "==", template.tutorId)
-          .where("status", "==", "scheduled")
-          .where("startTime", ">=", windowStart)
-          .where("startTime", "<", sessionEnd.toISOString())
+    const outcome = await withTransaction(async (client) => {
+      const existing = await client.query(
+        `select 1 from class_sessions where template_id = $1 and materialized_date = $2`,
+        [template.id, dateKey]
       );
-      const newStart = sessionStart.getTime();
-      const newEnd = sessionEnd.getTime();
-      for (const docSnap of conflictsSnap.docs) {
-        const existingSession = docSnap.data();
-        const exStart = new Date(existingSession.startTime).getTime();
-        const exEnd = new Date(existingSession.endTime).getTime();
-        if (newStart < exEnd && newEnd > exStart) return "conflict" as const;
-      }
+      if ((existing.rowCount ?? 0) > 0) return "exists" as const;
 
-      tx.set(sessionRef, {
-        organizationId: template.organizationId,
-        templateId,
-        tutorId: template.tutorId,
-        studentIds: template.studentIds || [],
-        startTime: sessionStart.toISOString(),
-        endTime: sessionEnd.toISOString(),
-        status: "scheduled",
-        isOnline: template.isOnline ?? false,
-        roomNumber: template.roomNumber ?? null,
-      });
-      return "created" as const;
+      try {
+        await checkTutorConflictAndInsert(
+          client, template.organization_id, template.tutor_id!, sessionStart.toISOString(), sessionEnd.toISOString(),
+          async () => {
+            const insertRes = await client.query(
+              `insert into class_sessions
+                 (organization_id, template_id, tutor_id, student_ids, start_time, end_time, status, is_online, room_number, materialized_date)
+               values ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8, $9)
+               returning id`,
+              [template.organization_id, template.id, template.tutor_id, template.student_ids || [],
+                sessionStart.toISOString(), sessionEnd.toISOString(), template.is_online ?? false, template.room_number ?? null, dateKey]
+            );
+            return insertRes.rows[0].id as string;
+          }
+        );
+        return "created" as const;
+      } catch (err: any) {
+        if (err.code === "conflict") return "conflict" as const;
+        throw err;
+      }
     });
 
     if (outcome === "created") result.created.push(dateKey);
-    if (outcome === "conflict") result.conflicts.push({ templateId, date: dateKey });
+    if (outcome === "conflict") result.conflicts.push({ templateId: template.id, date: dateKey });
   }
 
   return result;
@@ -217,14 +222,16 @@ async function materializeTemplate(
 // creating/editing a template so the calendar fills in immediately.
 router.post("/materialize", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, next) => {
   try {
-    if (!adminDb) throw new Error("Firebase Admin not initialized");
-    const db = adminDb;
     const orgId = req.user!.organizationId!;
-    const templatesSnap = await db.collection("class_templates").where("organizationId", "==", orgId).get();
+    const templatesRes = await pool.query(
+      `select id, organization_id, type, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes, is_online, room_number
+       from class_templates where organization_id = $1`,
+      [orgId]
+    );
 
     const aggregate: MaterializeResult = { created: [], conflicts: [] };
-    for (const templateDoc of templatesSnap.docs) {
-      const r = await materializeTemplate(db, templateDoc.id, templateDoc.data());
+    for (const row of templatesRes.rows as Template[]) {
+      const r = await materializeTemplate(row);
       aggregate.created.push(...r.created);
       aggregate.conflicts.push(...r.conflicts);
     }
@@ -232,5 +239,5 @@ router.post("/materialize", requireRole(...CAN_SCHEDULE), async (req: AuthReques
   } catch (err) { next(err); }
 });
 
-export { materializeTemplate };
+export { materializeTemplate, type Template };
 export default router;

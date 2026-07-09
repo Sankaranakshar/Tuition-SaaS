@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { Calendar, CheckCircle, AlertCircle, Settings as SettingsIcon, Building, Clock, User as UserIcon } from "lucide-react";
-import { doc, updateDoc, onSnapshot } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import TutorAvailabilitySettings from "../components/TutorAvailabilitySettings";
 import OrganizationSettings from "../components/OrganizationSettings";
 import BillingInvoiceSettings from "../components/BillingInvoiceSettings";
@@ -20,14 +19,34 @@ export default function Settings() {
 
   useEffect(() => {
     if (!user?.id) return;
-    
-    const unsubscribe = onSnapshot(doc(db, "users", user.id), (docSnap) => {
-      if (docSnap.exists()) {
-        setIsConnected(!!docSnap.data().googleCalendarConnected);
-      }
-    });
+    let cancelled = false;
 
-    return () => unsubscribe();
+    const load = async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("google_calendar_connected")
+        .eq("id", user.id)
+        .single();
+      if (!cancelled && !error) {
+        setIsConnected(!!data?.google_calendar_connected);
+      }
+    };
+
+    load();
+
+    const channel = supabase
+      .channel(`profile-google-calendar-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "profiles", filter: `id=eq.${user.id}` },
+        load
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [user?.id]);
 
   const handleConnectGoogle = async () => {
@@ -35,8 +54,9 @@ export default function Settings() {
     setLoading(true);
     setError("");
     try {
-      const { auth } = await import("../firebase");
-      const token = await auth.currentUser?.getIdToken();
+      const { supabase } = await import("../supabase");
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
       const response = await fetch('/api/settings/google/url', {
         headers: {
           'Authorization': `Bearer ${token || ''}`
@@ -64,11 +84,11 @@ export default function Settings() {
       // Listen for message from popup
       const handleMessage = async (event: MessageEvent) => {
         if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-          const { doc, updateDoc } = await import("firebase/firestore");
-          const { db } = await import("../firebase");
-          await updateDoc(doc(db, "users", user.id), {
-            googleCalendarConnected: true
-          });
+          const { supabase } = await import("../supabase");
+          await supabase
+            .from("profiles")
+            .update({ google_calendar_connected: true })
+            .eq("id", user.id);
           setSuccess("Successfully connected to Google Calendar!");
           window.removeEventListener('message', handleMessage);
         }
@@ -88,8 +108,9 @@ export default function Settings() {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const { auth } = await import("../firebase");
-      const token = await auth.currentUser?.getIdToken();
+      const { supabase } = await import("../supabase");
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
       const response = await fetch('/api/settings/google/disconnect', {
         method: 'POST',
         headers: {
@@ -101,9 +122,10 @@ export default function Settings() {
         throw new Error('Failed to disconnect');
       }
 
-      await updateDoc(doc(db, "users", user.id), {
-        googleCalendarConnected: false
-      });
+      await supabase
+        .from("profiles")
+        .update({ google_calendar_connected: false })
+        .eq("id", user.id);
       setSuccess("Disconnected from Google Calendar.");
     } catch (err) {
       setError("Failed to disconnect.");

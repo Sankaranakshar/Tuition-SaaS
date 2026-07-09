@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { DollarSign, Receipt, Download, CreditCard } from "lucide-react";
-import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { format, parseISO } from "date-fns";
 import { Link } from "react-router-dom";
@@ -16,37 +15,48 @@ export default function Wallet() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
 
-    const qInvoices = query(
-      collection(db, "invoices"),
-      where("studentId", "==", user.id),
-      limit(50)
-    );
-    
-    const unsubInvoices = onSnapshot(qInvoices, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      setInvoices(data.sort((a, b) => new Date(b.issueDate).getTime() - new Date(a.issueDate).getTime()));
-      setLoading(false);
-    });
-
-    const qWallet = query(
-      collection(db, "wallets"),
-      where("studentId", "==", user.id),
-      limit(1)
-    );
-
-    const unsubWallet = onSnapshot(qWallet, (snapshot) => {
-      if (!snapshot.empty) {
-        setWalletBalance(snapshot.docs[0].data().balanceCredits || 0);
-      } else {
+    // `invoices.student_id` / `wallets.student_id` reference `students.id`,
+    // not the logged-in auth user id directly, so resolve this user's own
+    // student row (student_user_id = auth.uid()) first — same pattern the
+    // is_student_self() RLS helper uses.
+    const load = async () => {
+      const { data: studentRow, error: studentErr } = await supabase
+        .from("students")
+        .select("id")
+        .eq("student_user_id", user.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (studentErr || !studentRow) {
+        setInvoices([]);
         setWalletBalance(0);
+        setLoading(false);
+        return;
       }
-    });
+      const studentId = studentRow.id as string;
 
-    return () => {
-      unsubInvoices();
-      unsubWallet();
+      const [{ data: invoiceRows, error: invErr }, { data: walletRow, error: walletErr }] = await Promise.all([
+        supabase.from("invoices").select("*").eq("student_id", studentId).limit(50),
+        supabase.from("wallets").select("balance_credits").eq("student_id", studentId).limit(1).maybeSingle(),
+      ]);
+      if (cancelled) return;
+
+      if (!invErr && invoiceRows) {
+        setInvoices([...invoiceRows].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
+      }
+      setWalletBalance(!walletErr && walletRow ? walletRow.balance_credits || 0 : 0);
+      setLoading(false);
     };
+
+    load();
+    const channel = supabase
+      .channel(`wallet-page-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "wallets" }, load)
+      .subscribe();
+
+    return () => { cancelled = true; supabase.removeChannel(channel); };
   }, [user]);
 
   if (loading) return <LoadingSpinner />;
@@ -101,10 +111,10 @@ export default function Wallet() {
                         <div className="text-sm font-medium text-gray-900">INV-{invoice.id.substring(0, 6).toUpperCase()}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {invoice.issueDate ? format(parseISO(invoice.issueDate), 'MMM d, yyyy') : 'N/A'}
+                        {invoice.created_at ? format(parseISO(invoice.created_at), 'MMM d, yyyy') : 'N/A'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {formatPaise(invoice.totalPaise ?? Math.round((invoice.amount || 0) * 100))}
+                        {formatPaise(invoice.total_paise ?? Math.round((invoice.total_amount || 0) * 100))}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${

@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Plus, Search, Edit2, Trash2, Users, FileText, Upload, Download } from "lucide-react";
-import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, limit, serverTimestamp } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 
@@ -62,58 +61,123 @@ export default function Students() {
   // Get unique grades for the filter dropdown
   const uniqueGrades = Array.from(new Set(students.map(s => s.grade).filter(Boolean)));
 
+  // Map a students row (snake_case) to the flat shape the rest of this
+  // component reads/writes.
+  const mapStudent = (row: any) => ({
+    id: row.id,
+    name: row.name,
+    grade: row.grade,
+    subject: row.subject,
+    feeStructure: row.fee_structure,
+    feeAmount: row.fee_amount,
+    parentName: row.parent_name,
+    parentEmail: row.parent_email,
+    parentPhone: row.parent_phone,
+    studentEmail: row.email,
+    studentPhone: row.phone,
+    address: row.address,
+    emergencyContactName: row.emergency_contact_name,
+    emergencyContactPhone: row.emergency_contact_phone,
+    tutorId: row.tutor_id,
+    status: row.status,
+  });
+
   useEffect(() => {
     if (!user || !user.organizationId) return;
-    
-    const q = query(
-      collection(db, "students"),
-      where("organizationId", "==", user.organizationId),
-      ...(user.role === 'tutor' ? [where("tutorId", "==", user.id)] : []),
-      limit(100)
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const studentsData = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as any))
-        .filter((s: any) => !s.archivedAt);
-      setStudents(studentsData);
-      setLoading(false);
-    }, (error) => {
-      console.error("Firestore Error: ", JSON.stringify({
-        error: error.message,
-        operationType: "list",
-        path: "students"
-      }));
-    });
+    let cancelled = false;
 
-    return () => unsubscribe();
+    const load = async () => {
+      let q = supabase
+        .from("students")
+        .select("*")
+        .eq("organization_id", user.organizationId)
+        .eq("is_deleted", false)
+        .limit(100);
+      if (user.role === "tutor") {
+        q = q.eq("tutor_id", user.id);
+      }
+      const { data, error } = await q;
+      if (error) {
+        console.error("Supabase Error: ", JSON.stringify({
+          error: error.message,
+          operationType: "list",
+          path: "students"
+        }));
+        return;
+      }
+      if (!cancelled) {
+        setStudents((data || []).map(mapStudent));
+        setLoading(false);
+      }
+    };
+
+    load();
+
+    const channel = supabase
+      .channel(`students-${user.organizationId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "students", filter: `organization_id=eq.${user.organizationId}` },
+        load
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [user]);
+
+  // Map a documents row (snake_case) to the flat shape the docs modal reads.
+  const mapDoc = (row: any) => ({
+    id: row.id,
+    fileName: row.name,
+    fileUrl: row.file_url,
+    category: row.category,
+    notes: row.notes,
+    uploadedBy: row.uploaded_by_user_id,
+    createdAt: row.created_at,
+  });
 
   const fetchStudentDocs = (studentId: string) => {
     if (!user || !user.organizationId) return;
-    
+
     if (docsUnsubscribe) {
       docsUnsubscribe();
     }
 
-    const docsConstraints: any[] = [
-      where("studentId", "==", studentId),
-      where("organizationId", "==", user.organizationId)
-    ];
-    if (user.role === 'tutor') docsConstraints.push(where("tutorId", "==", user.id));
-    docsConstraints.push(limit(50));
-    const q = query(collection(db, "documents"), ...docsConstraints);
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const docsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setStudentDocs(docsData);
-    }, (error) => {
-      console.error("Firestore Error: ", JSON.stringify({
-        error: error.message,
-        operationType: "list",
-        path: "documents"
-      }));
-    });
-    
-    setDocsUnsubscribe(() => unsubscribe);
+    const load = async () => {
+      let q = supabase
+        .from("documents")
+        .select("*")
+        .eq("student_id", studentId)
+        .eq("organization_id", user.organizationId)
+        .limit(50);
+      if (user.role === "tutor") q = q.eq("uploaded_by_user_id", user.id);
+      const { data, error } = await q;
+      if (error) {
+        console.error("Supabase Error: ", JSON.stringify({
+          error: error.message,
+          operationType: "list",
+          path: "documents"
+        }));
+        return;
+      }
+      setStudentDocs((data || []).map(mapDoc));
+    };
+
+    load();
+
+    const channel = supabase
+      .channel(`documents-${studentId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "documents", filter: `student_id=eq.${studentId}` },
+        load
+      )
+      .subscribe();
+
+    setDocsUnsubscribe(() => () => supabase.removeChannel(channel));
   };
 
   const closeDocsModal = () => {
@@ -152,25 +216,31 @@ export default function Students() {
       reader.onloadend = async () => {
         const fileUrl = reader.result as string;
 
-        await addDoc(collection(db, "documents"), {
-          organizationId: user.organizationId,
-          tutorId: user.id,
-          studentId: selectedStudentForDocs.id,
-          fileName: docFile.name,
-          fileUrl,
+        const { error } = await supabase.from("documents").insert({
+          organization_id: user.organizationId,
+          student_id: selectedStudentForDocs.id,
+          uploaded_by_user_id: user.id,
+          name: docFile.name,
+          file_url: fileUrl,
           category: docCategory,
           notes: docNotes,
-          uploadedBy: user.id,
-          createdAt: new Date().toISOString()
         });
-        
+        if (error) {
+          console.error("Supabase Error: ", JSON.stringify({
+            error: error.message,
+            operationType: "create",
+            path: "documents"
+          }));
+          return;
+        }
+
         setDocFile(null);
         setDocCategory("homework");
         setDocNotes("");
       };
       reader.readAsDataURL(docFile);
     } catch (error: any) {
-      console.error("Firestore Error: ", JSON.stringify({
+      console.error("Supabase Error: ", JSON.stringify({
         error: error.message,
         operationType: "create",
         path: "documents"
@@ -186,11 +256,12 @@ export default function Students() {
   const handleDeleteDoc = async () => {
     if (!docToDelete) return;
     try {
-      await deleteDoc(doc(db, "documents", docToDelete));
+      const { error } = await supabase.from("documents").delete().eq("id", docToDelete);
+      if (error) throw error;
       setIsDeleteDocModalOpen(false);
       setDocToDelete(null);
     } catch (error: any) {
-      console.error("Firestore Error: ", JSON.stringify({
+      console.error("Supabase Error: ", JSON.stringify({
         error: error.message,
         operationType: "delete",
         path: "documents"
@@ -241,17 +312,19 @@ export default function Students() {
   const handleDelete = async () => {
     if (!studentToDelete) return;
     try {
-      // Hard deletes are denied by firestore.rules once a student has
-      // financial history (DEV_PLAN E3.10); archive instead so invoices,
+      // Hard deletes are denied once a student has financial history
+      // (DEV_PLAN E3.10); archive instead (is_deleted) so invoices,
       // attendance, and payment records stay intact and auditable.
-      await updateDoc(doc(db, "students", studentToDelete), {
-        archivedAt: serverTimestamp(),
-      });
+      const { error } = await supabase
+        .from("students")
+        .update({ is_deleted: true, updated_at: new Date().toISOString() })
+        .eq("id", studentToDelete);
+      if (error) throw error;
       setIsDeleteStudentModalOpen(false);
       setStudentToDelete(null);
       toast.success("Student archived");
     } catch (error: any) {
-      console.error("Firestore Error: ", JSON.stringify({
+      console.error("Supabase Error: ", JSON.stringify({
         error: error.message,
         operationType: "archive",
         path: "students"
@@ -316,31 +389,31 @@ export default function Students() {
         name,
         grade,
         subject,
-        feeStructure,
-        feeAmount: parseFloat(feeAmount) || 0,
-        parentName,
-        parentEmail,
-        parentPhone,
-        studentEmail,
-        studentPhone,
+        fee_structure: feeStructure,
+        fee_amount: parseFloat(feeAmount) || 0,
+        parent_name: parentName,
+        parent_email: parentEmail,
+        parent_phone: parentPhone,
+        email: studentEmail,
+        phone: studentPhone,
         address,
-        emergencyContactName,
-        emergencyContactPhone,
-        organizationId: user.organizationId,
+        emergency_contact_name: emergencyContactName,
+        emergency_contact_phone: emergencyContactPhone,
+        organization_id: user.organizationId,
       };
 
       console.log("Saving student data:", studentData);
 
       if (editingId) {
-        await updateDoc(doc(db, "students", editingId), studentData);
+        studentData.updated_at = new Date().toISOString();
+        const { error } = await supabase.from("students").update(studentData).eq("id", editingId);
+        if (error) throw error;
         setSuccessMessage("Student updated successfully!");
       } else {
-        studentData.tutorId = user.id;
-        studentData.parentId = ""; // Would link to actual parent user ID in a real app
-        studentData.studentUserId = ""; // Would link to actual student user ID in a real app
+        studentData.tutor_id = user.id;
         studentData.status = "active";
-        studentData.createdAt = new Date().toISOString();
-        await addDoc(collection(db, "students"), studentData);
+        const { error } = await supabase.from("students").insert(studentData);
+        if (error) throw error;
         setSuccessMessage("Student added successfully!");
       }
 
@@ -353,7 +426,7 @@ export default function Students() {
     } catch (error: any) {
       setIsSubmitting(false);
       setFormError("Error adding student: " + error.message);
-      console.error("Firestore Error: ", JSON.stringify({
+      console.error("Supabase Error: ", JSON.stringify({
         error: error.message,
         operationType: editingId ? "update" : "create",
         path: "students"

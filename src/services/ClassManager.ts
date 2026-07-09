@@ -1,10 +1,4 @@
-import { db } from "../firebase";
-import {
-  collection,
-  getDocs,
-  query,
-  where
-} from "firebase/firestore";
+import { supabase } from "../supabase";
 import { api } from "../lib/api";
 
 export enum ClassType {
@@ -104,18 +98,21 @@ export class ClassManager {
     const timeString = `${startHour}:${startMinute}`;
 
     // 1. Check Tutor Availability
-    const availabilityQuery = query(
-      collection(db, "tutor_availability"),
-      where("tutorId", "==", tutorId),
-      where("dayOfWeek", "==", dayOfWeek),
-      where("isAvailable", "==", true)
-    );
-    const availabilitySnap = await getDocs(availabilityQuery);
-    
+    // tutor_availability has no isAvailable column — a row's mere presence
+    // for a given tutor/day represents an available slot, so that filter is
+    // dropped (was `where("isAvailable", "==", true)` in Firestore).
+    const { data: availabilitySlots, error: availabilityError } = await supabase
+      .from("tutor_availability")
+      .select("start_time, end_time")
+      .eq("tutor_id", tutorId)
+      .eq("day_of_week", dayOfWeek);
+    if (availabilityError) throw availabilityError;
+
     let isAvailable = false;
-    for (const docSnap of availabilitySnap.docs) {
-      const slot = docSnap.data() as TutorAvailability;
-      if (timeString >= slot.startTime && timeString < slot.endTime) {
+    for (const slot of availabilitySlots || []) {
+      const slotStart = String(slot.start_time).slice(0, 5);
+      const slotEnd = String(slot.end_time).slice(0, 5);
+      if (timeString >= slotStart && timeString < slotEnd) {
         isAvailable = true;
         break;
       }

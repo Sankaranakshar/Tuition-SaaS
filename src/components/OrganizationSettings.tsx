@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { Save, AlertCircle, CheckCircle, Plus, Trash2 } from "lucide-react";
 
 export default function OrganizationSettings() {
@@ -22,9 +21,10 @@ export default function OrganizationSettings() {
     
     const fetchSettings = async () => {
       try {
-        const orgDoc = await getDoc(doc(db, "organizations", user.organizationId!));
-        if (orgDoc.exists() && orgDoc.data().settings) {
-          setSettings({ ...settings, ...orgDoc.data().settings });
+        const { data, error } = await supabase.from("organizations").select("settings").eq("id", user.organizationId!).maybeSingle();
+        if (error) throw error;
+        if (data?.settings) {
+          setSettings({ ...settings, ...data.settings });
         }
       } catch (err) {
         console.error("Error fetching organization settings:", err);
@@ -39,9 +39,8 @@ export default function OrganizationSettings() {
     setError("");
     setSuccess("");
     try {
-      await updateDoc(doc(db, "organizations", user.organizationId), {
-        settings
-      });
+      const { error } = await supabase.from("organizations").update({ settings }).eq("id", user.organizationId);
+      if (error) throw error;
       setSuccess("Organization settings saved successfully.");
     } catch (err: any) {
       setError(err.message || "Failed to save settings.");

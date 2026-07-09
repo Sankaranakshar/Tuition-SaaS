@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { doc, getDoc, setDoc } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { Save, AlertCircle, CheckCircle } from "lucide-react";
 
 export default function TutorProfileSettings() {
@@ -30,9 +29,9 @@ export default function TutorProfileSettings() {
     
     const fetchProfile = async () => {
       try {
-        const profileDoc = await getDoc(doc(db, "tutor_profiles", user.id));
-        if (profileDoc.exists()) {
-          const data = profileDoc.data();
+        const { data, error } = await supabase.from("tutor_profiles").select("*").eq("user_id", user.id).maybeSingle();
+        if (error) throw error;
+        if (data) {
           setProfile({
             full_name: data.full_name || user.name || "",
             bio: data.bio || "",
@@ -66,6 +65,7 @@ export default function TutorProfileSettings() {
     try {
       const profileData = {
         user_id: user.id,
+        organization_id: user.organizationId,
         full_name: profile.full_name,
         bio: profile.bio,
         subjects: profile.subjects.split(",").map(s => s.trim()).filter(Boolean),
@@ -80,7 +80,8 @@ export default function TutorProfileSettings() {
         max_batch_size: Number(profile.max_batch_size),
       };
 
-      await setDoc(doc(db, "tutor_profiles", user.id), profileData, { merge: true });
+      const { error } = await supabase.from("tutor_profiles").upsert(profileData, { onConflict: "user_id" });
+      if (error) throw error;
       setSuccess("Tutor profile saved successfully.");
     } catch (err: any) {
       setError(err.message || "Failed to save profile.");

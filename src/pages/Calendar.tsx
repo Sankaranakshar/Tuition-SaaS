@@ -14,8 +14,7 @@ import {
   parseISO,
   addMonths as addMonthsDate
 } from "date-fns";
-import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, limit, orderBy } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { ClassManager, ClassType, PricingModel } from "../services/ClassManager";
 import { markAttendance as apiMarkAttendance, cancelSession, api } from "../lib/api";
@@ -175,32 +174,71 @@ export default function Calendar() {
   useEffect(() => {
     if (!user || !user.organizationId) return;
 
-    const studentsConstraints: any[] = [where("organizationId", "==", user.organizationId)];
-    if (user.role === 'tutor') studentsConstraints.push(where("tutorId", "==", user.id));
-    studentsConstraints.push(limit(100));
-    const qStudents = query(collection(db, "students"), ...studentsConstraints);
-    const unsubStudents = onSnapshot(qStudents, (snapshot) => {
-      setStudents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    let cancelled = false;
 
-    const sessionsConstraints: any[] = [where("organizationId", "==", user.organizationId)];
-    if (user.role === 'tutor') sessionsConstraints.push(where("tutorId", "==", user.id));
-    sessionsConstraints.push(orderBy("startTime"), limit(200));
-    const qSessions = query(collection(db, "class_sessions"), ...sessionsConstraints);
-    const unsubSessions = onSnapshot(qSessions, (snapshot) => {
-      setSessions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const loadStudents = async () => {
+      let studentsQuery = supabase
+        .from("students")
+        .select("*")
+        .eq("organization_id", user.organizationId)
+        .limit(100);
+      if (user.role === 'tutor') studentsQuery = studentsQuery.eq("tutor_id", user.id);
+      const { data, error } = await studentsQuery;
+      if (cancelled) return;
+      if (error) console.error("Supabase Error (Students): ", error);
+      else setStudents(data || []);
+    };
+
+    const loadSessions = async () => {
+      let sessionsQuery = supabase
+        .from("class_sessions")
+        .select(
+          "id, organizationId:organization_id, tutorId:tutor_id, templateId:template_id, studentIds:student_ids, startTime:start_time, endTime:end_time, status, isOnline:is_online, roomNumber:room_number, meetingLink:meeting_link"
+        )
+        .eq("organization_id", user.organizationId)
+        .order("start_time", { ascending: true })
+        .limit(200);
+      if (user.role === 'tutor') sessionsQuery = sessionsQuery.eq("tutor_id", user.id);
+      const { data, error } = await sessionsQuery;
+      if (cancelled) return;
+      if (error) console.error("Supabase Error (Sessions): ", error);
+      else setSessions(data || []);
       setLoading(false);
-    });
+    };
 
-    const qCourses = query(collection(db, "courses"), where("organizationId", "==", user.organizationId), limit(100));
-    const unsubCourses = onSnapshot(qCourses, (snapshot) => {
-      setCourses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    const loadCourses = async () => {
+      const { data, error } = await supabase
+        .from("courses")
+        .select("*")
+        .eq("organization_id", user.organizationId)
+        .limit(100);
+      if (cancelled) return;
+      if (error) console.error("Supabase Error (Courses): ", error);
+      else setCourses(data || []);
+    };
+
+    loadStudents();
+    loadSessions();
+    loadCourses();
+
+    const studentsChannel = supabase
+      .channel(`calendar-students-${user.organizationId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `organization_id=eq.${user.organizationId}` }, loadStudents)
+      .subscribe();
+    const sessionsChannel = supabase
+      .channel(`calendar-sessions-${user.organizationId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions", filter: `organization_id=eq.${user.organizationId}` }, loadSessions)
+      .subscribe();
+    const coursesChannel = supabase
+      .channel(`calendar-courses-${user.organizationId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "courses", filter: `organization_id=eq.${user.organizationId}` }, loadCourses)
+      .subscribe();
 
     return () => {
-      unsubStudents();
-      unsubSessions();
-      unsubCourses();
+      cancelled = true;
+      supabase.removeChannel(studentsChannel);
+      supabase.removeChannel(sessionsChannel);
+      supabase.removeChannel(coursesChannel);
     };
   }, [user]);
 
@@ -256,26 +294,35 @@ export default function Calendar() {
       // Cloud Scheduler) derives sessions from it going forward, rather
       // than bulk-creating months of sessions once that go stale the
       // moment the template is edited.
+      // class_templates.name is not-null in the schema; the original Firestore
+      // doc had no dedicated name field, so derive one from the selected course.
+      const courseName = courses.find(c => c.id === courseId)?.name || classType;
+
       const templateData = {
-        organizationId: user.organizationId,
-        courseId,
-        tutorId: user.id,
+        organization_id: user.organizationId,
+        course_id: courseId,
+        tutor_id: user.id,
+        name: courseName,
         type: classType,
-        pricingModel,
-        feeAmount: Number(feeAmount),
+        pricing_model: pricingModel,
+        fee_amount: Number(feeAmount),
         capacity: classType === ClassType.ONE_ON_ONE ? 1 : Number(capacity),
-        recurringPattern: selectedDays.join(","),
-        daysOfWeek: selectedDays,
-        startHour: hours,
-        startMinute: minutes,
-        durationMinutes: duration,
-        isOnline,
-        roomNumber: roomNumber || null,
-        studentIds: selectedStudentIds,
-        createdAt: new Date().toISOString()
+        days_of_week: selectedDays,
+        start_hour: hours,
+        start_minute: minutes,
+        duration_minutes: duration,
+        is_online: isOnline,
+        room_number: roomNumber || null,
+        student_ids: selectedStudentIds
       };
 
-      const templateRef = await addDoc(collection(db, "class_templates"), templateData);
+      const { data: template, error: templateError } = await supabase
+        .from("class_templates")
+        .insert(templateData)
+        .select()
+        .single();
+      if (templateError) throw templateError;
+      const templateRef = { id: template.id };
       const startD = new Date(startDate);
 
       if (classType === ClassType.ONE_ON_ONE || classType === ClassType.CRASH_COURSE) {
@@ -385,11 +432,14 @@ export default function Calendar() {
 
   const updateSessionTime = async (sessionId: string, newStart: Date, newEnd: Date) => {
     try {
-      const sessionRef = doc(db, "class_sessions", sessionId);
-      await updateDoc(sessionRef, {
-        startTime: newStart.toISOString(),
-        endTime: newEnd.toISOString()
-      });
+      // NOTE: class_sessions has no client-facing update RLS policy (session
+      // create/status-transition is server-only per supabase/migrations/0002_rls.sql);
+      // this write will be rejected until a reschedule endpoint exists server-side.
+      const { error } = await supabase
+        .from("class_sessions")
+        .update({ start_time: newStart.toISOString(), end_time: newEnd.toISOString() })
+        .eq("id", sessionId);
+      if (error) throw error;
     } catch (error) {
       console.error("Error updating session time:", error);
     }
@@ -423,10 +473,11 @@ export default function Calendar() {
         const updatedEnd = new Date(sEnd);
         updatedEnd.setDate(updatedEnd.getDate() + dayDiff);
 
-        await updateDoc(doc(db, "class_sessions", s.id), {
-          startTime: updatedStart.toISOString(),
-          endTime: updatedEnd.toISOString()
-        });
+        const { error } = await supabase
+          .from("class_sessions")
+          .update({ start_time: updatedStart.toISOString(), end_time: updatedEnd.toISOString() })
+          .eq("id", s.id);
+        if (error) throw error;
       }
       
       setDragDropConfirm(null);

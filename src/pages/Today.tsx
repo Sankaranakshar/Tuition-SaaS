@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
-import { collection, query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 import {
@@ -18,7 +17,7 @@ import {
   BellOff,
   X,
 } from "lucide-react";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { StatChip, StatusChip, AgedBadge, EmptyState, SkeletonRow, Skeleton, Popover } from "../components/kit";
 import { formatPaise, formatTime } from "../lib/format";
@@ -47,6 +46,70 @@ import {
 // the three-number Pulse, and an attendance-debt counter. Money and attendance
 // still mutate only through the server API (src/lib/api.ts) — this page reads
 // live and writes exactly one thing: attendance, optimistically with undo.
+
+// --- Supabase row -> TodayX shape mappers (rows are snake_case; the rest of
+// this page and lib/today.ts speak the camelCase shapes below unchanged). ---
+
+function rowToSession(row: any): TodaySession {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    tutorId: row.tutor_id,
+    templateId: row.template_id,
+    studentIds: row.student_ids || [],
+    startTime: row.start_time,
+    endTime: row.end_time,
+    status: row.status,
+    isOnline: row.is_online,
+    meetingLink: row.meeting_link,
+    roomNumber: row.room_number,
+    attendanceMarkedAt: row.attendance_marked_at,
+  };
+}
+
+function rowToStudent(row: any): TodayStudent {
+  return {
+    id: row.id,
+    name: row.name,
+    tutorId: row.tutor_id,
+    parentName: row.parent_name,
+    parentPhone: row.parent_phone,
+    phone: row.phone,
+  };
+}
+
+function rowToInvoice(row: any): TodayInvoice {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    status: row.status,
+    dueDate: row.due_date,
+    totalPaise: row.total_paise,
+    paidPaise: row.paid_paise,
+    totalAmount: row.total_amount,
+    createdAt: row.created_at,
+    lastPaymentAt: row.last_payment_at,
+  };
+}
+
+function rowToLead(row: any): TodayLead {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    updatedAt: row.updated_at,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToAttendance(row: any): TodayAttendance {
+  return {
+    studentId: row.student_id,
+    status: row.status,
+    sessionStart: row.session_start,
+    sessionId: row.session_id,
+  };
+}
 
 const STATUS_CYCLE: AttendanceStatus[] = ["present", "absent", "late", "excused"];
 const STATUS_META: Record<AttendanceStatus, { label: string; tone: "positive" | "danger" | "warn" | "neutral" }> = {
@@ -138,83 +201,128 @@ function StaffToday({ user, currentRole }: { user: any; currentRole: string | nu
   // --- Live, bounded listeners (E4.1 hygiene) ---
   useEffect(() => {
     if (!orgId) return;
+    let cancelled = false;
 
     // Sessions: 8 days back (covers the 7-day debt window) through the future
     // week, so the Line, debt counter, conflicts, and Pulse all have their data.
     const windowStart = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
-    const sConstraints: any[] = [
-      where("organizationId", "==", orgId),
-      where("startTime", ">=", windowStart),
-      orderBy("startTime"),
-      limit(300),
-    ];
-    if (isTutor) sConstraints.unshift(where("tutorId", "==", user.id));
-    const unsubSessions = onSnapshot(
-      query(collection(db, "class_sessions"), ...sConstraints),
-      (snap) => setSessions(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))),
-      (err) => {
-        console.error("Today: sessions listener", err);
+    const loadSessions = async () => {
+      let q = supabase
+        .from("class_sessions")
+        .select("*")
+        .eq("organization_id", orgId)
+        .gte("start_time", windowStart)
+        .order("start_time", { ascending: true })
+        .limit(300);
+      if (isTutor) q = q.eq("tutor_id", user.id);
+      const { data, error } = await q;
+      if (cancelled) return;
+      if (error) {
+        console.error("Today: sessions listener", error);
         setSessions([]);
+      } else {
+        setSessions((data || []).map(rowToSession));
       }
-    );
+    };
 
-    const stConstraints: any[] = [where("organizationId", "==", orgId), limit(500)];
-    if (isTutor) stConstraints.unshift(where("tutorId", "==", user.id));
-    const unsubStudents = onSnapshot(
-      query(collection(db, "students"), ...stConstraints),
-      (snap) => setStudents(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))),
-      (err) => console.error("Today: students listener", err)
-    );
+    const loadStudents = async () => {
+      let q = supabase.from("students").select("*").eq("organization_id", orgId).limit(500);
+      if (isTutor) q = q.eq("tutor_id", user.id);
+      const { data, error } = await q;
+      if (cancelled) return;
+      if (error) console.error("Today: students listener", error);
+      else setStudents((data || []).map(rowToStudent));
+    };
 
     const yearAgo = new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString();
-    const iConstraints: any[] = [where("organizationId", "==", orgId), where("createdAt", ">=", yearAgo), limit(500)];
-    if (isTutor) iConstraints.unshift(where("tutorId", "==", user.id));
-    const unsubInvoices = onSnapshot(
-      query(collection(db, "invoices"), ...iConstraints),
-      (snap) => setInvoices(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))),
-      (err) => console.error("Today: invoices listener", err)
-    );
+    const loadInvoices = async () => {
+      let q = supabase
+        .from("invoices")
+        .select("*")
+        .eq("organization_id", orgId)
+        .gte("created_at", yearAgo)
+        .limit(500);
+      if (isTutor) q = q.eq("tutor_id", user.id);
+      const { data, error } = await q;
+      if (cancelled) return;
+      if (error) console.error("Today: invoices listener", error);
+      else setInvoices((data || []).map(rowToInvoice));
+    };
 
     // Attendance for absence-streak detection: recent window, capped.
-    const aConstraints: any[] = [where("organizationId", "==", orgId), limit(500)];
-    const unsubAttendance = onSnapshot(
-      query(collection(db, "attendance_records"), ...aConstraints),
-      (snap) => setAttendance(snap.docs.map((d) => d.data() as TodayAttendance)),
-      (err) => console.error("Today: attendance listener", err)
-    );
+    const loadAttendance = async () => {
+      const { data, error } = await supabase
+        .from("attendance_records")
+        .select("*")
+        .eq("organization_id", orgId)
+        .limit(500);
+      if (cancelled) return;
+      if (error) console.error("Today: attendance listener", error);
+      else setAttendance((data || []).map(rowToAttendance));
+    };
 
     // Leads only matter to the queue and only for admin-tier/frontdesk; tutors
     // don't chase leads, so skip the read for them.
-    let unsubLeads = () => {};
-    if (!isTutor) {
-      unsubLeads = onSnapshot(
-        query(collection(db, "leads"), where("organizationId", "==", orgId), limit(200)),
-        (snap) => setLeads(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))),
-        (err) => console.error("Today: leads listener", err)
-      );
-    }
+    const loadLeads = async () => {
+      if (isTutor) {
+        setLeads([]);
+        return;
+      }
+      const { data, error } = await supabase.from("leads").select("*").eq("organization_id", orgId).limit(200);
+      if (cancelled) return;
+      if (error) console.error("Today: leads listener", error);
+      else setLeads((data || []).map(rowToLead));
+    };
 
-    // Tutor names for the admin variant's stacked lanes (E9.6).
-    let unsubTutors = () => {};
-    if (isAdminTier) {
-      unsubTutors = onSnapshot(
-        query(collection(db, "tutor_profiles"), where("organizationId", "==", orgId), limit(100)),
-        (snap) => {
-          const map: Record<string, string> = {};
-          snap.docs.forEach((d) => (map[d.id] = (d.data() as any).name || "Tutor"));
-          setTutorNames(map);
-        },
-        (err) => console.error("Today: tutors listener", err)
-      );
-    }
+    // Tutor names for the admin variant's stacked lanes (E9.6). Names live on
+    // profiles, not tutor_profiles (which has no name column).
+    const loadTutors = async () => {
+      if (!isAdminTier) {
+        setTutorNames({});
+        return;
+      }
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, name")
+        .eq("organization_id", orgId)
+        .eq("role_type", "tutor")
+        .limit(100);
+      if (cancelled) return;
+      if (error) {
+        console.error("Today: tutors listener", error);
+        return;
+      }
+      const map: Record<string, string> = {};
+      (data || []).forEach((r: any) => (map[r.id] = r.name || "Tutor"));
+      setTutorNames(map);
+    };
+
+    const loadAll = () => {
+      loadSessions();
+      loadStudents();
+      loadInvoices();
+      loadAttendance();
+      loadLeads();
+      loadTutors();
+    };
+    loadAll();
+
+    // postgres_changes filters only support one simple column=eq condition
+    // server-side, so subscribe on organization_id (broadest safe scope) and
+    // let each load() reapply its own role/time filters on refetch.
+    const channel = supabase
+      .channel(`today-${orgId}-${isTutor ? user?.id : "all"}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions", filter: `organization_id=eq.${orgId}` }, loadSessions)
+      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `organization_id=eq.${orgId}` }, loadStudents)
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `organization_id=eq.${orgId}` }, loadInvoices)
+      .on("postgres_changes", { event: "*", schema: "public", table: "attendance_records", filter: `organization_id=eq.${orgId}` }, loadAttendance)
+      .on("postgres_changes", { event: "*", schema: "public", table: "leads", filter: `organization_id=eq.${orgId}` }, loadLeads)
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles", filter: `organization_id=eq.${orgId}` }, loadTutors)
+      .subscribe();
 
     return () => {
-      unsubSessions();
-      unsubStudents();
-      unsubInvoices();
-      unsubAttendance();
-      unsubLeads();
-      unsubTutors();
+      cancelled = true;
+      supabase.removeChannel(channel);
     };
   }, [orgId, isTutor, isAdminTier, user?.id]);
 

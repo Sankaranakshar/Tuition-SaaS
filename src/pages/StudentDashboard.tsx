@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { Calendar, DollarSign, Video, BookOpen, Clock, FileText, CheckCircle, AlertTriangle } from "lucide-react";
-import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { format, isSameDay, parseISO, isAfter, startOfDay } from "date-fns";
 import { Link } from "react-router-dom";
@@ -18,77 +17,124 @@ export default function StudentDashboard() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
 
-    // Fetch Upcoming Classes
-    const qSessions = query(
-      collection(db, "class_sessions"),
-      where("studentIds", "array-contains", user.id),
-      limit(50)
-    );
-    
-    const unsubSessions = onSnapshot(qSessions, (snapshot) => {
-      const sessions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+    // Upcoming classes: this student's sessions (array-contains -> .contains()).
+    const loadSessions = async () => {
+      const { data, error } = await supabase
+        .from("class_sessions")
+        .select("*")
+        .contains("student_ids", [user.id])
+        .limit(50);
+      if (cancelled) return;
+      if (error) {
+        console.error("StudentDashboard: sessions listener", error);
+        return;
+      }
+      const sessions = (data || []).map((row: any) => ({
+        id: row.id,
+        title: row.title,
+        startTime: row.start_time,
+        endTime: row.end_time,
+        isOnline: row.is_online,
+        meetingLink: row.meeting_link,
+      }));
       const today = new Date();
-      
       const upcoming = sessions
         .filter((s: any) => isAfter(parseISO(s.startTime), startOfDay(today)) || isSameDay(parseISO(s.startTime), today))
         .sort((a: any, b: any) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
         .slice(0, 3);
-
       setUpcomingClasses(upcoming);
-    });
+    };
 
-    // Fetch Recent Grades
-    const qAssessments = query(
-      collection(db, "assessments"),
-      where("studentId", "==", user.id),
-      limit(50)
-    );
-    
-    const unsubAssessments = onSnapshot(qAssessments, (snapshot) => {
-      const assessments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+    // Recent grades.
+    const loadAssessments = async () => {
+      const { data, error } = await supabase
+        .from("assessments")
+        .select("*")
+        .eq("student_id", user.id)
+        .limit(50);
+      if (cancelled) return;
+      if (error) {
+        console.error("StudentDashboard: assessments listener", error);
+        return;
+      }
+      const assessments = (data || []).map((row: any) => ({
+        id: row.id,
+        title: row.title,
+        type: row.type,
+        date: row.date,
+        score: row.score,
+        totalScore: row.total_score,
+        feedback: row.feedback,
+      }));
       const sorted = assessments
         .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
         .slice(0, 3);
       setRecentGrades(sorted);
-    });
+    };
 
-    // Fetch Wallet & Invoices
-    const qInvoices = query(
-      collection(db, "invoices"),
-      where("studentId", "==", user.id),
-      limit(50)
-    );
-    
-    const unsubInvoices = onSnapshot(qInvoices, (snapshot) => {
-      const invoices = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      
+    // Wallet & invoices.
+    const loadInvoices = async () => {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("*")
+        .eq("student_id", user.id)
+        .limit(50);
+      if (cancelled) return;
+      if (error) {
+        console.error("StudentDashboard: invoices listener", error);
+        setLoading(false);
+        return;
+      }
+      const invoices = (data || []).map((row: any) => ({
+        id: row.id,
+        status: row.status,
+        dueDate: row.due_date,
+      }));
       const overdue = invoices.filter((i: any) => i.status === 'pending' && new Date(i.dueDate) < new Date());
       setOverdueInvoices(overdue);
-      
       setLoading(false);
-    });
+    };
 
-    // Fetch Wallet Balance
-    const qWallet = query(
-      collection(db, "wallets"),
-      where("studentId", "==", user.id),
-      limit(1)
-    );
-
-    const unsubWallet = onSnapshot(qWallet, (snapshot) => {
-      if (!snapshot.empty) {
-        setWalletBalance(snapshot.docs[0].data().balanceCredits || 0);
-      } else {
-        setWalletBalance(0);
+    const loadWallet = async () => {
+      const { data, error } = await supabase
+        .from("wallets")
+        .select("*")
+        .eq("student_id", user.id)
+        .limit(1);
+      if (cancelled) return;
+      if (error) {
+        console.error("StudentDashboard: wallet listener", error);
+        return;
       }
-    });
+      setWalletBalance((data && data[0]?.balance_credits) || 0);
+    };
+
+    const loadAll = () => {
+      loadSessions();
+      loadAssessments();
+      loadInvoices();
+      loadWallet();
+    };
+    loadAll();
+
+    // postgres_changes filters only support one simple column=eq condition, and
+    // none of these tables are org-scoped filterable by this student directly
+    // via a single column here, so scope each subscription to its own table
+    // and just refetch that table's query on any change within the org-visible
+    // rows RLS already restricts to this student.
+    const channel = supabase
+      .channel(`student-dashboard-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions" }, loadSessions)
+      .on("postgres_changes", { event: "*", schema: "public", table: "assessments" }, loadAssessments)
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, loadInvoices)
+      .on("postgres_changes", { event: "*", schema: "public", table: "wallets" }, loadWallet)
+      .subscribe();
 
     return () => {
-      unsubSessions();
-      unsubAssessments();
-      unsubInvoices();
-      unsubWallet();
+      cancelled = true;
+      supabase.removeChannel(channel);
     };
   }, [user]);
 

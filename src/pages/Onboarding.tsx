@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { doc, updateDoc, setDoc } from "firebase/firestore";
-import { auth, db } from "../firebase";
+import { supabase } from "../supabase";
 import { CheckCircle, ChevronRight, User, BookOpen, Users, DollarSign, MapPin, GraduationCap } from "lucide-react";
 import { previewParentInvite, redeemParentInvite } from "../lib/api";
 
@@ -65,10 +64,12 @@ export default function Onboarding() {
     setLoading(true);
     try {
       // role_type is a display preference; real authorization comes from
-      // server-set custom claims and organization_members.
-      await updateDoc(doc(db, "users", user.id), {
-        role_type: selectedRole
-      });
+      // organization_members, not this column.
+      const { error } = await supabase
+        .from("profiles")
+        .update({ role_type: selectedRole })
+        .eq("id", user.id);
+      if (error) throw error;
       setRole(selectedRole);
       setStep(2);
       await checkAuth(); // refresh user context
@@ -109,8 +110,9 @@ export default function Onboarding() {
     setLoading(true);
     try {
       if (role === 'tutor') {
-        await setDoc(doc(db, "tutor_profiles", user.id), {
+        const { error } = await supabase.from("tutor_profiles").upsert({
           user_id: user.id,
+          organization_id: user.organizationId,
           full_name: tutorData.fullName,
           subjects: tutorData.subjects.split(',').map(s => s.trim()).filter(Boolean),
           grades: tutorData.grades.split(',').map(s => s.trim()).filter(Boolean),
@@ -123,32 +125,38 @@ export default function Onboarding() {
           price_range_max: tutorData.priceMax,
           max_batch_size: tutorData.maxBatchSize,
           is_verified: false
-        });
+        }, { onConflict: "user_id" });
+        if (error) throw error;
       } else if (role === 'parent') {
         if (!invitePreview || !consent) return;
         await redeemParentInvite(inviteToken.trim());
         sessionStorage.removeItem("pendingParentInvite");
-        // The redeem call just granted custom claims server-side; force a
-        // fresh ID token so the very next API call carries them (mirrors the
-        // tutor/admin bootstrap refresh above).
-        await auth.currentUser?.getIdToken(true);
+        // No token refresh needed: organization membership is read fresh
+        // from Postgres on every request, unlike the old Firebase-custom-claims
+        // model where a stale ID token could hide a just-granted role.
       } else if (role === 'student') {
-        await setDoc(doc(db, "student_profiles", user.id), {
+        // parentCode is a raw invite-code string, not a parent auth uid, so it
+        // is not written to the uuid parent_id column — real parent<->student
+        // linkage happens via redeemParentInvite / parent_links (see above).
+        const { error } = await supabase.from("student_profiles").upsert({
           user_id: user.id,
+          organization_id: user.organizationId,
           full_name: studentData.fullName,
           grade: studentData.grade,
           board: studentData.board,
-          dob: studentData.dob,
+          dob: studentData.dob || null,
           subjects_needed: studentData.subjectsNeeded.split(',').map(s => s.trim()).filter(Boolean),
-          learning_preferences: studentData.learningPreferences,
-          parent_id: studentData.parentCode || null
-        });
+          learning_preferences: studentData.learningPreferences
+        }, { onConflict: "user_id" });
+        if (error) throw error;
       }
 
-      await updateDoc(doc(db, "users", user.id), {
-        profile_status: 'complete'
-      });
-      
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({ profile_status: 'complete' })
+        .eq("id", user.id);
+      if (profileError) throw profileError;
+
       await checkAuth();
       navigate("/app");
     } catch (err) {

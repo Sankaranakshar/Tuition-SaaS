@@ -1,13 +1,14 @@
-import { auth } from "../firebase";
+import { supabase } from "../supabase";
 
 // Thin authenticated client for the privileged API (/api/v1).
 // Money and attendance mutations must go through here; they have no
-// client-side Firestore write path by design.
+// client-side write path (blocked by RLS) by design.
 export async function api<T = unknown>(
   path: string,
   options: { method?: string; body?: unknown } = {}
 ): Promise<T> {
-  const token = await auth.currentUser?.getIdToken();
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
   if (!token) throw new Error("Not signed in");
 
   const resp = await fetch(`/api/v1${path}`, {
@@ -52,6 +53,29 @@ export function recordManualPayment(input: {
   });
 }
 
+/** Create a free-form invoice with custom line items (rupee amounts). */
+export function createInvoice(input: {
+  studentId: string;
+  items: { description: string; amount: number; quantity: number }[];
+  taxPercentage?: number;
+  dueDate?: string;
+}) {
+  return api<{ ok: true; invoiceId: string }>("/billing/invoices", { method: "POST", body: input });
+}
+
+/** Staff-recorded wallet top-up (offline/in-person payment credited to the student's prepaid balance). */
+export function topUpWallet(input: {
+  studentId: string;
+  amountPaise: number;
+  method: "cash" | "upi" | "bank_transfer" | "cheque" | "other";
+  note?: string;
+}) {
+  return api<{ ok: true; duplicate: boolean }>("/billing/wallets/topup", {
+    method: "POST",
+    body: { ...input, idempotencyKey: crypto.randomUUID() },
+  });
+}
+
 export function voidInvoice(invoiceId: string) {
   return api<{ ok: true }>(`/billing/invoices/${invoiceId}/void`, { method: "POST" });
 }
@@ -72,7 +96,8 @@ export function createInvoicePaymentLink(invoiceId: string) {
 /** Download the server-rendered invoice PDF. Streams as a Blob; triggers a
  *  file save via a synthetic anchor click. */
 export async function downloadInvoicePdf(invoiceId: string): Promise<void> {
-  const token = await auth.currentUser?.getIdToken();
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
   if (!token) throw new Error("Not signed in");
   const resp = await fetch(`/api/v1/billing/invoices/${invoiceId}/pdf`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -103,7 +128,8 @@ export async function downloadInvoicePdf(invoiceId: string): Promise<void> {
  *  it ever lands in storage, so this can't go through the JSON `api()`
  *  helper — it needs a multipart body. */
 export async function uploadDocument(input: { file: File; studentId: string; category: string; notes?: string }) {
-  const token = await auth.currentUser?.getIdToken();
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
   if (!token) throw new Error("Not signed in");
   const form = new FormData();
   form.append("file", input.file);

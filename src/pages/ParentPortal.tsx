@@ -1,8 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
-import { collection, query, where, onSnapshot, doc, getDoc, limit } from "firebase/firestore";
 import { toast } from "sonner";
 import { CalendarClock, Wallet as WalletIcon, Receipt, Share2, ExternalLink, Users, Download } from "lucide-react";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { EmptyState, Skeleton, SkeletonText, StatChip, StatusChip, type ChipTone } from "../components/kit";
 import { formatPaise, formatINR, formatDate, formatRelativeDays } from "../lib/format";
@@ -10,9 +9,15 @@ import { payInvoiceAsParent, downloadInvoicePdf } from "../lib/api";
 
 // Epic 10 (parent portal v1, mobile-web-first). One page, three tabs, no new
 // routes: a parent's whole world is "which of my kids, what do I owe, what
-// happened." All reads are direct Firestore listeners gated by parent_links
-// (firestore.rules `isParentOf`); the only write path is the two server
-// calls in src/lib/api.ts (invite redemption happened in Onboarding).
+// happened." All reads are Supabase selects + realtime refetch-on-change,
+// gated by RLS (`parent_links_select`, `is_parent_of()` on the money
+// tables); the only write path is the two server calls in src/lib/api.ts
+// (invite redemption happened in Onboarding).
+//
+// Note: `payments_select` RLS only grants staff read access (see
+// supabase/migrations/0002_rls.sql) — parents currently get an empty result
+// from the payments query below, not an error. That's an RLS-policy gap,
+// not something this read-side pass is scoped to fix.
 
 type Tab = "overview" | "invoices" | "wallet";
 
@@ -78,65 +83,132 @@ export default function ParentPortal() {
   const [wallet, setWallet] = useState<{ balanceCredits: number; balanceCurrency: number } | null>(null);
   const [payingId, setPayingId] = useState<string | null>(null);
 
-  // Resolve linked children from parent_links, then hydrate each student doc.
+  // Resolve linked children from parent_links, then hydrate each student row.
   useEffect(() => {
     if (!user?.id) return;
-    const q = query(collection(db, "parent_links"), where("parentUserId", "==", user.id), limit(50));
-    const unsub = onSnapshot(q, async (snap) => {
-      const links = snap.docs.map((d) => d.data() as { studentId: string });
-      const resolved = await Promise.all(
-        links.map(async (l): Promise<Child | null> => {
-          const sSnap = await getDoc(doc(db, "students", l.studentId));
-          return sSnap.exists()
-            ? { studentId: l.studentId, name: sSnap.data().name || "Student", grade: sSnap.data().grade }
-            : null;
-        })
-      );
-      const kids = resolved.filter((c): c is Child => c !== null);
+    let cancelled = false;
+
+    const load = async () => {
+      const { data: links, error: linksErr } = await supabase
+        .from("parent_links")
+        .select("student_id")
+        .eq("parent_user_id", user.id)
+        .limit(50);
+      if (cancelled || linksErr || !links) return;
+
+      const studentIds = links.map((l) => l.student_id as string);
+      if (studentIds.length === 0) {
+        setChildren([]);
+        setLoadingChildren(false);
+        setSelectedId(null);
+        return;
+      }
+
+      const { data: rows, error: studentsErr } = await supabase
+        .from("students")
+        .select("id, name, grade")
+        .in("id", studentIds);
+      if (cancelled || studentsErr || !rows) return;
+
+      const kids: Child[] = rows.map((s) => ({ studentId: s.id as string, name: (s.name as string) || "Student", grade: s.grade as string | undefined }));
       setChildren(kids);
       setLoadingChildren(false);
-      setSelectedId((prev) => prev && kids.some((k) => k.studentId === prev) ? prev : kids[0]?.studentId || null);
-    });
-    return () => unsub();
+      setSelectedId((prev) => (prev && kids.some((k) => k.studentId === prev) ? prev : kids[0]?.studentId || null));
+    };
+
+    load();
+    const channel = supabase
+      .channel(`parent-links-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "parent_links", filter: `parent_user_id=eq.${user.id}` }, load)
+      .subscribe();
+    return () => { cancelled = true; supabase.removeChannel(channel); };
   }, [user?.id]);
 
   useEffect(() => {
     if (!user?.id || !selectedId) { setSessions([]); setInvoices([]); setPayments([]); setWallet(null); return; }
+    let cancelled = false;
 
-    const qSessions = query(collection(db, "class_sessions"), where("parentUserIds", "array-contains", user.id), limit(50));
-    const unsubSessions = onSnapshot(qSessions, (snap) => {
-      const upcoming = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as UpcomingSession))
+    const loadSessions = async () => {
+      const { data, error } = await supabase
+        .from("class_sessions")
+        .select("id, start_time, is_online, student_ids")
+        .contains("parent_user_ids", [user.id])
+        .limit(50);
+      if (cancelled || error || !data) return;
+      const upcoming = data
+        .map((d) => ({ id: d.id, startTime: d.start_time, isOnline: d.is_online, studentIds: d.student_ids } as UpcomingSession))
         .filter((s) => (!s.studentIds || s.studentIds.includes(selectedId)) && toDate(s.startTime).getTime() >= Date.now() - 3600_000)
         .sort((a, b) => toDate(a.startTime).getTime() - toDate(b.startTime).getTime())
         .slice(0, 5);
       setSessions(upcoming);
-    });
+    };
 
-    const qInvoices = query(collection(db, "invoices"), where("studentId", "==", selectedId), limit(50));
-    const unsubInvoices = onSnapshot(qInvoices, (snap) => {
-      const list = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as Invoice))
+    const loadInvoices = async () => {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("id, status, total_paise, paid_paise, total_amount, due_date, invoice_number, items")
+        .eq("student_id", selectedId)
+        .limit(50);
+      if (cancelled || error || !data) return;
+      const list = data
+        .map((d) => ({
+          id: d.id,
+          status: d.status,
+          totalPaise: d.total_paise,
+          paidPaise: d.paid_paise,
+          totalAmount: d.total_amount ?? undefined,
+          dueDate: d.due_date ?? undefined,
+          invoiceNumber: d.invoice_number ?? undefined,
+          items: d.items as { description: string }[] | undefined,
+        } as Invoice))
         .sort((a, b) => toDate(b.dueDate).getTime() - toDate(a.dueDate).getTime());
       setInvoices(list);
-    });
+    };
 
-    const qPayments = query(collection(db, "payments"), where("studentId", "==", selectedId), limit(50));
-    const unsubPayments = onSnapshot(qPayments, (snap) => {
-      const list = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as PaymentRecord))
+    // payments_select RLS is staff-only today, so this returns empty for a
+    // parent session; kept as a direct translation of the old query.
+    const loadPayments = async () => {
+      const { data, error } = await supabase
+        .from("payments")
+        .select("id, amount_paise, method, at")
+        .eq("student_id", selectedId)
+        .limit(50);
+      if (cancelled || error || !data) return;
+      const list = data
+        .map((d) => ({ id: d.id, amountPaise: d.amount_paise, method: d.method, at: d.at } as PaymentRecord))
         .sort((a, b) => toDate(b.at).getTime() - toDate(a.at).getTime());
       setPayments(list);
-    });
+    };
 
-    const qWallet = query(collection(db, "wallets"), where("studentId", "==", selectedId), limit(1));
-    const unsubWallet = onSnapshot(qWallet, (snap) => {
-      if (snap.empty) { setWallet(null); return; }
-      const w = snap.docs[0].data();
-      setWallet({ balanceCredits: w.balanceCredits || 0, balanceCurrency: w.balanceCurrency || 0 });
-    });
+    const loadWallet = async () => {
+      const { data, error } = await supabase
+        .from("wallets")
+        .select("balance_credits, balance_currency")
+        .eq("student_id", selectedId)
+        .limit(1)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error || !data) { setWallet(null); return; }
+      setWallet({ balanceCredits: data.balance_credits || 0, balanceCurrency: data.balance_currency || 0 });
+    };
 
-    return () => { unsubSessions(); unsubInvoices(); unsubPayments(); unsubWallet(); };
+    loadSessions();
+    loadInvoices();
+    loadPayments();
+    loadWallet();
+
+    const channel = supabase
+      .channel(`parent-portal-${selectedId}`)
+      // postgres_changes filters only support a single `column=eq.value`
+      // condition, and membership here is an array-contains check, so this
+      // listens broadly and re-applies the real filter inside loadSessions().
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions" }, loadSessions)
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `student_id=eq.${selectedId}` }, loadInvoices)
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments", filter: `student_id=eq.${selectedId}` }, loadPayments)
+      .on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `student_id=eq.${selectedId}` }, loadWallet)
+      .subscribe();
+
+    return () => { cancelled = true; supabase.removeChannel(channel); };
   }, [user?.id, selectedId]);
 
   const outstandingPaise = useMemo(

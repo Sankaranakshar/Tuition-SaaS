@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { Calendar as CalendarIcon, Clock, Video, CheckCircle, XCircle, AlertCircle } from "lucide-react";
-import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { format, parseISO, isAfter, isBefore, startOfDay, endOfDay } from "date-fns";
 
@@ -12,20 +11,43 @@ export default function Timetable() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
 
-    const qSessions = query(
-      collection(db, "class_sessions"),
-      where("studentIds", "array-contains", user.id),
-      limit(50)
-    );
-    
-    const unsubSessions = onSnapshot(qSessions, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      setSessions(data.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime()));
+    const load = async () => {
+      const { data, error } = await supabase
+        .from("class_sessions")
+        .select("*")
+        .contains("student_ids", [user.id])
+        .limit(50);
+      if (cancelled) return;
+      if (error) {
+        console.error("Timetable: sessions listener", error);
+        setLoading(false);
+        return;
+      }
+      const rows = (data || []).map((row: any) => ({
+        id: row.id,
+        title: row.title,
+        startTime: row.start_time,
+        endTime: row.end_time,
+        isOnline: row.is_online,
+        meetingLink: row.meeting_link,
+        attendanceStatus: row.attendance_status,
+      }));
+      setSessions(rows.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime()));
       setLoading(false);
-    });
+    };
+    load();
 
-    return () => unsubSessions();
+    const channel = supabase
+      .channel(`timetable-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions" }, load)
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   if (loading) return <div>Loading timetable...</div>;

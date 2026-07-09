@@ -1,9 +1,9 @@
 import express from "express";
-import { adminDb } from "../firebaseAdmin.ts";
-import { materializeTemplate } from "./scheduling.ts";
+import { pool } from "../db.ts";
+import { materializeTemplate, type Template } from "./scheduling.ts";
 
-// Machine-to-machine endpoints for Cloud Scheduler. No Firebase user token
-// exists for a scheduler invocation, so these are gated by a shared secret
+// Machine-to-machine endpoint for Cloud Scheduler. No Supabase user session
+// exists for a scheduler invocation, so this is gated by a shared secret
 // instead of authenticateToken/requireOrg. Configure Cloud Scheduler to send
 // `x-cron-secret: ${CRON_SECRET}` and point it at this route on a cadence
 // shorter than WEEKS_AHEAD in scheduling.ts (e.g. daily) so the rolling
@@ -20,13 +20,14 @@ router.use((req, res, next) => {
 
 router.post("/materialize-sessions", async (_req, res, next) => {
   try {
-    if (!adminDb) throw new Error("Firebase Admin not initialized");
-    const db = adminDb;
-    const templatesSnap = await db.collection("class_templates").get();
+    const templatesRes = await pool.query(
+      `select id, organization_id, type, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes, is_online, room_number
+       from class_templates`
+    );
 
     const aggregate = { created: [] as string[], conflicts: [] as { templateId: string; date: string }[], templatesProcessed: 0 };
-    for (const templateDoc of templatesSnap.docs) {
-      const r = await materializeTemplate(db, templateDoc.id, templateDoc.data());
+    for (const row of templatesRes.rows as Template[]) {
+      const r = await materializeTemplate(row);
       aggregate.created.push(...r.created);
       aggregate.conflicts.push(...r.conflicts);
       aggregate.templatesProcessed++;

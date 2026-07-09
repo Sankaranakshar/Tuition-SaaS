@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { CreditCard, DollarSign, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, getDocs, updateDoc, doc, limit } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import LoadingSpinner from "../components/LoadingSpinner";
-import { formatINR } from "../lib/format";
+import { formatPaise } from "../lib/format";
 
 export default function Transactions() {
   const { user } = useAuth();
@@ -12,79 +11,65 @@ export default function Transactions() {
   const [loading, setLoading] = useState(true);
   const [isTopUpModalOpen, setIsTopUpModalOpen] = useState(false);
   const [topUpAmount, setTopUpAmount] = useState("");
+  const [topUpError, setTopUpError] = useState("");
 
+  // The old Firestore `transactions` collection (organizationId/studentId/
+  // type/amount/date/method/description fields) doesn't exist in that shape
+  // on Supabase — `transactions` there is a generic event log (kind, jsonb
+  // payload, no student_id column at all, staff-only RLS). Per-student
+  // payment/credit history now lives in `wallet_ledger`, which does carry
+  // student_id and has parent/student-self RLS read access — that's what
+  // this page reads from now.
   useEffect(() => {
     if (!user?.organizationId || !user?.id) return;
+    let cancelled = false;
 
-    const q = query(
-      collection(db, "transactions"),
-      where("organizationId", "==", user.organizationId),
-      where("studentId", "==", user.id),
-      orderBy("date", "desc"),
-      limit(50)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const txData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setTransactions(txData);
+    const load = async () => {
+      const { data: studentRow, error: studentErr } = await supabase
+        .from("students")
+        .select("id")
+        .eq("student_user_id", user.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (studentErr || !studentRow) {
+        setTransactions([]);
+        setLoading(false);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("wallet_ledger")
+        .select("*")
+        .eq("organization_id", user.organizationId)
+        .eq("student_id", studentRow.id)
+        .order("at", { ascending: false })
+        .limit(50);
+      if (cancelled) return;
+      if (!error && data) setTransactions(data);
       setLoading(false);
-    }, (error) => {
-      console.error("Error fetching transactions:", error);
-      setLoading(false);
-    });
+    };
 
-    return () => unsubscribe();
+    load();
+    const channel = supabase
+      .channel(`wallet-ledger-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "wallet_ledger", filter: `organization_id=eq.${user.organizationId}` }, load)
+      .subscribe();
+
+    return () => { cancelled = true; supabase.removeChannel(channel); };
   }, [user]);
 
+  // This page is always a self-view (it resolves the *logged-in user's own*
+  // student row) — but the server's top-up route is deliberately staff-only
+  // (POST /api/v1/billing/wallets/topup), same trust boundary as manual
+  // payments: instantly crediting your own wallet from the client, with no
+  // real payment behind it, is a fraud vector. The old Firestore version
+  // "worked" only because it wrote straight to the client SDK with a fake
+  // "Credit Card" method and no verification at all — that was never a real
+  // payment path either. Rather than wire this button to an endpoint it will
+  // always get a 403 from, be honest that self-serve top-up isn't supported:
+  // top-ups are staff-recorded after a real payment is received in person.
   const handleTopUp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user?.organizationId || !user?.id || !topUpAmount) return;
-
-    try {
-      const amount = parseFloat(topUpAmount);
-      
-      // Add transaction record
-      await addDoc(collection(db, "transactions"), {
-        organizationId: user.organizationId,
-        studentId: user.id,
-        type: 'topup',
-        amount: amount,
-        date: new Date().toISOString(),
-        method: 'Credit Card', // Mock method
-        description: 'Wallet Top-up',
-        createdAt: serverTimestamp()
-      });
-
-      // Update wallet balance
-      const walletQuery = query(
-        collection(db, "wallets"),
-        where("studentId", "==", user.id)
-      );
-      const walletSnapshot = await getDocs(walletQuery);
-      
-      if (!walletSnapshot.empty) {
-        const walletDoc = walletSnapshot.docs[0];
-        const currentBalance = walletDoc.data().balanceCredits || 0;
-        await updateDoc(doc(db, "wallets", walletDoc.id), {
-          balanceCredits: currentBalance + amount,
-          updatedAt: serverTimestamp()
-        });
-      } else {
-        // Create wallet if it doesn't exist
-        await addDoc(collection(db, "wallets"), {
-          organizationId: user.organizationId,
-          studentId: user.id,
-          balanceCredits: amount,
-          balanceCurrency: 'USD',
-          updatedAt: serverTimestamp()
-        });
-      }
-
-      setIsTopUpModalOpen(false);
-      setTopUpAmount("");
-    } catch (error) {
-      console.error("Error adding top-up:", error);
-    }
+    setTopUpError("Wallet top-ups are recorded by your tutoring center after payment is received — please contact them directly.");
   };
 
   if (loading) {
@@ -114,26 +99,31 @@ export default function Transactions() {
         
         {transactions.length > 0 ? (
           <ul className="divide-y divide-gray-100">
-            {transactions.map((tx) => (
-              <li key={tx.id} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
-                <div className="flex items-center">
-                  <div className={`p-2 rounded-lg mr-4 ${tx.type === 'topup' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
-                    {tx.type === 'topup' ? <ArrowUpRight className="w-6 h-6" /> : <ArrowDownRight className="w-6 h-6" />}
+            {transactions.map((tx) => {
+              const isCredit = (tx.paise || 0) > 0 || (tx.credits || 0) > 0;
+              const label = tx.type === 'credit_currency' ? 'Wallet Top-up' : tx.type === 'debit_credit' ? 'Session Deduction' : tx.type === 'debit_currency' ? 'Wallet Debit' : tx.type;
+              const amountLabel = tx.paise ? formatPaise(Math.abs(tx.paise)) : `${Math.abs(tx.credits || 0)} credits`;
+              return (
+                <li key={tx.id} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                  <div className="flex items-center">
+                    <div className={`p-2 rounded-lg mr-4 ${isCredit ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                      {isCredit ? <ArrowUpRight className="w-6 h-6" /> : <ArrowDownRight className="w-6 h-6" />}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-900 capitalize">{label}</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {tx.at ? new Date(tx.at).toLocaleString() : ''} • {tx.reason}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-900 capitalize">{tx.type === 'topup' ? 'Wallet Top-up' : 'Session Deduction'}</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {new Date(tx.date).toLocaleString()} • {tx.type === 'topup' ? tx.method : tx.description}
-                    </p>
+                  <div className="flex items-center space-x-3">
+                    <span className={`text-sm font-bold ${isCredit ? 'text-green-600' : 'text-gray-900'}`}>
+                      {isCredit ? '+' : '-'}{amountLabel}
+                    </span>
                   </div>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <span className={`text-sm font-bold ${tx.type === 'topup' ? 'text-green-600' : 'text-gray-900'}`}>
-                    {tx.type === 'topup' ? '+' : '-'}{formatINR(tx.amount)}
-                  </span>
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <div className="p-8 text-center">
@@ -151,6 +141,11 @@ export default function Transactions() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Top-up Wallet</h2>
+            {topUpError && (
+              <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded-md text-sm">
+                {topUpError}
+              </div>
+            )}
             <form onSubmit={handleTopUp}>
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount (₹)</label>
@@ -168,7 +163,7 @@ export default function Transactions() {
               <div className="flex justify-end space-x-3">
                 <button
                   type="button"
-                  onClick={() => setIsTopUpModalOpen(false)}
+                  onClick={() => { setIsTopUpModalOpen(false); setTopUpError(""); }}
                   className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 border border-gray-300 rounded-md transition-colors"
                 >
                   Cancel

@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Edit2, FileText, Calendar, DollarSign, MessageSquare, User, BookOpen, Clock, CreditCard, Plus, Save, X, CheckCircle, XCircle, Link as LinkIcon, Award, Download } from "lucide-react";
-import { doc, getDoc, collection, query, where, onSnapshot, updateDoc, addDoc, limit } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -10,6 +9,121 @@ import { toast } from "sonner";
 
 import LoadingSpinner from "../components/LoadingSpinner";
 import { createParentInvite } from "../lib/api";
+
+// --- Supabase row <-> camelCase UI-shape mappers. The students table grew a
+// large ad-hoc field set under the old Firestore model; keep the UI's camelCase
+// keys unchanged and translate at the query boundary. ---
+
+const STUDENT_FIELDS: [string, string][] = [
+  ["name", "name"],
+  ["notes", "notes"],
+  ["status", "status"],
+  ["phone", "phone"],
+  ["email", "email"],
+  ["address", "address"],
+  ["parentName", "parent_name"],
+  ["parentPhone", "parent_phone"],
+  ["parentEmail", "parent_email"],
+  ["tutorId", "tutor_id"],
+  ["age", "age"],
+  ["gender", "gender"],
+  ["schoolName", "school_name"],
+  ["board", "board"],
+  ["grade", "grade"],
+  ["subject", "subject"],
+  ["areasOfDifficulty", "areas_of_difficulty"],
+  ["learningGoals", "learning_goals"],
+  ["studentPhone", "student_phone"],
+  ["studentEmail", "student_email"],
+  ["emergencyContactName", "emergency_contact_name"],
+  ["emergencyContactPhone", "emergency_contact_phone"],
+  ["feeStructure", "fee_structure"],
+  ["feeAmount", "fee_amount"],
+  ["credits", "credits"],
+];
+
+function rowToStudent(row: any): any {
+  const out: any = {
+    id: row.id,
+    organizationId: row.organization_id,
+    studentUserId: row.student_user_id,
+    isDeleted: row.is_deleted,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+  for (const [camel, snake] of STUDENT_FIELDS) out[camel] = row[snake];
+  return out;
+}
+
+function studentToRow(edit: any): any {
+  const out: any = {};
+  for (const [camel, snake] of STUDENT_FIELDS) {
+    if (edit[camel] !== undefined) out[snake] = edit[camel];
+  }
+  return out;
+}
+
+function rowToSession(row: any): any {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    tutorId: row.tutor_id,
+    studentIds: row.student_ids || [],
+    startTime: row.start_time,
+    endTime: row.end_time,
+    status: row.status,
+  };
+}
+
+function rowToDocument(row: any): any {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    tutorId: row.tutor_id,
+    name: row.name,
+    storagePath: row.storage_path,
+    fileUrl: row.file_url,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToInvoice(row: any): any {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    tutorId: row.tutor_id,
+    status: row.status,
+    dueDate: row.due_date,
+    amount: row.total_amount,
+  };
+}
+
+function rowToClassTemplate(row: any): any {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    tutorId: row.tutor_id,
+    name: row.name,
+    type: row.type,
+    subject: row.subject,
+    grade: row.grade,
+    studentIds: row.student_ids || [],
+  };
+}
+
+function rowToAssessment(row: any): any {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    tutorId: row.tutor_id,
+    title: row.title,
+    type: row.type,
+    date: row.date,
+    score: row.score,
+    totalScore: row.total_score,
+    feedback: row.feedback,
+  };
+}
 
 export default function StudentProfile() {
   const { id } = useParams<{ id: string }>();
@@ -52,99 +166,108 @@ export default function StudentProfile() {
 
   useEffect(() => {
     if (!user || !id || !user.organizationId) return;
+    let cancelled = false;
+    const orgId = user.organizationId;
+    const isTutor = user.role === 'tutor';
 
-    // Fetch student details
-    const unsubStudent = onSnapshot(doc(db, "students", id), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = { id: docSnap.id, ...docSnap.data() };
-        setStudent(data);
-        setEditFormData(data);
+    // Student details (single-doc listener).
+    const loadStudent = async () => {
+      const { data, error } = await supabase.from("students").select("*").eq("id", id).maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        console.error("Error fetching student:", error);
+      } else if (data) {
+        const mapped = rowToStudent(data);
+        setStudent(mapped);
+        setEditFormData(mapped);
       } else {
         console.error("No such student!");
       }
       setLoading(false);
-    }, (error) => {
-      console.error("Error fetching student:", error);
-      setLoading(false);
-    });
+    };
 
-    // Fetch related sessions
-    const sessionsConstraints: any[] = [
-      where("studentIds", "array-contains", id),
-      where("organizationId", "==", user.organizationId)
-    ];
-    if (user.role === 'tutor') sessionsConstraints.push(where("tutorId", "==", user.id));
-    sessionsConstraints.push(limit(50));
-    const qSessions = query(collection(db, "class_sessions"), ...sessionsConstraints);
-    const unsubSessions = onSnapshot(qSessions, (snapshot) => {
-      setSessions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (error) => {
-      console.error("Error fetching sessions:", error);
-    });
+    // Related sessions (array-contains -> .contains()).
+    const loadSessions = async () => {
+      let q = supabase
+        .from("class_sessions")
+        .select("*")
+        .contains("student_ids", [id])
+        .eq("organization_id", orgId)
+        .limit(50);
+      if (isTutor) q = q.eq("tutor_id", user.id);
+      const { data, error } = await q;
+      if (cancelled) return;
+      if (error) console.error("Error fetching sessions:", error);
+      else setSessions((data || []).map(rowToSession));
+    };
 
-    // Fetch related documents
-    const docsConstraints: any[] = [
-      where("studentId", "==", id),
-      where("organizationId", "==", user.organizationId)
-    ];
-    if (user.role === 'tutor') docsConstraints.push(where("tutorId", "==", user.id));
-    docsConstraints.push(limit(50));
-    const qDocs = query(collection(db, "documents"), ...docsConstraints);
-    const unsubDocs = onSnapshot(qDocs, (snapshot) => {
-      setDocuments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (error) => {
-      console.error("Error fetching documents:", error);
-    });
+    // Related documents.
+    const loadDocuments = async () => {
+      let q = supabase.from("documents").select("*").eq("student_id", id).eq("organization_id", orgId).limit(50);
+      if (isTutor) q = q.eq("tutor_id", user.id);
+      const { data, error } = await q;
+      if (cancelled) return;
+      if (error) console.error("Error fetching documents:", error);
+      else setDocuments((data || []).map(rowToDocument));
+    };
 
-    // Fetch related invoices
-    const invoicesConstraints: any[] = [
-      where("studentId", "==", id),
-      where("organizationId", "==", user.organizationId)
-    ];
-    if (user.role === 'tutor') invoicesConstraints.push(where("tutorId", "==", user.id));
-    invoicesConstraints.push(limit(50));
-    const qInvoices = query(collection(db, "invoices"), ...invoicesConstraints);
-    const unsubInvoices = onSnapshot(qInvoices, (snapshot) => {
-      setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (error) => {
-      console.error("Error fetching invoices:", error);
-    });
+    // Related invoices.
+    const loadInvoices = async () => {
+      let q = supabase.from("invoices").select("*").eq("student_id", id).eq("organization_id", orgId).limit(50);
+      if (isTutor) q = q.eq("tutor_id", user.id);
+      const { data, error } = await q;
+      if (cancelled) return;
+      if (error) console.error("Error fetching invoices:", error);
+      else setInvoices((data || []).map(rowToInvoice));
+    };
 
-    // Fetch related class instances
-    const instancesConstraints: any[] = [
-      where("organizationId", "==", user.organizationId)
-    ];
-    if (user.role === 'tutor') instancesConstraints.push(where("tutorId", "==", user.id));
-    instancesConstraints.push(limit(100));
-    const qInstances = query(collection(db, "class_templates"), ...instancesConstraints);
-    const unsubInstances = onSnapshot(qInstances, (snapshot) => {
-      setClassInstances(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (error) => {
-      console.error("Error fetching class instances:", error);
-    });
+    // Related class instances (templates).
+    const loadInstances = async () => {
+      let q = supabase.from("class_templates").select("*").eq("organization_id", orgId).limit(100);
+      if (isTutor) q = q.eq("tutor_id", user.id);
+      const { data, error } = await q;
+      if (cancelled) return;
+      if (error) console.error("Error fetching class instances:", error);
+      else setClassInstances((data || []).map(rowToClassTemplate));
+    };
 
-    // Fetch assessments
-    const assessmentsConstraints: any[] = [
-      where("studentId", "==", id),
-      where("organizationId", "==", user.organizationId)
-    ];
-    if (user.role === 'tutor') assessmentsConstraints.push(where("tutorId", "==", user.id));
-    assessmentsConstraints.push(limit(50));
-    const qAssessments = query(collection(db, "assessments"), ...assessmentsConstraints);
-    const unsubAssessments = onSnapshot(qAssessments, (snapshot) => {
-      const sorted = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    // Assessments.
+    const loadAssessments = async () => {
+      let q = supabase.from("assessments").select("*").eq("student_id", id).eq("organization_id", orgId).limit(50);
+      if (isTutor) q = q.eq("tutor_id", user.id);
+      const { data, error } = await q;
+      if (cancelled) return;
+      if (error) {
+        console.error("Error fetching assessments:", error);
+        return;
+      }
+      const sorted = (data || []).map(rowToAssessment).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setAssessments(sorted);
-    }, (error) => {
-      console.error("Error fetching assessments:", error);
-    });
+    };
+
+    loadStudent();
+    loadSessions();
+    loadDocuments();
+    loadInvoices();
+    loadInstances();
+    loadAssessments();
+
+    // postgres_changes filters only support one simple column=eq condition
+    // server-side; scope each subscription to organization_id (broadest safe
+    // scope) and let the full load() reapply the student/tutor/array filters.
+    const channel = supabase
+      .channel(`student-profile-${id}-${orgId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `id=eq.${id}` }, loadStudent)
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions", filter: `organization_id=eq.${orgId}` }, loadSessions)
+      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `organization_id=eq.${orgId}` }, loadDocuments)
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `organization_id=eq.${orgId}` }, loadInvoices)
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_templates", filter: `organization_id=eq.${orgId}` }, loadInstances)
+      .on("postgres_changes", { event: "*", schema: "public", table: "assessments", filter: `organization_id=eq.${orgId}` }, loadAssessments)
+      .subscribe();
 
     return () => {
-      unsubStudent();
-      unsubSessions();
-      unsubDocs();
-      unsubInvoices();
-      unsubInstances();
-      unsubAssessments();
+      cancelled = true;
+      supabase.removeChannel(channel);
     };
   }, [user, id]);
 
@@ -166,7 +289,8 @@ export default function StudentProfile() {
     if (!id) return;
     setIsSaving(true);
     try {
-      await updateDoc(doc(db, "students", id), editFormData);
+      const { error } = await supabase.from("students").update(studentToRow(editFormData)).eq("id", id);
+      if (error) throw error;
       setIsEditingProfile(false);
     } catch (error) {
       console.error("Error updating profile:", error);
@@ -183,18 +307,18 @@ export default function StudentProfile() {
     e.preventDefault();
     if (!id || !user?.organizationId) return;
     try {
-      await addDoc(collection(db, "assessments"), {
-        studentId: id,
-        organizationId: user.organizationId,
-        tutorId: user.id,
+      const { error } = await supabase.from("assessments").insert({
+        student_id: id,
+        organization_id: user.organizationId,
+        tutor_id: user.id,
         title: `${assessmentType} on ${assessmentDate}`, // Default title
         type: assessmentType.toLowerCase(), // Ensure it matches enum
         date: assessmentDate,
         score: Number(assessmentScore),
-        totalScore: Number(assessmentMaxScore),
+        total_score: Number(assessmentMaxScore),
         feedback: assessmentComments,
-        createdAt: new Date().toISOString()
       });
+      if (error) throw error;
       setIsAssessmentModalOpen(false);
       setAssessmentType("Quiz");
       setAssessmentDate(new Date().toISOString().split('T')[0]);
@@ -674,7 +798,9 @@ export default function StudentProfile() {
                           className="border border-gray-300 rounded text-xs py-1 px-2 focus:ring-indigo-500 focus:border-indigo-500"
                           defaultValue={session.status || ''}
                           onChange={(e) => {
-                            updateDoc(doc(db, "class_sessions", session.id), { status: e.target.value });
+                            supabase.from("class_sessions").update({ status: e.target.value }).eq("id", session.id).then(({ error }) => {
+                              if (error) console.error("Error updating session status:", error);
+                            });
                           }}
                         >
                           <option value="" disabled>Mark...</option>
@@ -715,13 +841,17 @@ export default function StudentProfile() {
                         <p className="text-sm font-medium text-gray-900">{batch.name || batch.type}</p>
                         <p className="text-xs text-gray-500">{batch.subject} • {batch.grade}</p>
                       </div>
-                      <button 
+                      <button
                         onClick={async () => {
                           try {
                             const updatedStudentIds = batch.studentIds.filter((sId: string) => sId !== id);
-                            await updateDoc(doc(db, "class_templates", batch.id), { studentIds: updatedStudentIds });
+                            const { error } = await supabase
+                              .from("class_templates")
+                              .update({ student_ids: updatedStudentIds })
+                              .eq("id", batch.id);
+                            if (error) throw error;
                           } catch (error: any) {
-                            console.error("Firestore Error: ", JSON.stringify({
+                            console.error("Supabase Error: ", JSON.stringify({
                               error: error.message,
                               operationType: "update",
                               path: `class_templates/${batch.id}`
@@ -1138,19 +1268,23 @@ export default function StudentProfile() {
                     </div>
                   )}
 
-                  <button 
+                  <button
                     onClick={async () => {
                       if (!selectedInstanceId || !id) return;
                       try {
                         const batch = availableClassInstances.find(b => b.id === selectedInstanceId);
                         if (batch) {
                           const updatedStudentIds = [...(batch.studentIds || []), id];
-                          await updateDoc(doc(db, "class_templates", batch.id), { studentIds: updatedStudentIds });
+                          const { error } = await supabase
+                            .from("class_templates")
+                            .update({ student_ids: updatedStudentIds })
+                            .eq("id", batch.id);
+                          if (error) throw error;
                           setIsInstanceModalOpen(false);
                           setSelectedInstanceId("");
                         }
                       } catch (error: any) {
-                        console.error("Firestore Error: ", JSON.stringify({
+                        console.error("Supabase Error: ", JSON.stringify({
                           error: error.message,
                           operationType: "update",
                           path: `class_templates/${selectedInstanceId}`

@@ -1,7 +1,8 @@
 import express from "express";
 import crypto from "node:crypto";
 import { z } from "zod";
-import { adminDb } from "../firebaseAdmin.ts";
+import { supabaseAdmin } from "../supabaseAdmin.ts";
+import { withTransaction } from "../db.ts";
 import { authenticateToken, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
 import { setMembership } from "./members.ts";
@@ -16,8 +17,6 @@ const INVITE_TTL_MS = 7 * 24 * 3600 * 1000;
 // the parent as a link (or read aloud/typed as a code); redeemed below.
 router.post("/invites", async (req: AuthRequest, res, next) => {
   try {
-    if (!adminDb) throw new Error("Firebase Admin not initialized");
-    const db = adminDb;
     const orgId = req.user!.organizationId;
     if (!orgId) {
       return res.status(403).json({ error: { code: "no_organization", message: "User does not belong to an organization" } });
@@ -25,62 +24,58 @@ router.post("/invites", async (req: AuthRequest, res, next) => {
     if (!req.user!.role || !STAFF_WHO_CAN_INVITE.includes(req.user!.role)) {
       return res.status(403).json({ error: { code: "forbidden", message: "Insufficient role" } });
     }
-    const { studentId } = z.object({ studentId: z.string().min(1) }).parse(req.body);
+    const { studentId } = z.object({ studentId: z.string().uuid() }).parse(req.body);
 
-    const studentSnap = await db.collection("students").doc(studentId).get();
-    if (!studentSnap.exists || studentSnap.data()!.organizationId !== orgId) {
+    const { data: student, error: studentErr } = await supabaseAdmin
+      .from("students").select("name, organization_id").eq("id", studentId).maybeSingle();
+    if (studentErr) throw studentErr;
+    if (!student || student.organization_id !== orgId) {
       return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
     }
 
     const token = crypto.randomBytes(24).toString("base64url");
     const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
-    await db.collection("parent_invites").doc(token).set({
-      organizationId: orgId,
-      studentId,
-      createdBy: req.user!.id,
-      createdAt: new Date(),
-      expiresAt,
-      used: false,
+    const { error: inviteErr } = await supabaseAdmin.from("parent_invites").insert({
+      token, organization_id: orgId, student_id: studentId, expires_at: expiresAt.toISOString(),
     });
+    if (inviteErr) throw inviteErr;
     await writeAudit(orgId, req.user!.id, "parent_invite.create", "students", studentId, { token: token.slice(0, 8) + "…" });
 
-    res.status(201).json({ ok: true, token, expiresAt: expiresAt.toISOString(), studentName: studentSnap.data()!.name || null });
+    res.status(201).json({ ok: true, token, expiresAt: expiresAt.toISOString(), studentName: student.name || null });
   } catch (err) { next(err); }
 });
 
-async function loadInvite(db: FirebaseFirestore.Firestore, token: string) {
-  const snap = await db.collection("parent_invites").doc(token).get();
-  if (!snap.exists) {
+async function loadInvite(token: string) {
+  const { data: invite, error } = await supabaseAdmin.from("parent_invites").select("*").eq("token", token).maybeSingle();
+  if (error) throw error;
+  if (!invite) {
     throw Object.assign(new Error("Invite not found"), { status: 404, code: "not_found" });
   }
-  const invite = snap.data()!;
-  if (invite.used) {
+  if (invite.used_at) {
     throw Object.assign(new Error("Invite already used"), { status: 410, code: "invite_used" });
   }
-  const expiresAt = invite.expiresAt?.toDate ? invite.expiresAt.toDate() : new Date(invite.expiresAt);
-  if (expiresAt.getTime() < Date.now()) {
+  if (new Date(invite.expires_at).getTime() < Date.now()) {
     throw Object.assign(new Error("Invite expired"), { status: 410, code: "invite_expired" });
   }
-  return { ref: snap.ref, invite };
+  return invite;
 }
 
 // A phone-OTP verified user previews who they're about to link to before
-// consenting. No Firestore read path exists for parent_invites — this is it.
+// consenting. No client select policy exists on parent_invites — this is
+// the only read path.
 router.get("/invites/:token/preview", async (req: AuthRequest, res, next) => {
   try {
-    if (!adminDb) throw new Error("Firebase Admin not initialized");
-    const db = adminDb;
-    const { invite } = await loadInvite(db, req.params.token);
+    const invite = await loadInvite(req.params.token);
 
-    const [studentSnap, orgSnap] = await Promise.all([
-      db.collection("students").doc(invite.studentId).get(),
-      db.collection("organizations").doc(invite.organizationId).get(),
+    const [{ data: student }, { data: org }] = await Promise.all([
+      supabaseAdmin.from("students").select("name").eq("id", invite.student_id).maybeSingle(),
+      supabaseAdmin.from("organizations").select("name").eq("id", invite.organization_id).maybeSingle(),
     ]);
 
     res.json({
       ok: true,
-      studentName: studentSnap.exists ? studentSnap.data()!.name || null : null,
-      organizationName: orgSnap.exists ? orgSnap.data()!.name || null : null,
+      studentName: student?.name || null,
+      organizationName: org?.name || null,
     });
   } catch (err) { next(err); }
 });
@@ -90,52 +85,48 @@ const redeemSchema = z.object({
   consent: z.literal(true),
 });
 
-// Creates the parent_links doc (the only thing isParentOf() checks) and
-// grants the parent role + org membership, atomically enough: the Firestore
-// side (link + invite burn) is transactional; custom claims follow the same
-// two-step pattern as members.ts bootstrap (Admin Auth calls can't join a
-// Firestore transaction). Consent is DPDP capture — required, not optional.
+// Creates the parent_links row (the only thing is_parent_of() checks) and
+// grants the parent role + org membership. The link + invite-burn happens in
+// one Postgres transaction; membership then follows as a second write, same
+// two-step posture as members.ts bootstrap (nothing atomic requires it to be
+// combined — membership is idempotent to retry). Consent is DPDP capture —
+// required, not optional.
 router.post("/redeem", async (req: AuthRequest, res, next) => {
   try {
-    if (!adminDb) throw new Error("Firebase Admin not initialized");
-    const db = adminDb;
     const body = redeemSchema.parse(req.body);
     const uid = req.user!.id;
 
-    const { ref: inviteRef, invite } = await loadInvite(db, body.token);
+    const invite = await loadInvite(body.token);
 
-    // A parent's custom claims carry one organizationId. Block redeeming an
-    // invite from a different org than one they're already linked into,
-    // same posture as the tutor/admin bootstrap conflict check.
-    if (req.user!.organizationId && req.user!.organizationId !== invite.organizationId) {
+    // A parent belongs to one organization. Block redeeming an invite from a
+    // different org than one they're already linked into, same posture as
+    // the tutor/admin bootstrap conflict check.
+    if (req.user!.organizationId && req.user!.organizationId !== invite.organization_id) {
       return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to a different organization" } });
     }
 
-    const linkRef = db.collection("parent_links").doc(`${uid}_${invite.studentId}`);
-    await db.runTransaction(async (tx) => {
-      const [linkSnap, freshInvite] = await Promise.all([tx.get(linkRef), tx.get(inviteRef)]);
-      if (freshInvite.data()?.used) {
+    await withTransaction(async (client) => {
+      const freshInvite = await client.query(`select used_at from parent_invites where token = $1 for update`, [body.token]);
+      if (freshInvite.rows[0]?.used_at) {
         throw Object.assign(new Error("Invite already used"), { status: 410, code: "invite_used" });
       }
-      if (!linkSnap.exists) {
-        tx.set(linkRef, {
-          organizationId: invite.organizationId,
-          parentUserId: uid,
-          studentId: invite.studentId,
-          consentGivenAt: new Date(),
-          consentVersion: "dpdp-v1",
-          createdAt: new Date(),
-        });
-      }
-      tx.update(inviteRef, { used: true, usedBy: uid, usedAt: new Date() });
+      await client.query(
+        `insert into parent_links (parent_user_id, student_id, organization_id)
+         values ($1, $2, $3) on conflict (parent_user_id, student_id) do nothing`,
+        [uid, invite.student_id, invite.organization_id]
+      );
+      await client.query(
+        `update parent_invites set used_at = now(), used_by = $1 where token = $2`,
+        [uid, body.token]
+      );
     });
 
-    await setMembership(invite.organizationId, uid, "parent", uid);
-    await writeAudit(invite.organizationId, uid, "parent_invite.redeem", "parent_links", `${uid}_${invite.studentId}`, {
-      studentId: invite.studentId,
+    await setMembership(invite.organization_id, uid, "parent", uid);
+    await writeAudit(invite.organization_id, uid, "parent_invite.redeem", "parent_links", `${uid}_${invite.student_id}`, {
+      studentId: invite.student_id,
     });
 
-    res.json({ ok: true, organizationId: invite.organizationId, studentId: invite.studentId });
+    res.json({ ok: true, organizationId: invite.organization_id, studentId: invite.student_id });
   } catch (err) { next(err); }
 });
 

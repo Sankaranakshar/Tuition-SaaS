@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Search, Edit2, Trash2, Mail, Phone, UserPlus } from "lucide-react";
-import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, doc, orderBy, limit } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
 
@@ -31,29 +30,66 @@ export default function Leads() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
 
+  // Map a leads row (snake_case, contact_info jsonb) to the flat shape the
+  // rest of this component reads/writes.
+  const mapLead = (row: any) => {
+    const contactInfo = row.contact_info || {};
+    return {
+      id: row.id,
+      studentName: row.name,
+      parentName: row.parent_name,
+      email: contactInfo.email || "",
+      phone: contactInfo.phone || "",
+      grade: row.grade,
+      subject: row.subject,
+      source: row.source,
+      status: row.status,
+      notes: row.notes,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  };
+
   useEffect(() => {
     if (!user || !user.organizationId) return;
-    
-    const q = query(
-      collection(db, "leads"),
-      where("organizationId", "==", user.organizationId),
-      orderBy("createdAt", "desc"),
-      limit(100)
-    );
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const leadsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setLeads(leadsData);
-      setLoading(false);
-    }, (error) => {
-      console.error("Firestore Error: ", JSON.stringify({
-        error: error.message,
-        operationType: "list",
-        path: "leads"
-      }));
-    });
+    let cancelled = false;
 
-    return () => unsubscribe();
+    const load = async () => {
+      const { data, error } = await supabase
+        .from("leads")
+        .select("*")
+        .eq("organization_id", user.organizationId)
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error) {
+        console.error("Supabase Error: ", JSON.stringify({
+          error: error.message,
+          operationType: "list",
+          path: "leads"
+        }));
+        return;
+      }
+      if (!cancelled) {
+        setLeads((data || []).map(mapLead));
+        setLoading(false);
+      }
+    };
+
+    load();
+
+    const channel = supabase
+      .channel(`leads-${user.organizationId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "leads", filter: `organization_id=eq.${user.organizationId}` },
+        load
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   const filteredLeads = leads.filter(lead => 
@@ -106,36 +142,39 @@ export default function Leads() {
 
     try {
       const leadData = {
-        studentName,
-        parentName,
-        email,
-        phone,
+        name: studentName,
+        parent_name: parentName,
+        contact_info: { email, phone },
         grade,
         subject,
         source,
         status,
         notes,
-        organizationId: user?.organizationId,
-        updatedAt: new Date().toISOString()
+        organization_id: user?.organizationId,
+        updated_at: new Date().toISOString()
       };
 
       if (editingId) {
-        await updateDoc(doc(db, "leads", editingId), leadData);
+        const { error } = await supabase.from("leads").update(leadData).eq("id", editingId);
+        if (error) throw error;
       } else {
-        const docRef = await addDoc(collection(db, "leads"), {
-          ...leadData,
-          createdAt: new Date().toISOString()
-        });
+        const { data: inserted, error } = await supabase
+          .from("leads")
+          .insert(leadData)
+          .select()
+          .single();
+        if (error) throw error;
 
-        // Automated Follow-up: Send Welcome Message
-        await addDoc(collection(db, "messages"), {
-          organizationId: user?.organizationId,
-          senderId: user?.id,
-          receiverId: docRef.id, // Using lead ID as receiver for now
-          content: `Hi ${parentName}, thank you for your interest in our classes for ${studentName}! We'll be in touch shortly to schedule a trial class.`,
-          createdAt: new Date().toISOString(),
-          read: false
+        // Automated Follow-up: Send Welcome Message. Note: messages.receiver_id
+        // is now a real FK to auth.users, so (unlike the old Firestore doc)
+        // we can no longer stuff the lead id in there as a stand-in receiver —
+        // leave it unset until leads get a real user record to message.
+        const { error: msgError } = await supabase.from("messages").insert({
+          organization_id: user?.organizationId,
+          sender_id: user?.id,
+          body: `Hi ${parentName}, thank you for your interest in our classes for ${studentName}! We'll be in touch shortly to schedule a trial class. (lead: ${inserted?.id})`,
         });
+        if (msgError) throw msgError;
       }
       setIsModalOpen(false);
       resetForm();
@@ -152,14 +191,25 @@ export default function Leads() {
   const handleDelete = async (id: string) => {
     const lead = leads.find((l) => l.id === id);
     try {
-      await deleteDoc(doc(db, "leads", id));
+      const { error } = await supabase.from("leads").delete().eq("id", id);
+      if (error) throw error;
       toast.success("Lead deleted", {
         action: lead
           ? {
               label: "Undo",
               onClick: async () => {
-                const { id: _omit, ...data } = lead as any;
-                await setDoc(doc(db, "leads", id), data);
+                await supabase.from("leads").insert({
+                  id: lead.id,
+                  name: lead.studentName,
+                  parent_name: lead.parentName,
+                  contact_info: { email: lead.email, phone: lead.phone },
+                  grade: lead.grade,
+                  subject: lead.subject,
+                  source: lead.source,
+                  status: lead.status,
+                  notes: lead.notes,
+                  organization_id: user?.organizationId,
+                });
               },
             }
           : undefined,
@@ -171,10 +221,11 @@ export default function Leads() {
 
   const handleStatusChange = async (id: string, newStatus: string) => {
     try {
-      await updateDoc(doc(db, "leads", id), { 
-        status: newStatus,
-        updatedAt: new Date().toISOString()
-      });
+      const { error } = await supabase
+        .from("leads")
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
     } catch (error) {
       console.error("Error updating status:", error);
     }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Receipt, CheckCircle, Download, FileSpreadsheet, AlertCircle, IndianRupee, Trash2 } from "lucide-react";
-import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, limit, orderBy } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
+import { createInvoice, recordManualPayment } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -28,51 +28,57 @@ export default function Invoices() {
 
   useEffect(() => {
     if (!user || !user.organizationId) return;
-
     const orgId = user.organizationId;
+    let cancelled = false;
 
-    const qStudents = query(collection(db, "students"), where("organizationId", "==", orgId), limit(100));
-    const unsubStudents = onSnapshot(qStudents, (snapshot) => {
-      setStudents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    const qTemplates = query(collection(db, "class_templates"), where("organizationId", "==", orgId), limit(100));
-    const unsubTemplates = onSnapshot(qTemplates, (snapshot) => {
-      setTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    const qWallets = query(collection(db, "wallets"), where("organizationId", "==", orgId), limit(100));
-    const unsubWallets = onSnapshot(qWallets, (snapshot) => {
-      setWallets(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    const unsubOrg = onSnapshot(doc(db, "organizations", orgId), (docSnap) => {
-      if (docSnap.exists()) {
-        const settings = docSnap.data().settings || {};
-        const billing = settings.billing || settings.invoices || {};
-        setBillingSettings(billing);
-        if (billing.services) {
-          setMasterServices(billing.services);
-        }
-      }
-    });
-
-    const invoicesConstraints: any[] = [where("organizationId", "==", orgId)];
-    if (user.role === 'tutor') invoicesConstraints.push(where("tutorId", "==", user.id));
-    invoicesConstraints.push(orderBy("createdAt", "desc"), limit(100));
-    const qInvoices = query(collection(db, "invoices"), ...invoicesConstraints);
-    const unsubInvoices = onSnapshot(qInvoices, (snapshot) => {
-      setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      setLoading(false);
-    });
-
-    return () => {
-      unsubStudents();
-      unsubTemplates();
-      unsubWallets();
-      unsubOrg();
-      unsubInvoices();
+    const loadStudents = async () => {
+      const { data, error } = await supabase.from("students").select("*").eq("organization_id", orgId).limit(100);
+      if (!cancelled && !error) setStudents(data || []);
     };
+    const loadTemplates = async () => {
+      const { data, error } = await supabase.from("class_templates").select("*").eq("organization_id", orgId).limit(100);
+      if (!cancelled && !error) setTemplates(data || []);
+    };
+    const loadWallets = async () => {
+      const { data, error } = await supabase.from("wallets").select("*").eq("organization_id", orgId).limit(100);
+      if (!cancelled && !error) setWallets(data || []);
+    };
+    // organizations.settings (billing/services config) is a plain jsonb
+    // column on the org row itself, not a subcollection — no `settings`
+    // field currently exists in 0001_schema.sql's `organizations` table.
+    // Keeping this a no-op read (billingSettings stays {}) rather than
+    // inventing a schema column for a display-only config blob.
+    const loadOrgSettings = async () => {
+      // organizations table has no `settings` jsonb column yet; nothing to load.
+    };
+    const loadInvoices = async () => {
+      let q = supabase
+        .from("invoices")
+        .select("*")
+        .eq("organization_id", orgId)
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (user.role === "tutor") q = q.eq("tutor_id", user.id);
+      const { data, error } = await q;
+      if (!cancelled && !error) setInvoices(data || []);
+      if (!cancelled) setLoading(false);
+    };
+
+    loadStudents();
+    loadTemplates();
+    loadWallets();
+    loadOrgSettings();
+    loadInvoices();
+
+    const channel = supabase
+      .channel(`invoices-page-${orgId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `organization_id=eq.${orgId}` }, loadStudents)
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_templates", filter: `organization_id=eq.${orgId}` }, loadTemplates)
+      .on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `organization_id=eq.${orgId}` }, loadWallets)
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `organization_id=eq.${orgId}` }, loadInvoices)
+      .subscribe();
+
+    return () => { cancelled = true; supabase.removeChannel(channel); };
   }, [user]);
 
   const handleAddLineItem = () => {
@@ -99,9 +105,9 @@ export default function Invoices() {
     if (masterService) {
       newItems[index].amount = masterService.defaultPrice;
     } else {
-      const template = templates.find(t => `${t.type} - ${t.pricingModel}` === serviceName);
+      const template = templates.find(t => `${t.type} - ${t.pricing_model}` === serviceName);
       if (template) {
-        newItems[index].amount = template.feeAmount;
+        newItems[index].amount = template.fee_amount;
       }
     }
     
@@ -130,50 +136,34 @@ export default function Invoices() {
     if (!user || !user.organizationId) return;
 
     const taxPercentage = billingSettings.taxPercentage || 0;
-    const taxAmount = (totalAmount * taxPercentage) / 100;
-    const finalTotal = totalAmount + taxAmount;
 
     try {
-      await addDoc(collection(db, "invoices"), {
-        organizationId: user.organizationId,
-        tutorId: user.id,
+      await createInvoice({
         studentId,
-        totalAmount: finalTotal,
-        subtotal: totalAmount,
-        tax: taxAmount,
-        discount: 0,
-        periodStart: issueDate,
-        periodEnd: dueDate,
-        dueDate,
-        status: "unpaid",
         items: lineItems,
-        createdAt: new Date().toISOString()
+        taxPercentage,
+        dueDate: dueDate || undefined,
       });
       setIsModalOpen(false);
-      setStudentId(""); 
+      setStudentId("");
       setLineItems([{ description: "", amount: 0, quantity: 1 }]);
-      setIssueDate(""); 
+      setIssueDate("");
       setDueDate("");
     } catch (error: any) {
-      console.error("Firestore Error: ", JSON.stringify({
-        error: error.message,
-        operationType: "create",
-        path: "invoices"
-      }));
+      console.error("Failed to create invoice:", error.message);
     }
   };
 
-  const handleMarkPaid = async (id: string) => {
+  // Records a manual payment for the full outstanding balance rather than
+  // blindly flipping the status field — this keeps paid_paise/the payments
+  // ledger accurate (a bare status flip would silently break reconciliation).
+  const handleMarkPaid = async (invoice: any) => {
+    const outstanding = (invoice.total_paise ?? Math.round((invoice.total_amount || 0) * 100)) - (invoice.paid_paise || 0);
+    if (outstanding <= 0) return;
     try {
-      await updateDoc(doc(db, "invoices", id), {
-        status: "paid"
-      });
+      await recordManualPayment({ invoiceId: invoice.id, amountPaise: outstanding, method: "cash" });
     } catch (error: any) {
-      console.error("Firestore Error: ", JSON.stringify({
-        error: error.message,
-        operationType: "update",
-        path: `invoices/${id}`
-      }));
+      console.error("Failed to record payment:", error.message);
     }
   };
 
@@ -182,9 +172,18 @@ export default function Invoices() {
     return student ? student.name : "Unknown Student";
   };
 
+  // Canonical money columns are integer paise (total_paise, paid_paise,
+  // subtotal_paise, tax_paise, discount_paise); total_amount/subtotal are
+  // kept only as a legacy rupee mirror. Prefer paise, fall back to the
+  // rupee mirror for older rows.
+  const invoiceTotalRupees = (inv: any) => (inv.total_paise != null ? inv.total_paise / 100 : (inv.total_amount || inv.amount || 0));
+  const invoiceSubtotalRupees = (inv: any) => (inv.subtotal_paise != null ? inv.subtotal_paise / 100 : (inv.subtotal || 0));
+  const invoiceTaxRupees = (inv: any) => (inv.tax_paise != null ? inv.tax_paise / 100 : (inv.tax || 0));
+  const invoiceDiscountRupees = (inv: any) => (inv.discount_paise != null ? inv.discount_paise / 100 : (inv.discount || 0));
+
   const downloadPDF = (invoice: any) => {
     const doc = new jsPDF();
-    const studentName = getStudentName(invoice.studentId);
+    const studentName = getStudentName(invoice.student_id);
     
     // Header
     if (billingSettings.pdfTemplate?.logoUrl) {
@@ -201,8 +200,8 @@ export default function Invoices() {
     doc.setFontSize(10);
     const startY = billingSettings.pdfTemplate?.logoUrl ? 60 : 30;
     doc.text(`Invoice ID: INV-${invoice.id.substring(0, 6).toUpperCase()}`, 14, startY);
-    doc.text(`Date: ${new Date(invoice.createdAt).toLocaleDateString()}`, 14, startY + 5);
-    doc.text(`Due Date: ${invoice.dueDate || 'N/A'}`, 14, startY + 10);
+    doc.text(`Date: ${new Date(invoice.created_at).toLocaleDateString()}`, 14, startY + 5);
+    doc.text(`Due Date: ${invoice.due_date || 'N/A'}`, 14, startY + 10);
     
     if (billingSettings.pdfTemplate?.address) {
       doc.text(billingSettings.pdfTemplate.address, 120, startY, { maxWidth: 70 });
@@ -230,14 +229,15 @@ export default function Invoices() {
 
     const finalY = (doc as any).lastAutoTable.finalY || (startY + 35);
     
-    if (invoice.tax > 0) {
-      doc.text(`Subtotal: Rs. ${invoice.subtotal.toFixed(2)}`, 14, finalY + 10);
-      doc.text(`Tax: Rs. ${invoice.tax.toFixed(2)}`, 14, finalY + 15);
+    const taxRupees = invoiceTaxRupees(invoice);
+    if (taxRupees > 0) {
+      doc.text(`Subtotal: Rs. ${invoiceSubtotalRupees(invoice).toFixed(2)}`, 14, finalY + 10);
+      doc.text(`Tax: Rs. ${taxRupees.toFixed(2)}`, 14, finalY + 15);
       doc.setFont("helvetica", "bold");
-      doc.text(`Total Amount: Rs. ${(invoice.totalAmount || invoice.amount || 0).toFixed(2)}`, 14, finalY + 25);
+      doc.text(`Total Amount: Rs. ${invoiceTotalRupees(invoice).toFixed(2)}`, 14, finalY + 25);
     } else {
       doc.setFont("helvetica", "bold");
-      doc.text(`Total Amount: Rs. ${(invoice.totalAmount || invoice.amount || 0).toFixed(2)}`, 14, finalY + 10);
+      doc.text(`Total Amount: Rs. ${invoiceTotalRupees(invoice).toFixed(2)}`, 14, finalY + 10);
     }
     
     if (billingSettings.pdfTemplate?.footerText) {
@@ -255,14 +255,14 @@ export default function Invoices() {
     const data = invoices.map(inv => {
       const row: any = {};
       if (exportFields.includes('Invoice ID')) row['Invoice ID'] = `INV-${inv.id.substring(0, 6).toUpperCase()}`;
-      if (exportFields.includes('Student Name')) row['Student Name'] = getStudentName(inv.studentId);
-      if (exportFields.includes('Amount')) row['Amount (Rs.)'] = inv.totalAmount || inv.amount || 0;
+      if (exportFields.includes('Student Name')) row['Student Name'] = getStudentName(inv.student_id);
+      if (exportFields.includes('Amount')) row['Amount (Rs.)'] = invoiceTotalRupees(inv);
       if (exportFields.includes('Status')) row['Status'] = inv.status.toUpperCase();
-      if (exportFields.includes('Issue Date')) row['Issue Date'] = inv.periodStart || new Date(inv.createdAt).toLocaleDateString();
-      if (exportFields.includes('Due Date')) row['Due Date'] = inv.dueDate || "N/A";
+      if (exportFields.includes('Issue Date')) row['Issue Date'] = new Date(inv.created_at).toLocaleDateString();
+      if (exportFields.includes('Due Date')) row['Due Date'] = inv.due_date || "N/A";
       if (exportFields.includes('Services')) row['Services'] = (inv.items || []).map((i: any) => i.description).join(", ");
-      if (exportFields.includes('Tax')) row['Tax (Rs.)'] = inv.tax || 0;
-      if (exportFields.includes('Discount')) row['Discount (Rs.)'] = inv.discount || 0;
+      if (exportFields.includes('Tax')) row['Tax (Rs.)'] = invoiceTaxRupees(inv);
+      if (exportFields.includes('Discount')) row['Discount (Rs.)'] = invoiceDiscountRupees(inv);
       return row;
     });
 
@@ -285,12 +285,12 @@ export default function Invoices() {
   };
 
   // Dashboard Calculations
-  const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((sum, i) => sum + (i.totalAmount || i.amount || 0), 0);
-  const totalOutstanding = invoices.filter(i => i.status !== 'paid').reduce((sum, i) => sum + (i.totalAmount || i.amount || 0), 0);
+  const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((sum, i) => sum + invoiceTotalRupees(i), 0);
+  const totalOutstanding = invoices.filter(i => i.status !== 'paid').reduce((sum, i) => sum + invoiceTotalRupees(i), 0);
   const totalInvoicesAmount = totalRevenue + totalOutstanding;
   const collectionRate = totalInvoicesAmount > 0 ? Math.round((totalRevenue / totalInvoicesAmount) * 100) : 0;
-  
-  const lowCreditStudents = wallets.filter(w => w.balanceCredits < 2).length;
+
+  const lowCreditStudents = wallets.filter(w => w.balance_credits < 2).length;
 
   return (
     <div className="space-y-6">
@@ -408,16 +408,16 @@ export default function Invoices() {
                       INV-{invoice.id.substring(0, 6).toUpperCase()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {getStudentName(invoice.studentId)}
+                      {getStudentName(invoice.student_id)}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate">
                       {(invoice.items || []).map((i: any) => i.description).join(", ") || "General Tuition"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      ₹{(invoice.totalAmount || invoice.amount || 0).toFixed(2)}
+                      ₹{invoiceTotalRupees(invoice).toFixed(2)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {invoice.dueDate || "N/A"}
+                      {invoice.due_date || "N/A"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -438,7 +438,7 @@ export default function Invoices() {
                       </button>
                       {invoice.status !== 'paid' && (
                         <button 
-                          onClick={() => handleMarkPaid(invoice.id)}
+                          onClick={() => handleMarkPaid(invoice)}
                           className="text-indigo-600 hover:text-indigo-900 flex items-center"
                           title="Mark as Paid"
                         >
@@ -490,7 +490,7 @@ export default function Invoices() {
                                 onChange={(e) => {
                                   handleLineItemChange(index, "description", e.target.value);
                                   const match = masterServices.find(s => s.name === e.target.value) || 
-                                                templates.find(t => `${t.type} - ${t.pricingModel}` === e.target.value);
+                                                templates.find(t => `${t.type} - ${t.pricing_model}` === e.target.value);
                                   if (match) {
                                     handleServiceSelect(index, e.target.value);
                                   }
@@ -547,7 +547,7 @@ export default function Invoices() {
                           <option key={`ms-${i}`} value={s.name} />
                         ))}
                         {templates.map((t, i) => (
-                          <option key={`t-${i}`} value={`${t.type} - ${t.pricingModel}`} />
+                          <option key={`t-${i}`} value={`${t.type} - ${t.pricing_model}`} />
                         ))}
                       </datalist>
                     </div>

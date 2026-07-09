@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Send, Search, User, MessageSquare, Plus } from "lucide-react";
-import { collection, query, where, onSnapshot, addDoc, orderBy, updateDoc, doc, limit } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
+
+const MESSAGE_SELECT =
+  "id, organizationId:organization_id, senderId:sender_id, receiverId:receiver_id, content:body, read, createdAt:created_at";
 
 export default function Messaging() {
   const { user } = useAuth();
@@ -13,88 +15,112 @@ export default function Messaging() {
   const [contacts, setContacts] = useState<any[]>([]);
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [allMessages, setAllMessages] = useState<any[]>([]);
+  const [sentMessages, setSentMessages] = useState<any[]>([]);
+  const [receivedMessages, setReceivedMessages] = useState<any[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch all messages for the user
+  // Fetch all messages for the user: sender-side and receiver-side are two
+  // separate queries/listeners (Postgres can't easily filter "sender OR
+  // receiver" in a single postgres_changes subscription), merged below.
   useEffect(() => {
     if (!user || !user.organizationId) return;
 
-    // We need to listen to messages where user is sender OR receiver.
-    // Firestore doesn't easily support OR on different fields without composite indexes,
-    // so we'll do two listeners and merge.
-    const qSent = query(
-      collection(db, "messages"),
-      where("organizationId", "==", user.organizationId),
-      where("senderId", "==", user.id),
-      orderBy("createdAt", "desc"),
-      limit(100)
-    );
-    const qReceived = query(
-      collection(db, "messages"),
-      where("organizationId", "==", user.organizationId),
-      where("receiverId", "==", user.id),
-      orderBy("createdAt", "desc"),
-      limit(100)
-    );
+    let cancelled = false;
 
-    let sentMsgs: any[] = [];
-    let receivedMsgs: any[] = [];
-
-    const updateMessages = () => {
-      const merged = [...sentMsgs, ...receivedMsgs];
-      // Remove duplicates just in case (e.g. sending to self)
-      const unique = Array.from(new Map(merged.map(m => [m.id, m])).values());
-      unique.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-      setAllMessages(unique);
+    const loadSent = async () => {
+      const { data, error } = await supabase
+        .from("messages")
+        .select(MESSAGE_SELECT)
+        .eq("organization_id", user.organizationId)
+        .eq("sender_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (!cancelled) {
+        if (error) console.error("Supabase Error (Sent Messages): ", error);
+        else setSentMessages(data || []);
+      }
     };
 
-    const unsubSent = onSnapshot(qSent, (snapshot) => {
-      sentMsgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      updateMessages();
-    }, (error) => {
-      console.error("Firestore Error (Sent Messages): ", error);
-    });
+    const loadReceived = async () => {
+      const { data, error } = await supabase
+        .from("messages")
+        .select(MESSAGE_SELECT)
+        .eq("organization_id", user.organizationId)
+        .eq("receiver_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (!cancelled) {
+        if (error) console.error("Supabase Error (Received Messages): ", error);
+        else setReceivedMessages(data || []);
+      }
+    };
 
-    const unsubReceived = onSnapshot(qReceived, (snapshot) => {
-      receivedMsgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      updateMessages();
-    }, (error) => {
-      console.error("Firestore Error (Received Messages): ", error);
-    });
+    loadSent();
+    loadReceived();
+
+    const sentChannel = supabase
+      .channel(`messages-sent-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `sender_id=eq.${user.id}` }, loadSent)
+      .subscribe();
+
+    const receivedChannel = supabase
+      .channel(`messages-received-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `receiver_id=eq.${user.id}` }, loadReceived)
+      .subscribe();
 
     // Fetch contacts (students)
-    const studentsConstraints: any[] = [where("organizationId", "==", user.organizationId)];
-    if (user.role === 'tutor') studentsConstraints.push(where("tutorId", "==", user.id));
-    studentsConstraints.push(limit(100));
-    const qStudents = query(collection(db, "students"), ...studentsConstraints);
-    const unsubStudents = onSnapshot(qStudents, (snapshot) => {
+    const loadStudents = async () => {
+      let studentsQuery = supabase
+        .from("students")
+        .select("id, name, parentName:parent_name")
+        .eq("organization_id", user.organizationId)
+        .limit(100);
+      if (user.role === "tutor") studentsQuery = studentsQuery.eq("tutor_id", user.id);
+      const { data, error } = await studentsQuery;
+      if (cancelled) return;
+      if (error) {
+        console.error("Supabase Error (Contacts): ", error);
+        return;
+      }
       const contactsList: any[] = [];
-      snapshot.docs.forEach(doc => {
-        const data = doc.data();
+      (data || []).forEach((row: any) => {
         contactsList.push({
-          id: doc.id,
-          name: data.name,
+          id: row.id,
+          name: row.name,
           role: "student"
         });
-        if (data.parentName) {
+        if (row.parentName) {
           contactsList.push({
-            id: `${doc.id}_parent`,
-            name: `${data.parentName} (Parent of ${data.name})`,
+            id: `${row.id}_parent`,
+            name: `${row.parentName} (Parent of ${row.name})`,
             role: "parent"
           });
         }
       });
       setContacts(contactsList);
-    }, (error) => {
-      console.error("Firestore Error (Contacts): ", error);
-    });
+    };
+
+    loadStudents();
+    const studentsChannel = supabase
+      .channel(`messaging-students-${user.organizationId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `organization_id=eq.${user.organizationId}` }, loadStudents)
+      .subscribe();
 
     return () => {
-      unsubSent();
-      unsubReceived();
-      unsubStudents();
+      cancelled = true;
+      supabase.removeChannel(sentChannel);
+      supabase.removeChannel(receivedChannel);
+      supabase.removeChannel(studentsChannel);
     };
   }, [user]);
+
+  // Merge sent + received into the combined, deduped, ascending-sorted feed.
+  useEffect(() => {
+    const merged = [...sentMessages, ...receivedMessages];
+    const unique = Array.from(new Map(merged.map(m => [m.id, m])).values());
+    unique.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    setAllMessages(unique);
+  }, [sentMessages, receivedMessages]);
 
   // Process conversations from messages
   useEffect(() => {
@@ -147,7 +173,9 @@ export default function Messaging() {
       // Mark as read
       activeMsgs.forEach(msg => {
         if (msg.receiverId === user.id && !msg.read) {
-          updateDoc(doc(db, "messages", msg.id), { read: true }).catch(console.error);
+          supabase.from("messages").update({ read: true }).eq("id", msg.id).then(({ error }) => {
+            if (error) console.error(error);
+          });
         }
       });
     }
@@ -163,17 +191,17 @@ export default function Messaging() {
     if (!newMessage.trim() || !activeConversation || !user || !user.organizationId) return;
 
     try {
-      await addDoc(collection(db, "messages"), {
-        organizationId: user.organizationId,
-        senderId: user.id,
-        receiverId: activeConversation.id,
-        content: newMessage,
-        read: false,
-        createdAt: new Date().toISOString()
+      const { error } = await supabase.from("messages").insert({
+        organization_id: user.organizationId,
+        sender_id: user.id,
+        receiver_id: activeConversation.id,
+        body: newMessage,
+        read: false
       });
+      if (error) throw error;
       setNewMessage("");
     } catch (error: any) {
-      console.error("Firestore Error: ", JSON.stringify({
+      console.error("Supabase Error: ", JSON.stringify({
         error: error.message,
         operationType: "create",
         path: "messages"

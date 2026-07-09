@@ -18,7 +18,7 @@ export default function Login() {
   // Phone state
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
-  const [confirmationResult, setConfirmationResult] = useState<any>(null);
+  const [otpSentTo, setOtpSentTo] = useState<string | null>(null);
   
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -50,14 +50,13 @@ export default function Login() {
         await registerWithEmail(email, password, name);
       }
     } catch (err: any) {
-      if (err.code === 'auth/invalid-credential') {
+      const message: string = err.message || "";
+      if (message.toLowerCase().includes("invalid login credentials")) {
         setError("Invalid email or password. Please check your credentials or sign up if you don't have an account.");
-      } else if (err.code === 'auth/operation-not-allowed') {
-        setError("Email/Password login is not enabled. Please use Google Login or enable it in the Firebase console.");
-      } else if (err.code === 'auth/email-already-in-use') {
+      } else if (message.toLowerCase().includes("user already registered")) {
         setError("An account with this email already exists. Please sign in instead.");
       } else {
-        setError(err.message || `Failed to ${isLogin ? 'sign in' : 'register'}`);
+        setError(message || `Failed to ${isLogin ? 'sign in' : 'register'}`);
       }
     } finally {
       setLoading(false);
@@ -70,8 +69,8 @@ export default function Login() {
     setLoading(true);
     try {
       const formattedPhone = phone.startsWith('+') ? phone : `+${phone}`;
-      const result = await sendOTP(formattedPhone, "recaptcha-container");
-      setConfirmationResult(result);
+      await sendOTP(formattedPhone);
+      setOtpSentTo(formattedPhone);
     } catch (err: any) {
       setError(err.message || "Failed to send OTP. Ensure phone number includes country code (e.g., +1234567890).");
     } finally {
@@ -81,11 +80,11 @@ export default function Login() {
 
   const handleVerifyOTP = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!confirmationResult) return;
+    if (!otpSentTo) return;
     setError("");
     setLoading(true);
     try {
-      await verifyOTP(confirmationResult, otp);
+      await verifyOTP(otpSentTo, otp);
     } catch (err: any) {
       setError(err.message || "Invalid OTP. Please try again.");
     } finally {
@@ -127,7 +126,7 @@ export default function Login() {
 
           <div className="flex justify-center mb-6 space-x-4">
             <button
-              onClick={() => { setAuthMethod('phone'); setError(""); setConfirmationResult(null); }}
+              onClick={() => { setAuthMethod('phone'); setError(""); setOtpSentTo(null); }}
               className={`pb-2 px-4 text-sm font-medium border-b-2 ${authMethod === 'phone' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
             >
               Phone
@@ -213,7 +212,7 @@ export default function Login() {
             </form>
           ) : (
             <div className="space-y-6">
-              {!confirmationResult ? (
+              {!otpSentTo ? (
                 <form onSubmit={handleSendOTP} className="space-y-6">
                   <div>
                     <label className="block text-sm font-medium text-gray-700">
@@ -233,7 +232,6 @@ export default function Login() {
                       />
                     </div>
                   </div>
-                  <div id="recaptcha-container"></div>
                   <button
                     type="submit"
                     disabled={loading}
@@ -271,7 +269,7 @@ export default function Login() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setConfirmationResult(null)}
+                    onClick={() => setOtpSentTo(null)}
                     className="w-full text-sm text-indigo-600 hover:text-indigo-500"
                   >
                     Use a different number

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, doc, updateDoc, query, where } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 import { useAuth } from '../context/AuthContext';
 import { Shield, CheckCircle, XCircle, User as UserIcon } from 'lucide-react';
 
@@ -11,15 +10,25 @@ export default function Admin() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!user?.organizationId) return;
     fetchTutors();
-  }, []);
+  }, [user?.organizationId]);
 
   const fetchTutors = async () => {
     try {
-      const q = query(collection(db, 'tutor_profiles'));
-      const snapshot = await getDocs(q);
-      const tutorData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setTutors(tutorData);
+      // The old Firestore query had no org filter at all (a platform-wide
+      // view), but there's no cross-org superadmin role anywhere in this
+      // app's RLS/role model — every other admin surface is org-scoped, and
+      // tutor_profiles' RLS only lets a caller see rows in their own org
+      // anyway. Scoping this query to match is a deliberate consistency fix,
+      // not a regression: the unscoped query would have silently returned
+      // nothing (or errored) against RLS regardless.
+      const { data, error } = await supabase
+        .from('tutor_profiles')
+        .select('*')
+        .eq('organization_id', user!.organizationId);
+      if (error) throw error;
+      setTutors((data || []).map((row) => ({ id: row.user_id, ...row })));
     } catch (err) {
       console.error(err);
       setError('Failed to fetch tutors');
@@ -30,9 +39,8 @@ export default function Admin() {
 
   const handleVerifyTutor = async (tutorId: string, isVerified: boolean) => {
     try {
-      await updateDoc(doc(db, 'tutor_profiles', tutorId), {
-        is_verified: isVerified
-      });
+      const { error } = await supabase.from('tutor_profiles').update({ is_verified: isVerified }).eq('user_id', tutorId);
+      if (error) throw error;
       setTutors(tutors.map(t => t.id === tutorId ? { ...t, is_verified: isVerified } : t));
     } catch (err) {
       console.error(err);

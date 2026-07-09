@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { Save, AlertCircle, CheckCircle, Plus, Trash2, IndianRupee } from "lucide-react";
 
 export default function BillingInvoiceSettings() {
@@ -29,12 +28,13 @@ export default function BillingInvoiceSettings() {
     
     const fetchSettings = async () => {
       try {
-        const orgDoc = await getDoc(doc(db, "organizations", user.organizationId!));
-        if (orgDoc.exists() && orgDoc.data().settings?.billing) {
-          setSettings({ ...settings, ...orgDoc.data().settings.billing });
-        } else if (orgDoc.exists() && orgDoc.data().settings?.invoices) {
+        const { data, error } = await supabase.from("organizations").select("settings").eq("id", user.organizationId!).maybeSingle();
+        if (error) throw error;
+        if (data?.settings?.billing) {
+          setSettings({ ...settings, ...data.settings.billing });
+        } else if (data?.settings?.invoices) {
           // Migrate old invoices settings if they exist
-          const oldInvoices = orgDoc.data().settings.invoices;
+          const oldInvoices = data.settings.invoices;
           setSettings({
             ...settings,
             services: oldInvoices.services || [],
@@ -54,16 +54,14 @@ export default function BillingInvoiceSettings() {
     setError("");
     setSuccess("");
     try {
-      const orgRef = doc(db, "organizations", user.organizationId);
-      const orgDoc = await getDoc(orgRef);
-      const currentSettings = orgDoc.exists() ? orgDoc.data().settings || {} : {};
-      
-      await updateDoc(orgRef, {
-        settings: {
-          ...currentSettings,
-          billing: settings
-        }
-      });
+      const { data: orgRow, error: readErr } = await supabase.from("organizations").select("settings").eq("id", user.organizationId).maybeSingle();
+      if (readErr) throw readErr;
+      const currentSettings = orgRow?.settings || {};
+
+      const { error } = await supabase.from("organizations").update({
+        settings: { ...currentSettings, billing: settings },
+      }).eq("id", user.organizationId);
+      if (error) throw error;
       setSuccess("Billing & Invoice settings saved successfully.");
     } catch (err: any) {
       setError(err.message || "Failed to save settings.");

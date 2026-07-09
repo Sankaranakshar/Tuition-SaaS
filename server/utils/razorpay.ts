@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import type { Firestore } from "firebase-admin/firestore";
+import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { decrypt } from "./crypto.ts";
 
 // Razorpay integration (blueprint 5.2, DEV_PLAN E6.1/E6.2). Each org connects
@@ -32,13 +32,17 @@ export function verifyWebhookSignature(rawBody: string, signature: string, secre
 }
 
 /** Load and decrypt an org's Razorpay credentials, or null if not connected. */
-export async function getGatewayCreds(db: Firestore, orgId: string): Promise<RazorpayCreds | null> {
-  const snap = await db.collection("payment_gateways").doc(orgId).get();
-  if (!snap.exists) return null;
-  const d = snap.data()!;
-  const keyId = d.keyId as string | undefined;
-  const keySecret = d.keySecretEnc ? decrypt(d.keySecretEnc) : null;
-  const webhookSecret = d.webhookSecretEnc ? decrypt(d.webhookSecretEnc) : null;
+export async function getGatewayCreds(orgId: string): Promise<RazorpayCreds | null> {
+  const { data, error } = await supabaseAdmin
+    .from("payment_gateways")
+    .select("key_id, key_secret_enc, webhook_secret_enc")
+    .eq("organization_id", orgId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const keyId = data.key_id as string | undefined;
+  const keySecret = data.key_secret_enc ? decrypt(data.key_secret_enc) : null;
+  const webhookSecret = data.webhook_secret_enc ? decrypt(data.webhook_secret_enc) : null;
   if (!keyId || !keySecret || !webhookSecret) return null;
   return { keyId, keySecret, webhookSecret };
 }

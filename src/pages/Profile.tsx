@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { User, Mail, Phone, MapPin, Users, Edit2, Save } from "lucide-react";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 
 export default function Profile() {
@@ -16,11 +15,12 @@ export default function Profile() {
 
     const fetchProfile = async () => {
       try {
-        const docRef = doc(db, "users", user.id);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setProfile({ id: docSnap.id, ...docSnap.data() });
-          setFormData({ id: docSnap.id, ...docSnap.data() });
+        const { data, error } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
+        if (error) throw error;
+        if (data) {
+          const mapped = { id: data.id, ...data, phone_number: data.phone };
+          setProfile(mapped);
+          setFormData(mapped);
         }
       } catch (error) {
         console.error("Error fetching profile:", error);
@@ -35,15 +35,16 @@ export default function Profile() {
   const handleSave = async () => {
     if (!user) return;
     try {
-      // Only profile fields; spreading the whole doc back would trip the
-      // security rules (role/organizationId are not client-writable).
-      await updateDoc(doc(db, "users", user.id), {
+      // Only profile fields; spreading the whole row back would trip RLS
+      // (role/organizationId are not client-writable).
+      const { error } = await supabase.from("profiles").update({
         name: formData.name || "",
-        phone_number: formData.phone_number || "",
+        phone: formData.phone_number || "",
         school: formData.school || "",
         grade: formData.grade || "",
-        updatedAt: new Date().toISOString(),
-      });
+        updated_at: new Date().toISOString(),
+      }).eq("id", user.id);
+      if (error) throw error;
       setProfile(formData);
       setIsEditing(false);
     } catch (error) {

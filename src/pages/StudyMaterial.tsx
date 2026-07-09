@@ -1,9 +1,13 @@
 import { useState, useEffect } from "react";
 import { FileText, Download, Upload, Folder, File } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, limit } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import LoadingSpinner from "../components/LoadingSpinner";
+
+const MATERIAL_SELECT =
+  "id, organizationId:organization_id, studentId:student_id, fileName:name, category, fileSize:file_size, createdAt:created_at";
+const ASSIGNMENT_SELECT =
+  "id, organizationId:organization_id, studentId:student_id, type, title, status, dueDate:due_date, createdAt:created_at";
 
 export default function StudyMaterial() {
   const { user } = useAuth();
@@ -15,55 +19,71 @@ export default function StudyMaterial() {
   useEffect(() => {
     if (!user?.organizationId || !user?.id) return;
 
-    // Fetch materials (documents)
-    const qMaterials = query(
-      collection(db, "documents"),
-      where("organizationId", "==", user.organizationId),
-      where("studentId", "==", user.id),
-      orderBy("createdAt", "desc"),
-      limit(50)
-    );
+    let cancelled = false;
 
-    const unsubscribeMaterials = onSnapshot(qMaterials, (snapshot) => {
-      const materialsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setMaterials(materialsData);
+    // Fetch materials (documents)
+    const loadMaterials = async () => {
+      const { data, error } = await supabase
+        .from("documents")
+        .select(MATERIAL_SELECT)
+        .eq("organization_id", user.organizationId)
+        .eq("student_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (cancelled) return;
+      if (error) {
+        console.error("Error fetching materials:", error);
+      } else {
+        setMaterials(data || []);
+      }
       setLoadingMaterials(false);
-    }, (error) => {
-      console.error("Error fetching materials:", error);
-      setLoadingMaterials(false);
-    });
+    };
+
+    loadMaterials();
+    const materialsChannel = supabase
+      .channel(`study-materials-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `student_id=eq.${user.id}` }, loadMaterials)
+      .subscribe();
 
     // Fetch assignments (assessments with type 'assignment')
-    const qAssignments = query(
-      collection(db, "assessments"),
-      where("organizationId", "==", user.organizationId),
-      where("studentId", "==", user.id),
-      where("type", "==", "assignment"),
-      orderBy("dueDate", "asc"),
-      limit(50)
-    );
+    const loadAssignments = async () => {
+      const { data, error } = await supabase
+        .from("assessments")
+        .select(ASSIGNMENT_SELECT)
+        .eq("organization_id", user.organizationId)
+        .eq("student_id", user.id)
+        .eq("type", "assignment")
+        .order("due_date", { ascending: true })
+        .limit(50);
+      if (cancelled) return;
+      if (error) {
+        console.error("Error fetching assignments:", error);
+      } else {
+        setAssignments(data || []);
+      }
+      setLoadingAssignments(false);
+    };
 
-    const unsubscribeAssignments = onSnapshot(qAssignments, (snapshot) => {
-      const assignmentsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setAssignments(assignmentsData);
-      setLoadingAssignments(false);
-    }, (error) => {
-      console.error("Error fetching assignments:", error);
-      setLoadingAssignments(false);
-    });
+    loadAssignments();
+    const assignmentsChannel = supabase
+      .channel(`study-assignments-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "assessments", filter: `student_id=eq.${user.id}` }, loadAssignments)
+      .subscribe();
 
     return () => {
-      unsubscribeMaterials();
-      unsubscribeAssignments();
+      cancelled = true;
+      supabase.removeChannel(materialsChannel);
+      supabase.removeChannel(assignmentsChannel);
     };
   }, [user]);
 
   const handleUploadAssignment = async (assignmentId: string) => {
     try {
-      await updateDoc(doc(db, "assessments", assignmentId), {
-        status: 'submitted',
-        updatedAt: serverTimestamp()
-      });
+      const { error } = await supabase
+        .from("assessments")
+        .update({ status: 'submitted', updated_at: new Date().toISOString() })
+        .eq("id", assignmentId);
+      if (error) throw error;
     } catch (error) {
       console.error("Error uploading assignment:", error);
     }

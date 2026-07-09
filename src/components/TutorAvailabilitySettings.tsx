@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { collection, query, where, getDocs, addDoc, deleteDoc, doc } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { Plus, Trash2 } from "lucide-react";
 
 interface AvailabilitySlot {
@@ -34,23 +33,30 @@ export default function TutorAvailabilitySettings() {
   const fetchSlots = async () => {
     if (!user?.organizationId || !user?.id) return;
     try {
-      const q = query(
-        collection(db, "tutor_availability"),
-        where("organizationId", "==", user.organizationId),
-        where("tutorId", "==", user.id)
-      );
-      const snapshot = await getDocs(q);
-      const fetchedSlots = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as AvailabilitySlot[];
-      
+      const { data, error } = await supabase
+        .from("tutor_availability")
+        .select("*")
+        .eq("organization_id", user.organizationId)
+        .eq("tutor_id", user.id);
+      if (error) throw error;
+
+      // A row's presence represents availability — there's no isAvailable
+      // column (the old field was always true, never toggled false anywhere
+      // in this file, so dropping it changes nothing observable).
+      const fetchedSlots: AvailabilitySlot[] = (data || []).map((row) => ({
+        id: row.id,
+        dayOfWeek: row.day_of_week,
+        startTime: row.start_time?.slice(0, 5) ?? row.start_time,
+        endTime: row.end_time?.slice(0, 5) ?? row.end_time,
+        isAvailable: true,
+      }));
+
       // Sort by day then start time
       fetchedSlots.sort((a, b) => {
         if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
         return a.startTime.localeCompare(b.startTime);
       });
-      
+
       setSlots(fetchedSlots);
     } catch (err: any) {
       console.error("Error fetching availability:", err);
@@ -62,23 +68,23 @@ export default function TutorAvailabilitySettings() {
 
   const handleAddSlot = async () => {
     if (!user?.organizationId || !user?.id) return;
-    
+
     // Basic validation
     if (newStartTime >= newEndTime) {
       setError("Start time must be before end time.");
       return;
     }
-    
+
     try {
       setError("");
-      await addDoc(collection(db, "tutor_availability"), {
-        organizationId: user.organizationId,
-        tutorId: user.id,
-        dayOfWeek: newDay,
-        startTime: newStartTime,
-        endTime: newEndTime,
-        isAvailable: true
+      const { error } = await supabase.from("tutor_availability").insert({
+        organization_id: user.organizationId,
+        tutor_id: user.id,
+        day_of_week: newDay,
+        start_time: newStartTime,
+        end_time: newEndTime,
       });
+      if (error) throw error;
       await fetchSlots();
     } catch (err: any) {
       console.error("Error adding slot:", err);
@@ -88,7 +94,8 @@ export default function TutorAvailabilitySettings() {
 
   const handleDeleteSlot = async (id: string) => {
     try {
-      await deleteDoc(doc(db, "tutor_availability", id));
+      const { error } = await supabase.from("tutor_availability").delete().eq("id", id);
+      if (error) throw error;
       setSlots(slots.filter(s => s.id !== id));
     } catch (err: any) {
       console.error("Error deleting slot:", err);

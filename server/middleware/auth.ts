@@ -1,8 +1,10 @@
 import express from "express";
+import jwt from "jsonwebtoken";
+import { supabaseAdmin } from "../supabaseAdmin.ts";
+
 type Request = express.Request;
 type Response = express.Response;
 type NextFunction = express.NextFunction;
-import { adminAuth } from "../firebaseAdmin.ts";
 
 export type Role =
   | "owner"
@@ -22,9 +24,13 @@ export interface AuthRequest extends Request {
   };
 }
 
-// Roles come exclusively from Firebase custom claims, which only the server
-// can set (see routes/members.ts). Client-writable documents are never
-// consulted for authorization.
+const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
+
+// Role/organizationId are read fresh from organization_members on every
+// request instead of being embedded in the JWT (as Firebase custom claims
+// were). That means removing a member or changing their role takes effect
+// immediately on the next API call — no token-revocation step required,
+// unlike the old adminAuth.revokeRefreshTokens() dance.
 export const authenticateToken = async (
   req: AuthRequest,
   res: Response,
@@ -37,24 +43,33 @@ export const authenticateToken = async (
     return res.status(401).json({ error: { code: "unauthenticated", message: "Missing bearer token" } });
   }
 
+  if (!SUPABASE_JWT_SECRET) {
+    console.error("SUPABASE_JWT_SECRET not configured");
+    return res.status(500).json({ error: { code: "internal", message: "Internal Server Error" } });
+  }
+
   try {
-    if (!adminAuth) {
-      console.error("Firebase Admin not initialized");
-      return res.status(500).json({ error: { code: "internal", message: "Internal Server Error" } });
-    }
-    // checkRevoked so removed members lose API access as soon as their
-    // refresh tokens are revoked on role change.
-    const decoded = await adminAuth.verifyIdToken(token, true);
+    const decoded = jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ["HS256"] }) as jwt.JwtPayload;
+    const userId = decoded.sub;
+    if (!userId) throw new Error("Missing sub claim");
+
+    const { data: membership, error } = await supabaseAdmin
+      .from("organization_members")
+      .select("organization_id, role")
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
 
     req.user = {
-      id: decoded.uid,
-      email: decoded.email,
-      role: decoded.role as Role | undefined,
-      organizationId: decoded.organizationId as string | undefined,
+      id: userId,
+      email: decoded.email as string | undefined,
+      role: membership?.role as Role | undefined,
+      organizationId: membership?.organization_id as string | undefined,
     };
     next();
   } catch (err) {
-    return res.status(401).json({ error: { code: "unauthenticated", message: "Invalid or revoked token" } });
+    return res.status(401).json({ error: { code: "unauthenticated", message: "Invalid or expired token" } });
   }
 };
 

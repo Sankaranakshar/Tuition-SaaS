@@ -1,7 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { onAuthStateChanged, signInWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from "firebase/auth";
-import { doc, getDoc, setDoc } from "firebase/firestore";
-import { auth, db, googleProvider } from "../firebase";
+import { supabase } from "../supabase";
 
 enum OperationType {
   CREATE = 'create',
@@ -12,56 +10,29 @@ enum OperationType {
   WRITE = 'write',
 }
 
-interface FirestoreErrorInfo {
+interface SupabaseErrorInfo {
   error: string;
   operationType: OperationType;
   path: string | null;
   authInfo: {
     userId: string | undefined;
-    email: string | null | undefined;
-    emailVerified: boolean | undefined;
-    isAnonymous: boolean | undefined;
-    tenantId: string | null | undefined;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
+    email: string | undefined;
   }
 }
 
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
+function handleSupabaseError(error: unknown, operationType: OperationType, path: string | null, userId?: string, email?: string) {
+  const errInfo: SupabaseErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
-    },
+    authInfo: { userId, email },
     operationType,
     path
   }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  console.error('Supabase Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
 
-declare global {
-  interface Window {
-    recaptchaVerifier: any;
-  }
-}
-
 interface User {
-  id: string; // Firebase UID
+  id: string; // Supabase auth.users id
   name: string;
   email: string;
   phone_number?: string;
@@ -82,8 +53,8 @@ interface AuthContextType {
   login: () => Promise<void>;
   loginWithEmail: (email: string, password: string) => Promise<void>;
   registerWithEmail: (email: string, password: string, name: string) => Promise<void>;
-  sendOTP: (phoneNumber: string, containerId: string) => Promise<ConfirmationResult>;
-  verifyOTP: (confirmationResult: ConfirmationResult, otp: string) => Promise<void>;
+  sendOTP: (phoneNumber: string) => Promise<void>;
+  verifyOTP: (phoneNumber: string, otp: string) => Promise<void>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
 }
@@ -106,138 +77,140 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const checkAuth = async () => {
-    if (auth.currentUser) {
+  const loadUser = async (authUserId: string, authEmail: string | undefined) => {
+    try {
+      const { data: profile, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", authUserId)
+        .maybeSingle();
+      if (error) throw error;
+
+      let currentUserData: User;
+
+      if (profile) {
+        if (profile.is_active === false) {
+          await supabase.auth.signOut();
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+        currentUserData = {
+          id: authUserId,
+          name: profile.name || "",
+          email: profile.email || authEmail || "",
+          phone_number: profile.phone || "",
+          role_type: profile.role_type ?? null,
+          role: profile.role_type ?? null,
+          roles: profile.roles && profile.roles.length ? profile.roles : (profile.role_type ? [profile.role_type] : []),
+          profile_status: profile.profile_status || 'incomplete',
+          is_active: profile.is_active !== undefined ? profile.is_active : true,
+        };
+      } else {
+        // Create a new profile row if it doesn't exist. Authorization-bearing
+        // fields (organization membership/role) are never written here — that
+        // comes exclusively from the organization_members table via the server.
+        currentUserData = {
+          id: authUserId,
+          name: "",
+          email: authEmail || "",
+          phone_number: "",
+          role_type: null,
+          role: null,
+          roles: [],
+          profile_status: 'incomplete',
+          is_active: true,
+        };
+        const { error: insertErr } = await supabase.from("profiles").insert({
+          id: authUserId,
+          name: currentUserData.name,
+          email: currentUserData.email,
+          phone: currentUserData.phone_number,
+          role_type: null,
+          profile_status: 'incomplete',
+          is_active: true,
+        });
+        if (insertErr) throw insertErr;
+      }
+
+      // Automatically set current role if user only has one role and no current role is set
+      if (currentUserData.roles && currentUserData.roles.length === 1 && !localStorage.getItem('currentRole')) {
+        setCurrentRole(currentUserData.roles[0]);
+      } else if (currentUserData.roles && currentUserData.roles.length > 0 && localStorage.getItem('currentRole')) {
+        if (!currentUserData.roles.includes(localStorage.getItem('currentRole')!)) {
+          setCurrentRole(currentUserData.roles[0]);
+        }
+      }
+
+      // Organization identity comes from the organization_members table,
+      // which only the server writes to (POST /api/v1/members/bootstrap
+      // creates the org, the owner membership row, atomically). Unlike the
+      // old Firebase-custom-claims model, there's no token refresh needed
+      // here — RLS reads organization_members fresh on every query.
       try {
-        const userDocRef = doc(db, "users", auth.currentUser.uid);
-        const userDoc = await getDoc(userDocRef);
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          setUser(prev => ({
-            ...(prev || { id: auth.currentUser!.uid, name: data.name || "", email: data.email || "", profile_status: 'incomplete', is_active: true }),
-            ...data,
-            role: data.role_type || data.role || null,
-            role_type: data.role_type || data.role || null,
-            profile_status: data.profile_status || 'incomplete',
-            is_active: data.is_active !== undefined ? data.is_active : true,
-          }) as User);
+        const { data: membership } = await supabase
+          .from("organization_members")
+          .select("organization_id")
+          .eq("user_id", authUserId)
+          .limit(1)
+          .maybeSingle();
+
+        if (!membership && (currentUserData.role_type === 'tutor' || currentUserData.role === 'admin')) {
+          const { data: { session: freshSession } } = await supabase.auth.getSession();
+          const token = freshSession?.access_token;
+          const resp = await fetch('/api/v1/members/bootstrap', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({ organizationName: `${currentUserData.name || currentUserData.email}'s Tutoring` }),
+          });
+          if (resp.ok) {
+            const body = await resp.json();
+            currentUserData.organizationId = body.organizationId;
+          }
+        } else if (membership) {
+          currentUserData.organizationId = membership.organization_id as string;
         }
       } catch (error) {
-        handleFirestoreError(error, OperationType.GET, "users");
+        console.error("Failed to resolve organization membership", error);
       }
+
+      setUser(currentUserData);
+    } catch (error) {
+      handleSupabaseError(error, OperationType.GET, "profiles", authUserId, authEmail);
+      setUser(null);
+    }
+  };
+
+  const checkAuth = async () => {
+    const { data: { session: currentSession } } = await supabase.auth.getSession();
+    if (currentSession?.user) {
+      await loadUser(currentSession.user.id, currentSession.user.email);
     }
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        try {
-          // Fetch user document from Firestore
-          const userDocRef = doc(db, "users", firebaseUser.uid);
-          const userDoc = await getDoc(userDocRef);
-          
-          let currentUserData: User;
-
-          if (userDoc.exists()) {
-            const data = userDoc.data();
-            if (data.is_active === false) {
-              await signOut(auth);
-              setUser(null);
-              setLoading(false);
-              return;
-            }
-            currentUserData = { 
-              id: firebaseUser.uid, 
-              ...data,
-              role: data.role_type || data.role || null, // Fallback for old data
-              role_type: data.role_type || data.role || null,
-              roles: data.roles || (data.role_type ? [data.role_type] : []),
-              profile_status: data.profile_status || 'incomplete',
-              is_active: data.is_active !== undefined ? data.is_active : true,
-            } as User;
-          } else {
-            // Create a new user document if it doesn't exist
-            currentUserData = {
-              id: firebaseUser.uid,
-              name: firebaseUser.displayName || "Unknown User",
-              email: firebaseUser.email || "",
-              phone_number: firebaseUser.phoneNumber || "",
-              role_type: null,
-              role: null,
-              roles: [],
-              profile_status: 'incomplete',
-              is_active: true,
-            };
-            // Authorization-bearing fields (role, roles, organizationId) are
-            // never written client-side; membership comes from the server.
-            await setDoc(userDocRef, {
-              uid: currentUserData.id,
-              name: currentUserData.name,
-              email: currentUserData.email,
-              phone_number: currentUserData.phone_number,
-              role_type: currentUserData.role_type,
-              profile_status: currentUserData.profile_status,
-              created_at: new Date().toISOString(),
-              is_active: currentUserData.is_active
-            });
-          }
-
-          // Automatically set current role if user only has one role and no current role is set
-          if (currentUserData.roles && currentUserData.roles.length === 1 && !localStorage.getItem('currentRole')) {
-            setCurrentRole(currentUserData.roles[0]);
-          } else if (currentUserData.roles && currentUserData.roles.length > 0 && localStorage.getItem('currentRole')) {
-            // Ensure the stored role is still valid
-            if (!currentUserData.roles.includes(localStorage.getItem('currentRole')!)) {
-              setCurrentRole(currentUserData.roles[0]);
-            }
-          }
-
-          // Organization identity comes from custom claims, which only the
-          // server can set (POST /api/v1/members/bootstrap creates the org,
-          // the owner membership, and the claims atomically).
-          try {
-            let claims = (await firebaseUser.getIdTokenResult()).claims;
-
-            if (!claims.organizationId && (currentUserData.role_type === 'tutor' || currentUserData.role === 'admin')) {
-              const token = await firebaseUser.getIdToken();
-              const resp = await fetch('/api/v1/members/bootstrap', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${token}`,
-                },
-                body: JSON.stringify({ organizationName: `${currentUserData.name}'s Tutoring` }),
-              });
-              if (resp.ok || resp.status === 409) {
-                // Claims changed server-side; force a token refresh to load them.
-                claims = (await firebaseUser.getIdTokenResult(true)).claims;
-              }
-            }
-
-            if (claims.organizationId) {
-              currentUserData.organizationId = claims.organizationId as string;
-            }
-          } catch (error) {
-            console.error("Failed to resolve organization membership", error);
-          }
-
-          setUser(currentUserData);
-        } catch (error) {
-          handleFirestoreError(error, OperationType.GET, "users");
-          setUser(null);
-        }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
+      if (newSession?.user) {
+        await loadUser(newSession.user.id, newSession.user.email);
       } else {
         setUser(null);
       }
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => subscription.unsubscribe();
   }, []);
 
   const login = async () => {
     try {
-      await signInWithPopup(auth, googleProvider);
+      // Note: unlike Firebase's signInWithPopup, Supabase's OAuth flow
+      // redirects the whole page to the provider and back (redirectTo
+      // defaults to the current origin) rather than opening a popup.
+      const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
+      if (error) throw error;
     } catch (error) {
       console.error("Login failed", error);
       throw error;
@@ -245,62 +218,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const loginWithEmail = async (email: string, password: string) => {
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (error) {
-      throw error;
-    }
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
   };
 
   const registerWithEmail = async (email: string, password: string, name: string) => {
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      
-      // Update the user's profile with their name
-      await updateProfile(userCredential.user, {
-        displayName: name
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { name } },
       });
-      
-      const userDocRef = doc(db, "users", userCredential.user.uid);
-      await setDoc(userDocRef, {
-        uid: userCredential.user.uid,
-        name: name,
-        email: email,
-        phone_number: "",
+      if (error) throw error;
+      if (!data.user) return;
+
+      const { error: insertErr } = await supabase.from("profiles").insert({
+        id: data.user.id,
+        name,
+        email,
+        phone: "",
         role_type: null,
         profile_status: 'incomplete',
-        created_at: new Date().toISOString(),
-        is_active: true
+        is_active: true,
       });
-      
+      if (insertErr) throw insertErr;
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, "users");
+      handleSupabaseError(error, OperationType.CREATE, "profiles");
     }
   };
 
-  const setupRecaptcha = (containerId: string) => {
-    if (!window.recaptchaVerifier) {
-      window.recaptchaVerifier = new RecaptchaVerifier(auth, containerId, {
-        size: 'invisible',
-      });
-    }
-  };
-
-  const sendOTP = async (phoneNumber: string, containerId: string): Promise<ConfirmationResult> => {
+  // Self-hosted GoTrue's phone OTP (Twilio-backed) doesn't need a client-side
+  // reCAPTCHA widget the way Firebase phone auth did — sendOTP/verifyOTP take
+  // just the phone number now.
+  const sendOTP = async (phoneNumber: string) => {
     try {
-      setupRecaptcha(containerId);
-      const appVerifier = window.recaptchaVerifier;
-      return await signInWithPhoneNumber(auth, phoneNumber, appVerifier);
+      const { error } = await supabase.auth.signInWithOtp({ phone: phoneNumber });
+      if (error) throw error;
     } catch (error) {
       console.error("Error sending OTP:", error);
       throw error;
     }
   };
 
-  const verifyOTP = async (confirmationResult: ConfirmationResult, otp: string) => {
+  const verifyOTP = async (phoneNumber: string, otp: string) => {
     try {
-      await confirmationResult.confirm(otp);
-      // onAuthStateChanged will handle the rest
+      const { error } = await supabase.auth.verifyOtp({ phone: phoneNumber, token: otp, type: 'sms' });
+      if (error) throw error;
+      // onAuthStateChange handles the rest
     } catch (error) {
       console.error("Error verifying OTP:", error);
       throw error;
@@ -309,7 +273,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     try {
-      await signOut(auth);
+      await supabase.auth.signOut();
       setUser(null);
       setCurrentRole(null);
     } catch (error) {

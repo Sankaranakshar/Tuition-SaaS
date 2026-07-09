@@ -19,8 +19,7 @@ import {
   LayoutGrid,
   User as UserIcon,
 } from "lucide-react";
-import { collection, query, where, limit, onSnapshot } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 
 interface PaletteProps {
@@ -51,15 +50,37 @@ export default function CommandPalette({ open, onOpenChange }: PaletteProps) {
   const isStaff = currentRole !== "student" && currentRole !== "parent";
   useEffect(() => {
     if (!open || !isStaff || !user?.organizationId) return;
-    const q = query(
-      collection(db, "students"),
-      where("organizationId", "==", user.organizationId),
-      limit(50)
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setStudents(snap.docs.map((d) => ({ id: d.id, name: (d.data() as any).name || "Unnamed" })));
-    }, () => setStudents([]));
-    return unsub;
+    let cancelled = false;
+
+    const load = async () => {
+      const { data, error } = await supabase
+        .from("students")
+        .select("id, name")
+        .eq("organization_id", user.organizationId)
+        .limit(50);
+      if (cancelled) return;
+      if (error) {
+        setStudents([]);
+        return;
+      }
+      setStudents((data || []).map((d) => ({ id: d.id, name: d.name || "Unnamed" })));
+    };
+
+    load();
+
+    const channel = supabase
+      .channel(`command-palette-students-${user.organizationId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "students", filter: `organization_id=eq.${user.organizationId}` },
+        load
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [open, isStaff, user?.organizationId]);
 
   const go = (to: string) => {

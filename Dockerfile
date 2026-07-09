@@ -12,7 +12,6 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY --from=build /app/dist ./dist
-COPY firebase-applet-config.json ./
 EXPOSE 3000
 USER node
 CMD ["node", "dist/server.js"]

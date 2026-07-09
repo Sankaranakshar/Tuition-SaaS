@@ -1,7 +1,8 @@
-import { adminDb } from "../firebaseAdmin.ts";
+import { supabaseAdmin } from "../supabaseAdmin.ts";
 
-// Append-only audit trail, written exclusively server-side.
-// Firestore rules expose no client write path to audit_events.
+// Append-only audit trail, written exclusively server-side (service_role) —
+// no client insert policy exists on audit_events, matching the old
+// Firestore-rules-enforced write path.
 export async function writeAudit(
   organizationId: string,
   actorUserId: string,
@@ -10,14 +11,11 @@ export async function writeAudit(
   entityId: string,
   summary: Record<string, unknown>
 ) {
-  if (!adminDb) return;
-  await adminDb.collection("audit_events").add({
-    organizationId,
-    actorUserId,
+  const { error } = await supabaseAdmin.from("audit_events").insert({
+    organization_id: organizationId,
+    actor_id: actorUserId,
     action,
-    entityType,
-    entityId,
-    summary,
-    at: new Date(),
+    payload: { entityType, entityId, ...summary },
   });
+  if (error) console.error("Failed to write audit event", error);
 }
