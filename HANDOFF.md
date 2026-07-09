@@ -267,7 +267,9 @@ A user-requested audit compared the actual codebase against every task ID in DEV
 
 The old model: Firebase custom claims (`role`, `organizationId`) embedded in the ID token, set via `adminAuth.setCustomUserClaims()` + `revokeRefreshTokens()`. Removing a member required revoking their tokens for the removal to take effect, and granting a role required the client to force a token refresh.
 
-The new model: **no claims at all.** `organization_members(organization_id, user_id, role)` is the single source of truth. `authenticateToken` middleware verifies the Supabase JWT locally (HS256, `SUPABASE_JWT_SECRET`, no network call) to get just the user's identity (`sub`), then does a fresh `organization_members` lookup on *every request* to get role/org. A role change or member removal takes effect on the very next API call — no revocation step, no client-side refresh dance. This is strictly simpler and was verified via the RLS suite's `organization_members` tests (§11.3).
+The new model: **no claims at all.** `organization_members(organization_id, user_id, role)` is the single source of truth. `authenticateToken` middleware verifies the Supabase JWT to get just the user's identity (`sub`), then does a fresh `organization_members` lookup on *every request* to get role/org. A role change or member removal takes effect on the very next API call — no revocation step, no client-side refresh dance. This is strictly simpler and was verified via the RLS suite's `organization_members` tests (§11.3).
+
+**JWT verification updated 2026-07-10 (§12.6) — read this.** New Supabase projects (including this one) default to **asymmetric JWT signing keys (ES256/RS256)**, not the legacy HS256 shared secret. The middleware originally verified HS256-only, which would have 401'd every real login. It now verifies via `jose`: asymmetric tokens against Supabase's public JWKS (`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`, cached), falling back to HS256 with `SUPABASE_JWT_SECRET` for any legacy tokens still in circulation. Consequence: **`SUPABASE_URL` must be set for auth to work** (it drives the JWKS URL); `SUPABASE_JWT_SECRET` is now optional (HS256 fallback only). Don't revert this to HS256-only.
 
 ### 11.3 The RLS test suite (`tests/integration/`) — read this before touching any migration file
 
@@ -312,6 +314,10 @@ Fixed by restoring the three-array shape: `0013_class_sessions_id_space_fix.sql`
 | Supabase Realtime (`postgres_changes` subscriptions, 63 call sites) | ⚠️ **never done** — written correctly per the API, never connected to a live Realtime server |
 | Supabase Storage (signed URLs, document upload/download) | ⚠️ **never done** |
 | Razorpay webhook / reconcile against the new Postgres transaction code | ⚠️ **never done** (same gap as the original Firestore-era item, now on new infra) |
+
+### 11.7a JWT signing-keys fix (2026-07-10, §12.6)
+
+Verifying the real project's dashboard showed it uses the new asymmetric JWT signing keys (Current key ECC P-256), with the legacy HS256 secret rotated to "previous". `server/middleware/auth.ts` was updated to verify asymmetric tokens via the Supabase JWKS endpoint (`jose`), HS256 as fallback — see §11.2. Without this, every authenticated request would have 401'd on the real project. Added `jose` dependency.
 
 ### 11.7 CI change
 

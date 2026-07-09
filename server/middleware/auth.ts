@@ -1,5 +1,6 @@
 import express from "express";
 import jwt from "jsonwebtoken";
+import { createRemoteJWKSet, jwtVerify, decodeProtectedHeader } from "jose";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
 
 type Request = express.Request;
@@ -25,6 +26,37 @@ export interface AuthRequest extends Request {
 }
 
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+
+// Supabase now signs user access tokens with asymmetric JWT signing keys
+// (ES256/RS256) by default; the legacy HS256 shared secret is only used to
+// verify older tokens still in circulation. We verify accordingly:
+//   - asymmetric tokens  -> Supabase's public JWKS endpoint (cached by jose)
+//   - HS256 tokens       -> the legacy shared secret (SUPABASE_JWT_SECRET), if set
+// This keeps working across the project's key rotation with no redeploy.
+const jwks = SUPABASE_URL
+  ? createRemoteJWKSet(new URL(`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`))
+  : null;
+
+async function verifyAccessToken(token: string): Promise<{ sub: string; email?: string }> {
+  const alg = decodeProtectedHeader(token).alg;
+
+  if (alg === "HS256") {
+    if (!SUPABASE_JWT_SECRET) {
+      throw new Error("HS256 token received but SUPABASE_JWT_SECRET is not configured");
+    }
+    const decoded = jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ["HS256"] }) as jwt.JwtPayload;
+    if (!decoded.sub) throw new Error("Missing sub claim");
+    return { sub: decoded.sub, email: decoded.email as string | undefined };
+  }
+
+  if (!jwks) {
+    throw new Error("SUPABASE_URL is required to verify asymmetric access tokens");
+  }
+  const { payload } = await jwtVerify(token, jwks);
+  if (!payload.sub) throw new Error("Missing sub claim");
+  return { sub: payload.sub, email: payload.email as string | undefined };
+}
 
 // Role/organizationId are read fresh from organization_members on every
 // request instead of being embedded in the JWT (as Firebase custom claims
@@ -43,15 +75,8 @@ export const authenticateToken = async (
     return res.status(401).json({ error: { code: "unauthenticated", message: "Missing bearer token" } });
   }
 
-  if (!SUPABASE_JWT_SECRET) {
-    console.error("SUPABASE_JWT_SECRET not configured");
-    return res.status(500).json({ error: { code: "internal", message: "Internal Server Error" } });
-  }
-
   try {
-    const decoded = jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ["HS256"] }) as jwt.JwtPayload;
-    const userId = decoded.sub;
-    if (!userId) throw new Error("Missing sub claim");
+    const { sub: userId, email } = await verifyAccessToken(token);
 
     const { data: membership, error } = await supabaseAdmin
       .from("organization_members")
@@ -63,7 +88,7 @@ export const authenticateToken = async (
 
     req.user = {
       id: userId,
-      email: decoded.email as string | undefined,
+      email,
       role: membership?.role as Role | undefined,
       organizationId: membership?.organization_id as string | undefined,
     };
