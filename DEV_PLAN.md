@@ -27,9 +27,9 @@ _Rewritten from scratch on 2026-07-10, after the Firebase → self-hosted Supaba
 - **Epic 7, outbound comms** (WhatsApp Business API, SMS DLT, email domain verification): blocked on provider onboarding. Manual UPI-link sharing covers the gap.
 - **Epic 8, Google Calendar/Meet:** blocked on OAuth consent-screen verification. Sessions degrade to "link pending".
 
-### Built but never runtime-verified (the single biggest risk)
+### Built but not yet fully runtime-verified (the single biggest remaining risk)
 
-Everything above passes static checks and tests, but **no code in this repository has ever executed against a live Supabase instance, a real browser, real GoTrue auth, Realtime, Storage, or Razorpay.** The 63 `onSnapshot` call sites were rewritten to `postgres_changes` refetch patterns without ever connecting to a Realtime server. Treat every feature as "expected working" until Blocker 1 below is cleared.
+**Update 2026-07-10:** the app is now live on Vercel against the real Supabase project — migrations applied, frontend confirmed rendering (HANDOFF.md §13). That closes the "never executed against live infra at all" gap, but the deeper claim still holds for everything past first paint: **no feature flow has been exercised end to end** — no signup, no org bootstrap, no booking, no attendance, no payment, no real GoTrue auth (email/password, Google, phone OTP), no Realtime subscription, no Storage upload/download, no Razorpay webhook. The 63 `onSnapshot`-turned-`postgres_changes` call sites have still never connected to a live Realtime server. Treat every feature as "expected working, not confirmed" until Blocker 3 (the first end-to-end walkthrough) is run.
 
 ### Not started
 
@@ -42,14 +42,11 @@ Everything above passes static checks and tests, but **no code in this repositor
 
 ## 2. Immediate Blockers (ranked)
 
-1. **Apply the migrations to the hosted project and run the app for the first time.** As of 2026-07-10 no migration has ever been applied to any live database — the Supabase Cloud project (`cwugpiernnwrhcximjwh`) exists but is empty. Direction is now decided (hosted Cloud) and the repo is prepared: migrations renamed to `db push` format, `supabase/config.toml` added, `.env.example` + `supabase/README.md` updated for hosted (see §Option A). What remains **needs your Supabase login/DB password and cannot be done from here**:
-   - `brew install supabase/tap/supabase` → `supabase login` → `supabase link --project-ref cwugpiernnwrhcximjwh` → `supabase db push` (or paste the migrations into the SQL editor in filename order).
-   - Fill real env values (`VITE_SUPABASE_URL`, anon key, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `DATABASE_URL` pooler URI) from Dashboard → Project Settings.
-   Nothing else on this list is meaningful until this works.
-2. **First end-to-end walkthrough:** signup → org bootstrap → add student → book session → student sees own session (the exact §11.4 regression) → Today attendance → invoice accrual → manual payment → ledger. Fix whatever breaks; expect breakage in Realtime subscriptions and auth flows since they have never run.
-3. **GoTrue configuration:** Google OAuth redirect URI; SMS provider (Twilio or MSG91) for phone OTP, which the parent portal hard-depends on.
-4. **Payment loop wiring:** Razorpay live KYC (long lead, start now), per-org key connection, webhook URL registration, real ₹ test payment, hourly reconcile + session-materialization cron jobs (any scheduler that can POST with the `CRON_SECRET` header).
-5. ~~Production hosting decision.~~ **DECIDED (2026-07-10): Vercel (app) + Supabase Cloud (backend).** The Express server was restructured to run as a Vercel serverless function (`api/index.ts` + `server/app.ts` + `vercel.json`); the Vite SPA deploys as static. Remaining: create the Vercel project from the repo, set env vars in Vercel (not a local `.env`), and point `DATABASE_URL` at Supabase's **transaction pooler (port 6543)** — the direct 5432 connection will exhaust under serverless concurrency. Untested until a real deploy (see Blocker 2).
+1. ~~Apply the migrations to the hosted project~~ **DONE (2026-07-10).** `supabase db push` applied all 13 migrations to the Cloud project (`cwugpiernnwrhcximjwh`); schema confirmed live in the Table Editor.
+2. ~~Production hosting decision~~ **DONE — live on Vercel (2026-07-10).** App deployed to Vercel (serverless, `api/index.ts` + `server/app.ts` + `vercel.json`), Supabase Cloud as backend. Frontend confirmed rendering after fixing a real env-var gap: **the Vercel-Supabase integration auto-injects `SUPABASE_*`/`NEXT_PUBLIC_SUPABASE_*` names, not the `VITE_*`-prefixed names Vite requires** — `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` had to be added manually, and `DATABASE_URL` (which the integration never adds) had to be set explicitly to the transaction-pooler URI (port 6543). Full account in HANDOFF.md §13.3 — read it before touching Vercel env vars again on this or a similar project.
+3. **First end-to-end walkthrough — not yet run, now the top priority.** Signup → org bootstrap → add student → book session → student sees own session (the exact §11.4 regression) → Today attendance → invoice accrual → manual payment → ledger. Fix whatever breaks; expect breakage in Realtime subscriptions specifically, since they've never connected to a live Realtime server. Also confirm `/api/health` responds on the deployed URL (serverless routing untested until this).
+4. **GoTrue configuration:** Google OAuth redirect URI; SMS provider (Twilio or MSG91) for phone OTP, which the parent portal hard-depends on. Not yet done.
+5. **Payment loop wiring:** Razorpay live KYC (long lead, start now), per-org key connection, webhook URL registration, real ₹ test payment, hourly reconcile + session-materialization cron jobs (any scheduler that can POST with the `CRON_SECRET` header).
 6. **Legal:** privacy policy, ToS, DPDP parental-consent language (the portal already captures consent; the document it references must exist), refund policy.
 
 ---
@@ -136,7 +133,8 @@ Effort in engineer-days (ed).
 | 9 | Firestore-era comments, stale `.env.example` header, `/api/settings` alias | Low | Newcomer confusion | 0.5 ed | Readability | none |
 | 10 | `metadata.json` and other AI-Studio scaffolding remnants | Low | none | 0.1 ed | Cleanliness | none |
 | 11 | ~~Hosted vs self-hosted direction unresolved~~ **DONE (2026-07-10)** — hosted Cloud chosen; `.env.example`/`README` updated, self-hosted kept as Option B | — | — | — | Resolved | — |
-| 12 | ~~Migration filenames incompatible with `supabase db push`~~ **DONE (2026-07-10)** — renamed to `<timestamp>_name.sql`, added `supabase/config.toml`; RLS suite still 40/40. Remaining: install CLI + `supabase link` (needs your login) | — | — | — | Resolved (repo side) | — |
+| 12 | ~~Migration filenames incompatible with `supabase db push`~~ **DONE (2026-07-10)** — renamed to `<timestamp>_name.sql`, added `supabase/config.toml`; RLS suite still 40/40. CLI linked and `db push` run successfully. | — | — | — | Resolved | — |
+| 13 | Vercel-Supabase integration doesn't set Vite-prefixed env vars or `DATABASE_URL` | Low (documented, one-time) | Blank-page failure on first deploy of any Vite app using this integration | done, doc only | Runbook exists for next redeploy/rotation | HANDOFF §13.3 |
 
 ---
 
@@ -148,7 +146,7 @@ Effort in engineer-days (ed).
 - **Data access on the client:** pages talk to `supabase-js` directly with ad-hoc queries. Extract per-entity query hooks (`useSessions`, `useInvoices`) so Realtime subscription, bounding, and error handling live in one place each; adopt during Stage 2 rebuilds, not as a big-bang refactor.
 - **Testing strategy:** keep the three-layer pyramid (unit for money math and today-derivations, PGlite RLS suite for authorization, supertest for route contracts). Add Playwright E2E for the five golden journeys once a seeded staging exists; E2E is the only layer that can catch the "never ran in a browser" class of bug.
 - **CI/CD:** CI is solid (typecheck, unit, RLS, build, no external deps). Add: bundle-size check, `npm audit` gate, deploy-to-staging on merge once hosting exists, migration-ordering lint (applying 0001..N to a fresh PGlite already happens in the RLS suite, which is an excellent migration test; keep it mandatory).
-- **Deployment:** write the runbook: compose up Supabase, run migrations, boot Express, smoke script (`/api/health`, login, one read per table group). One command, documented, rehearsed twice.
+- **Deployment:** now live (Vercel + Supabase Cloud, HANDOFF §13). Still needed: a written smoke script (`/api/health`, login, one read per table group) to run after every deploy, and a documented rollback procedure (Vercel's instant-rollback-to-previous-deployment covers the app side; there's no equivalent rehearsed procedure for a bad migration on the Supabase side yet).
 
 ---
 

@@ -1,6 +1,6 @@
 # ClassStackr — Engineering Handoff
 
-_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), then a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12)._
+_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12), then the first live deploy to Vercel + Supabase Cloud with migrations applied and the frontend confirmed rendering (§13)._
 
 This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked on you, and what comes next.
 
@@ -293,7 +293,7 @@ Fixed by restoring the three-array shape: `0013_class_sessions_id_space_fix.sql`
 
 ### 11.5 Blocked on you (current, replaces the stale §6)
 
-1. **Stand up a Supabase instance and apply the migrations — this has NOT been done (§12.2).** A Supabase **Cloud** project (`cwugpiernnwrhcximjwh`) now exists but its database is **empty** — no migration has ever been applied anywhere. Before it can be, resolve two setup mismatches: **(a)** decide hosted-vs-self-hosted. The repo was built for self-hosted Docker (`supabase/README.md`, `.env.example` → `localhost:8000`); the Cloud project ref implies a pivot to hosted, which is simpler and ports cleanly, but no repo config is wired for it yet. **(b)** The CLI is not set up (no `supabase/config.toml`, never `supabase init`/`link`, CLI not installed) and the migration files are named `0001_*.sql … 0013_*.sql`, which `supabase db push` will not track — it expects `<14-digit-timestamp>_name.sql`. Either rename all 13 in order, or apply them as raw SQL (`psql`/SQL editor) exactly as the PGlite RLS suite already does. Original self-hosted path: clone `supabase/supabase`'s `docker` dir, configure `.env`, `docker compose up`, then apply every file in `supabase/migrations/` in order.
+1. ~~Stand up a Supabase instance and apply the migrations~~ **DONE — see §13.1.** Migrations applied via `supabase db push` to the Cloud project (`cwugpiernnwrhcximjwh`); the schema is live.
 2. Configure Google OAuth for GoTrue (reuse the existing Google OAuth client, add the new redirect URI) if "Sign in with Google" needs to keep working.
 3. Configure an SMS provider (Twilio etc.) in self-hosted GoTrue for phone/OTP login — Firebase Auth's phone OTP had this bundled; GoTrue doesn't.
 4. Set the new env vars app-wide: `SUPABASE_URL`, `SUPABASE_ANON_KEY`/`VITE_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `DATABASE_URL` — see `.env.example`.
@@ -308,9 +308,9 @@ Fixed by restoring the three-array shape: `0013_class_sessions_id_space_fix.sql`
 | `npm test` (unit) | ✅ 51/51 |
 | `npm run test:rls` (RLS/RBAC integration, PGlite) | ✅ 40/40 — verified to actually catch regressions via deliberate revert-and-check (§11.3) |
 | `npm run build` | ✅ clean (frontend + server bundle) |
-| Runtime against a live Supabase instance | ⚠️ **never done** — no Docker/Postgres available in the environment this migration was built in |
-| Browser walkthrough (any workspace) | ⚠️ **never done**, same constraint |
-| Real GoTrue auth (email/password, Google OAuth, phone/OTP) | ⚠️ **never done** — only the JWT-verification code path was reasoned about, not exercised against a real token |
+| Runtime against a live Supabase instance | ✅ **as of 2026-07-10 — migrations applied, app deployed and rendering; see §13** for the current, more granular status |
+| Browser walkthrough (any workspace) | ⚠️ not yet run — see §13.4 next action |
+| Real GoTrue auth (email/password, Google OAuth, phone/OTP) | ⚠️ JWT verification fixed for the live project's key type (§11.7a/§13.2); actual login flow not yet exercised end to end |
 | Supabase Realtime (`postgres_changes` subscriptions, 63 call sites) | ⚠️ **never done** — written correctly per the API, never connected to a live Realtime server |
 | Supabase Storage (signed URLs, document upload/download) | ⚠️ **never done** |
 | Razorpay webhook / reconcile against the new Postgres transaction code | ⚠️ **never done** (same gap as the original Firestore-era item, now on new infra) |
@@ -359,4 +359,45 @@ The working directory `~/Downloads/Tuition-SaaS-main/` **is** the real clone (re
 
 **Hosting model set: Vercel (app) + Supabase Cloud (backend).** The Express server was refactored so it can run both ways without duplication: `server/app.ts` exports `createApp()` (all middleware + routes + error handler, no listener); `server.ts` wraps it with Vite/static + `app.listen()` for local dev and traditional hosts; `api/index.ts` exports the same app as a Vercel serverless function. `vercel.json` builds the SPA (`vite build` → `dist`, served statically) and rewrites `/api/*` into the function. `server/db.ts` caps the pg pool (`max` 3) for serverless. **On Vercel, `DATABASE_URL` must point at Supabase's transaction pooler (port 6543)**, and env vars live in Vercel project settings, not a local `.env`. Verified locally (`/api/health` + JSON 404 boot clean; tsc/build green); the serverless path itself is unvalidated until a real Vercel deploy.
 
-Still not done (needs the live project): applying the migrations to the Cloud DB, setting the real env values in Vercel, configuring Google/Phone auth providers, and the first end-to-end runtime walkthrough (§11.5 / §11.6).
+Still not done as of §12: applying the migrations to the Cloud DB, setting the real env values in Vercel, configuring Google/Phone auth providers, and the first end-to-end runtime walkthrough. **All of the migration/env/first-boot items are now done — see §13.**
+
+---
+
+## 13. First live deploy: Vercel + Supabase Cloud (2026-07-10)
+
+The app is now live on Vercel against the real Supabase project (`cwugpiernnwrhcximjwh`) for the first time. This section captures what actually happened standing it up, since two real issues surfaced that aren't obvious from the code and are worth knowing before touching auth or env config again.
+
+### 13.1 Migrations applied
+
+`supabase db push` (after `supabase login` + `supabase link --project-ref cwugpiernnwrhcximjwh`) applied all 13 renamed migrations successfully. The database is no longer empty — confirmed via the Table Editor showing the full ~37-table schema. **§11.5 item 1 / §12.2 is resolved: the migration has been applied to a live database.**
+
+### 13.2 JWT signing keys — real finding, already fixed in code (§11.7a)
+
+Checking the live project's **Settings → JWT Keys** showed it defaults to the **new asymmetric signing keys** (current key: ECC P-256), with the legacy HS256 shared secret demoted to "previous key, verify-only." This is Supabase's new default for projects created via the Vercel integration, not something this repo's migrations control. Confirmed the JWKS-based fix (§11.7a, commit `c690306`) matches reality before deploying — had the code still been HS256-only, every login on this project would have 401'd. **Lesson for future projects on this stack: check JWT Keys in the dashboard before assuming HS256.**
+
+### 13.3 Vercel-Supabase integration env var naming — the actual deploy blocker
+
+The Supabase project was created *through Vercel's Supabase integration*, which auto-injects env vars under **Next.js-style names**: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, plus `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY`. **It does not know this is a Vite app and never sets the `VITE_*`-prefixed vars Vite requires to expose anything to client code** (`import.meta.env.VITE_*`). Symptom on first deploy: a blank page with `Error: supabaseUrl is required.` in the console (src/supabase.ts:5 — `import.meta.env.VITE_SUPABASE_URL` was `undefined`), then after adding that one, `Error: supabaseKey is required.` (same gap for `VITE_SUPABASE_ANON_KEY`).
+
+**Fix (manual, in Vercel dashboard, not a code change):** add these two vars explicitly, copying values from the integration-provided ones —
+- `VITE_SUPABASE_URL` = same value as `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY` = same value as `SUPABASE_ANON_KEY` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` (use the **legacy** `anon`/`public` JWT-format key from API Keys → Legacy tab, not the new `sb_publishable_...` key — `@supabase/supabase-js` on this version expects the JWT-format key)
+
+Also confirm `DATABASE_URL` is set — **the Vercel-Supabase integration does not add this one at all**, and without it every billing/scheduling route (anything using `server/db.ts`'s transactional `pg` connection) 500s. Use the **transaction pooler** URI (port 6543), not the direct 5432 connection.
+
+Then redeploy — Vite bakes `VITE_*` vars in at **build** time, so saving the env var alone does not fix an already-built deployment.
+
+**Takeaway for next time / other projects on this integration:** don't assume the integration's auto-added vars are sufficient for a Vite app. Audit for `VITE_*` names specifically, and manually add `DATABASE_URL`.
+
+### 13.4 Status after this pass
+
+| Check | Status |
+|---|---|
+| Migrations applied to live Supabase | ✅ done (§13.1) |
+| Vercel deploy live, frontend renders | ✅ confirmed — blank-page error cleared after adding `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` |
+| `/api/health` reachable on the deployed URL | ⚠️ not yet confirmed by the user |
+| Signup → org bootstrap → student → session → attendance → invoice walkthrough | ⚠️ not yet run — this is the next step, and the first real test of the JWKS auth fix, RLS policies, and `DATABASE_URL` against live traffic |
+| Google OAuth / Phone OTP providers configured | ⚠️ not yet done |
+| Razorpay live keys / webhook registered | ⚠️ not yet done |
+
+Next action: run the walkthrough in 13.4's third row and report what happens (screenshot the Network tab on any failure — most informative signal for a live-infra bug).
