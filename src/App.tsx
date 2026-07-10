@@ -22,6 +22,7 @@ const Students = lazy(() => import("./pages/Students"));
 const StudentProfile = lazy(() => import("./pages/StudentProfile"));
 const Leads = lazy(() => import("./pages/Leads"));
 const Calendar = lazy(() => import("./pages/Calendar"));
+const Courses = lazy(() => import("./pages/Courses"));
 const Documents = lazy(() => import("./pages/Documents"));
 const Invoices = lazy(() => import("./pages/Invoices"));
 const Settings = lazy(() => import("./pages/Settings"));
@@ -108,6 +109,7 @@ export default function App() {
               <Route path="students/:id" element={<StudentProfile />} />
               <Route path="leads" element={<Leads />} />
               <Route path="calendar" element={<Calendar />} />
+              <Route path="courses" element={<Courses />} />
               <Route path="documents" element={<Documents />} />
               <Route path="invoices" element={<Invoices />} />
               <Route path="messaging" element={<Messaging />} />

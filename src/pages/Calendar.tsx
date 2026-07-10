@@ -73,7 +73,7 @@ export default function Calendar() {
   
   // Form State
   const [courseId, setCourseId] = useState("");
-  const [pricingModel, setPricingModel] = useState<PricingModel>(PricingModel.MONTHLY);
+  const [pricingModel, setPricingModel] = useState<PricingModel>(PricingModel.PER_SESSION);
   const [feeAmount, setFeeAmount] = useState(0);
   const [capacity, setCapacity] = useState(1);
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
@@ -374,6 +374,8 @@ export default function Calendar() {
     setStep(1);
     setClassType(ClassType.BATCH);
     setCourseId("");
+    setPricingModel(PricingModel.PER_SESSION);
+    setFeeAmount(0);
     setSelectedDays([]);
     setStartDate("");
     setStartTime("");
@@ -803,6 +805,38 @@ export default function Calendar() {
                             <input type="number" min="1" required value={capacity} onChange={e => setCapacity(Number(e.target.value))} className="w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
                           </div>
                         )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-6">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Pricing Model</label>
+                          <select
+                            required
+                            value={pricingModel}
+                            onChange={e => setPricingModel(e.target.value as PricingModel)}
+                            className="w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                          >
+                            <option value={PricingModel.PER_SESSION}>Per Session</option>
+                            <option value={PricingModel.MONTHLY}>Monthly</option>
+                          </select>
+                          {pricingModel === PricingModel.MONTHLY && (
+                            <p className="mt-1 text-xs text-gray-500">
+                              Monthly-priced classes aren't billed by attendance yet — pick Per Session to bill on the fly.
+                            </p>
+                          )}
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Fee Amount (₹)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            required
+                            value={feeAmount}
+                            onChange={e => setFeeAmount(Number(e.target.value))}
+                            className="w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                          />
+                        </div>
                       </div>
 
                       {classType === ClassType.BATCH && (

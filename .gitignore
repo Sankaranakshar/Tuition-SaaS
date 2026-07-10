@@ -23,3 +23,4 @@ supabase/.branches/
 # committed copy is a checked-in placeholder; buildCommand overwrites it with
 # a fresh bundle on every deploy, which Vercel then deploys as that
 # already-registered function.
+.vercel
