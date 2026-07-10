@@ -58,7 +58,7 @@ export default function Layout() {
     ? [
         { to: "/app", label: t("nav.today"), icon: LayoutDashboard, end: true },
         { to: "/app/timetable", label: t("nav.schedule"), icon: Calendar },
-        { to: "/app/study-material", label: t("nav.learn"), icon: BookOpen },
+        { to: "/app/my-story", label: t("nav.learn"), icon: BookOpen },
         { to: "/app/wallet", label: t("nav.money"), icon: Wallet },
         { to: "/app/messaging", label: t("nav.inbox"), icon: MessageSquare },
       ]

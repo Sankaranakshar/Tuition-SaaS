@@ -19,7 +19,7 @@ const HowItWorks = lazy(() => import("./pages/public/HowItWorks"));
 // Lazy load protected app pages
 const Today = lazy(() => import("./pages/Today"));
 const People = lazy(() => import("./pages/People"));
-const StudentProfile = lazy(() => import("./pages/StudentProfile"));
+const StudentStory = lazy(() => import("./pages/StudentStory"));
 const Calendar = lazy(() => import("./pages/Calendar"));
 const Courses = lazy(() => import("./pages/Courses"));
 const Documents = lazy(() => import("./pages/Documents"));
@@ -30,8 +30,6 @@ const Kit = lazy(() => import("./pages/Kit"));
 
 // Lazy load student pages
 const Notifications = lazy(() => import("./pages/Notifications"));
-const AcademicProgress = lazy(() => import("./pages/AcademicProgress"));
-const StudyMaterial = lazy(() => import("./pages/StudyMaterial"));
 const Timetable = lazy(() => import("./pages/Timetable"));
 const Bookings = lazy(() => import("./pages/Bookings"));
 const Wallet = lazy(() => import("./pages/Wallet"));
@@ -114,7 +112,7 @@ export default function App() {
             <Route path="/app" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               <Route index element={<Today />} />
               <Route path="people" element={<People />} />
-              <Route path="students/:id" element={<StudentProfile />} />
+              <Route path="students/:id" element={<StudentStory />} />
               <Route path="calendar" element={<Calendar />} />
               <Route path="courses" element={<Courses />} />
               <Route path="documents" element={<Documents />} />
@@ -125,8 +123,7 @@ export default function App() {
               
               {/* Student Routes */}
               <Route path="notifications" element={<Notifications />} />
-              <Route path="academic-progress" element={<AcademicProgress />} />
-              <Route path="study-material" element={<StudyMaterial />} />
+              <Route path="my-story" element={<StudentStory />} />
               <Route path="timetable" element={<Timetable />} />
               <Route path="bookings" element={<Bookings />} />
               <Route path="wallet" element={<Wallet />} />

@@ -39,10 +39,10 @@ _Rewritten from scratch on 2026-07-10, after the Firebase → self-hosted Supaba
 
 ### Not started
 
-- Stage 2 workspaces (Student Story, People, Money, Inbox, Onboarding rebuild): Epics 11 to 14.
+- Stage 2 workspaces remaining (Money, Inbox, Onboarding rebuild): Epics 13-14.5 (People and Student Story are done — see §2a).
 - Stage 3 (Schedule rebuild, SaaS subscription billing, super-admin, hardening gauntlet): Epics 15 to 17.
 - Stage 4 (mobile polish, growth loop, AI brief): Epics 18 to 20.
-- Legacy pages still live inside the new shell, functional but not token-styled: StudentProfile (1,308 lines), Calendar, Students, Invoices, Bookings, Timetable, Wallet, Transactions, Messaging, Notifications, Settings/Profile/Preferences.
+- Legacy pages still live inside the new shell, functional but not token-styled: Calendar, Invoices, Bookings, Timetable, Wallet, Transactions, Messaging, Notifications, Settings/Profile/Preferences.
 
 ---
 
@@ -78,7 +78,7 @@ Build in this order (dependency-driven, differs from epic numbering). **Non-nego
 | Order | Epic | Workspace | Spec | Replaces (delete on ship) | Est. |
 |---|---|---|---|---|---|
 | 1 | E12 | ~~**People**~~ **DONE (2026-07-10, HANDOFF §19)** — one directory, four lenses (Students/Leads/Parents/Tutors), needs-attention sort, funnel strip for leads, bulk actions (Message/Invoice/Export), convert-lead-to-student. `src/lib/people.ts` (8 unit tests) + `src/hooks/usePeople.ts` + `src/pages/People.tsx` at `/app/people`. Found and fixed a real pre-existing RLS bug along the way: `tutor_profiles`'s policy could never actually let an admin verify another tutor (3 new RLS tests, 44/44). Static/RLS/build all green; money/lead-conversion/invoice-prefill flows live-verified in a browser this session, admin-verifies-tutor path only RLS-test-verified (no browser click yet) — see HANDOFF §19.4 for the exact list. | REDESIGN 6.2 | Students.tsx, Leads.tsx, Admin.tsx (all deleted) | ~1.5 wk |
-| 2 | E11 | **Student Story** — reverse-chron timeline (sessions/homework/files/money/messages/notes), pinned facts header, filter chips, inline composer; parent view = same component permission-filtered | REDESIGN 6.3 | StudentProfile.tsx (1,308 lines), AcademicProgress.tsx, StudyMaterial.tsx | ~2.5 wk |
+| 2 | E11 | ~~**Student Story**~~ **DONE (2026-07-11, HANDOFF §20)** — reverse-chron timeline (sessions/homework/files/money/notes; messages deliberately out of scope, see HANDOFF §20.3), pinned facts header, filter chips, inline composer (note/homework/payment). `src/lib/studentStory.ts` (10 unit tests) + `src/hooks/useStudentStory.ts` + `src/pages/StudentStory.tsx`, mounted at `/app/students/:id` (staff) and `/app/my-story` (student self-view) — one component, parent/student view = `filterForNonStaff()` over the same data. New `student_notes` table + staff-only RLS (5 new tests, 49/49) for the composer's private tutor notes. Found and fixed a real bug along the way: the old `AcademicProgress.tsx`/`StudyMaterial.tsx` self-view queries used a student's auth uid as if it were their roster row id — always returned empty (HANDOFF §20.1). Static/RLS/build all green; core staff flow (header stats, timeline render, add note, assign homework, filter chips) live-verified against the hosted Supabase project this session; self-view route, Record Payment, and the parent-facing filtered view are RLS/unit-test-verified but not yet browser-clicked — see HANDOFF §20.7. | REDESIGN 6.3 | StudentProfile.tsx (1,384 lines), AcademicProgress.tsx, StudyMaterial.tsx (all deleted) | ~2.5 wk |
 | 3 | E13 | **Money** — one ledger, four segments (Outstanding/Wallets/Invoice detail/Insights), aging buckets, inline payment popover, batch remind (manual-share fallback until Razorpay) | REDESIGN 6.4 | Invoices.tsx, Wallet.tsx, Transactions.tsx, BillingInvoiceSettings sprawl | ~2 wk |
 | 4 | E14 | **Inbox + homework loop** — contextual threads (anchor cards), class channels, notifications as actionable inbox items, triage (archive/snooze/waiting) | REDESIGN 6.5 | Messaging.tsx, Notifications.tsx | ~2 wk |
 | 5 | E14.5 | **Onboarding rebuild** — three-beat conversational setup (solo/center → first class from template gallery → add 2 students / CSV) | REDESIGN 6.7 | Onboarding.tsx form sequence (keep the invite-redeem branches — they are current, not legacy) | ~1 wk |

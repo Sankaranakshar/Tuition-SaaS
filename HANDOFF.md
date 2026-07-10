@@ -791,3 +791,43 @@ Asked to "close the gap" on §19.4's not-yet-live-verified list, then explicitly
 - **CSV Export**: re-read the client-side CSV-building logic (`exportCsv` in `People.tsx`) — correct, filters the raw (unranked) student list by the selected-id set, quotes/escapes fields properly, no bug found.
 
 No code changes came out of this pass (review-only, per the "stop live testing" instruction) beyond documentation. HANDOFF/DEV_PLAN updated; nothing new to commit to `shared/`, migrations, or tests this round.
+
+## 20. Stage 2 item 2: Student Story workspace shipped (REDESIGN §6.3) (2026-07-11)
+
+Replaces `StudentProfile.tsx` (1,384 lines, 5 tabs), `AcademicProgress.tsx`, and `StudyMaterial.tsx` with one scrollable, reverse-chronological timeline: `src/lib/studentStory.ts` (pure merge/filter/derive logic, 10 unit tests), `src/hooks/useStudentStory.ts` (data + Realtime), `src/pages/StudentStory.tsx` (pinned header, filter chips, inline composer, timeline). Mounted at both `/app/students/:id` (staff) and `/app/my-story` (a logged-in student's own record) — one component, not two pages, so the parent/student view can never drift from the staff view.
+
+### 20.1 A real bug found and fixed along the way: the old self-view queries never worked
+
+`AcademicProgress.tsx` and `StudyMaterial.tsx` both queried `assessments`/`documents` with `.eq("student_id", user.id)` — using the logged-in student's **auth uid** as if it were the roster row's `students.id`. Those are different values (confirmed against `server/routes/students.ts`'s redeem flow, which sets `students.student_user_id = auth.uid()`, never `students.id`). RLS would have allowed the correct read; the client-side filter was simply querying the wrong id, so a real student account has always gotten an empty result from both pages — matching DEV_PLAN's own "expected working, not confirmed" caveat on these two pages. `useStudentStory.ts` fixes this by resolving `students.id` via `student_user_id = auth.uid()` once per session before querying anything else.
+
+### 20.2 New table: `student_notes` (migration `20260711100000_student_notes.sql`)
+
+REDESIGN §6.3 calls for the composer to write a note straight into the timeline as a discrete, timestamped event; nothing in the existing schema modeled this (`students.notes` is one free-text field, not an event log). Added `student_notes` (org_id, student_id, author_user_id, body, created_at), staff-only RLS (`is_staff(organization_id)` on the read side, plus `author_user_id = auth.uid()` on the write side to block forging another user's authorship) — deliberately no parent/student select policy at all, since these are private tutor notes and the parent-facing view of the same component must omit them (`filterForNonStaff()` in `studentStory.ts`, tested). 5 new RLS tests (44 → 49) cover: a tutor can write, a tutor cannot forge another user's `author_user_id`, and neither the linked parent nor the student themself can read notes at all. Registered in the `supabase_realtime` publication in a follow-up migration (`20260711100100`), same guarded/idempotent pattern as `20260710120000`/`20260710130000` — skipped the first time and caught only because §16.2's bug is now checked for on every new table by habit.
+
+### 20.3 Composer scope: sessions/homework/files/money/notes, not messages
+
+The five timeline sources REDESIGN §6.3 lists are session, homework, file, money, and note events — all implemented. Messages were deliberately left out of the merged timeline: `conversations`/`messages` have no `student_id` (or any per-student) column, only `participant_ids` (user ids); a tutor's one thread with a parent can cover multiple children, so there is no unambiguous per-student slice of the existing schema to fold in without either guessing (matching by parent/student user id, which double-counts multi-child parents) or a schema change (adding a student link to conversations, which changes group-thread semantics). Not fixed silently — flagged here as a real scope gap, not forgotten: a future pass needs a product decision on what a "message about this student" even means before this can be added correctly.
+
+"Record payment" reuses the existing `recordManualPayment` API (same one `Invoices.tsx` calls) rather than building new billing logic — the composer only adds an inline invoice picker + amount field over that existing, already-verified server route. The button is hidden entirely when a student has no outstanding invoices (rather than showing a picker with nothing to pick), which is also the state the live walkthrough below happened to exercise.
+
+### 20.4 Milestones
+
+`buildTimeline()` derives a milestone event at every 10th **completed** session (cancelled/no-show don't count) — a small, honest version of REDESIGN §6.3's "50th session" idea using a fixed interval rather than inventing a broader achievements system this pass wasn't scoped for.
+
+### 20.5 Routing changes
+
+`/app/students/:id` now renders `StudentStory` instead of the deleted `StudentProfile`. `/app/academic-progress` and `/app/study-material` are gone; a new `/app/my-story` route (self-view) replaces both. Updated the two places that linked to the old student-facing routes: `Layout.tsx`'s nav (`nav.learn` now points at `/app/my-story`) and `StudentDashboard.tsx`'s two quick-links (View Gradebook, Study Material card). `ParentPortal.tsx` is untouched — REDESIGN §6.3's "parent view = same component" is realized for the *student's own* login in this pass; folding the parent's per-child view into the same Story component (instead of `ParentPortal.tsx`'s existing overview/invoices/wallet tabs) is a separate, larger decision not scoped here and not silently dropped — noted for whoever picks up Money (Stage 2 item 3) or a future parent-portal pass.
+
+### 20.6 All gates green
+
+`npx tsc --noEmit` clean · `npm test` 69/69 (59 prior + 10 new in `studentStory.test.ts`) · `npm run test:rls` 49/49 (44 prior + 5 new) · `npm run build` passes · `npm run check:bundle-size` 216.9 KB gzip (budget 260 KB; `StudentStory.tsx` itself is a 5.05 KB gzip lazy chunk).
+
+### 20.7 Live-verified this session
+
+Pushed both new migrations to the hosted Supabase Cloud project (`supabase db push`) — real deploy, not a dry run. Then, in a real browser against that same live project: opened `/app/students/:id` for the seeded demo student (Aarav Mehta) and confirmed the pinned header (100% attendance, ₹0 outstanding, ₹0 wallet) and timeline (a scheduled session, a ₹500 cash payment, a completed session) rendered from real data; added a note through the composer and watched it appear in the timeline **without a manual reload** (confirms the new `student_notes` Realtime publication entry actually works, not just that the insert succeeded); assigned a homework item the same way; exercised the Notes and Homework filter chips and confirmed each narrowed correctly. Both pieces of test data (the note and the homework row) were deleted via `psql` immediately after, confirmed by a final reload showing the pre-session state — same clean-up discipline as §19.4.
+
+**Not exercised live this session**: the self-view route (`/app/my-story`, needs a real student login — no seeded student account credentials were on hand), "Record payment" (the seeded demo student had no outstanding invoice to record against), and the parent-facing permission-filtered view (`filterForNonStaff` hiding notes/composer). The last one is provably safe independent of a browser click: the 5 new RLS tests (§20.2) prove a parent/student's own Postgres session can never read a `student_notes` row regardless of what the client renders, and `filterForNonStaff` has a direct unit test — but nobody has logged in as an actual parent and looked at the rendered page yet.
+
+### 20.8 Next: Stage 2 item 3, Money (REDESIGN §6.4)
+
+Replaces `Invoices.tsx`, `Wallet.tsx`, `Transactions.tsx`, and the `BillingInvoiceSettings` sprawl with one ledger across four segments (Outstanding/Wallets/Invoice detail/Insights). Before starting, if a real parent/student login becomes available, spend five minutes closing this session's two live-testing gaps (§20.7) rather than letting them compound onto the next surface — same discipline as §19.6.

@@ -224,7 +224,7 @@ export default function StudentDashboard() {
                 <BookOpen className="w-5 h-5 mr-2 text-indigo-500" />
                 Latest Grades
               </h2>
-              <Link to="/app/academic-progress" className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">
+              <Link to="/app/my-story" className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">
                 View Gradebook
               </Link>
             </div>
@@ -289,7 +289,7 @@ export default function StudentDashboard() {
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all duration-200 hover:shadow-md hover:-translate-y-1">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Links</h2>
             <div className="space-y-3">
-              <Link to="/app/study-material" className="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
+              <Link to="/app/my-story" className="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
                 <div className="bg-blue-100 p-2 rounded-md mr-3 text-blue-600">
                   <FileText className="w-5 h-5" />
                 </div>

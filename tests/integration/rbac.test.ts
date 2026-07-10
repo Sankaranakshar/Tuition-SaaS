@@ -577,3 +577,77 @@ describe("Audit and server-only tables", () => {
     })
   );
 });
+
+// ===================================================================
+// Student Story workspace (DEV_PLAN §2a Stage 2 item 2): student_notes are
+// private tutor notes surfaced in the timeline's composer — staff-only,
+// never readable by the parent/student self view (REDESIGN §6.3).
+// ===================================================================
+describe("student_notes: staff-only, never parent/student readable", () => {
+  it(
+    "a tutor can write a note for a student in their org",
+    withFixtures(async (tx, as) => {
+      await as(uids.tutor, "authenticated");
+      const res = await tx.query(
+        `insert into student_notes (organization_id, student_id, author_user_id, body)
+         values ($1, $2, $3, 'Struggling with quadratics') returning id`,
+        [ORG, ids.stu1, uids.tutor]
+      );
+      expect(res.rows.length).toBe(1);
+    })
+  );
+
+  it(
+    "a tutor cannot forge another user's author_user_id on insert",
+    withFixtures(async (tx, as) => {
+      await as(uids.tutor, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `insert into student_notes (organization_id, student_id, author_user_id, body)
+         values ($1, $2, $3, 'forged')`,
+        [ORG, ids.stu1, uids.admin]
+      ));
+    })
+  );
+
+  it(
+    "the parent of the student cannot read staff notes",
+    withFixtures(async (tx, as) => {
+      await as(uids.owner, "authenticated");
+      await tx.query(
+        `insert into student_notes (organization_id, student_id, author_user_id, body) values ($1, $2, $3, 'private')`,
+        [ORG, ids.stu1, uids.owner]
+      );
+      await as(uids.parent, "authenticated");
+      const res = await tx.query(`select * from student_notes where student_id = $1`, [ids.stu1]);
+      expect(res.rows.length).toBe(0);
+    })
+  );
+
+  it(
+    "the student themself cannot read staff notes",
+    withFixtures(async (tx, as) => {
+      await as(uids.owner, "authenticated");
+      await tx.query(
+        `insert into student_notes (organization_id, student_id, author_user_id, body) values ($1, $2, $3, 'private')`,
+        [ORG, ids.stu1, uids.owner]
+      );
+      await as(uids.student, "authenticated");
+      const res = await tx.query(`select * from student_notes where student_id = $1`, [ids.stu1]);
+      expect(res.rows.length).toBe(0);
+    })
+  );
+
+  it(
+    "an outsider from another org cannot read or write",
+    withFixtures(async (tx, as) => {
+      await as(uids.outsider, "authenticated");
+      const res = await tx.query(`select * from student_notes where student_id = $1`, [ids.stu1]);
+      expect(res.rows.length).toBe(0);
+      await expectDenied(tx, () => tx.query(
+        `insert into student_notes (organization_id, student_id, author_user_id, body)
+         values ($1, $2, $3, 'nope')`,
+        [ORG, ids.stu1, uids.outsider]
+      ));
+    })
+  );
+});
