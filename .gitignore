@@ -12,3 +12,8 @@ uploads/
 # Supabase CLI local state
 supabase/.temp/
 supabase/.branches/
+
+# Generated Vercel serverless function bundle (built from
+# server/vercelHandler.ts by vercel.json's buildCommand) — not source.
+api/index.js
+api/index.js.map
