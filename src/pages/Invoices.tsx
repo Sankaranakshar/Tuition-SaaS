@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Receipt, CheckCircle, Download, FileSpreadsheet, AlertCircle, IndianRupee, Trash2 } from "lucide-react";
+import { Plus, Receipt, CheckCircle, Download, FileSpreadsheet, AlertCircle, IndianRupee, Trash2, Share2 } from "lucide-react";
 import { supabase } from "../supabase";
-import { createInvoice, recordManualPayment, downloadInvoicePdf } from "../lib/api";
+import { createInvoice, recordManualPayment, downloadInvoicePdf, createInvoicePaymentLink } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 
@@ -188,6 +188,22 @@ export default function Invoices() {
       await downloadInvoicePdf(invoice.id);
     } catch (error: any) {
       toast.error("Could not download invoice PDF", { description: error.message });
+    }
+  };
+
+  // Manual payment-reminder send (the interim for Epic 7 outbound comms,
+  // which is deferred on WhatsApp Business API / SMS DLT / email domain
+  // provider onboarding — see DEV_PLAN.md). Reuses the same Razorpay payment
+  // link the parent portal's own Share button creates; staff just does the
+  // sending by hand via a plain wa.me deep link instead of an automated send.
+  const shareInvoiceLink = async (invoice: any) => {
+    try {
+      const { shortUrl } = await createInvoicePaymentLink(invoice.id);
+      const studentName = getStudentName(invoice.student_id);
+      const text = `Hi, here's the payment link for ${studentName}'s tuition invoice: ${shortUrl}`;
+      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+    } catch (error: any) {
+      toast.error("Could not create a payment link to share", { description: error.message });
     }
   };
 
@@ -379,13 +395,22 @@ export default function Invoices() {
                         <Download className="w-4 h-4" />
                       </button>
                       {invoice.status !== 'paid' && (
-                        <button 
-                          onClick={() => handleMarkPaid(invoice)}
-                          className="text-indigo-600 hover:text-indigo-900 flex items-center"
-                          title="Mark as Paid"
-                        >
-                          <CheckCircle className="w-4 h-4" />
-                        </button>
+                        <>
+                          <button
+                            onClick={() => shareInvoiceLink(invoice)}
+                            className="text-gray-600 hover:text-green-600 flex items-center"
+                            title="Share payment link via WhatsApp"
+                          >
+                            <Share2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleMarkPaid(invoice)}
+                            className="text-indigo-600 hover:text-indigo-900 flex items-center"
+                            title="Mark as Paid"
+                          >
+                            <CheckCircle className="w-4 h-4" />
+                          </button>
+                        </>
                       )}
                     </td>
                   </tr>

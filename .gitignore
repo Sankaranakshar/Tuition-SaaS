@@ -9,6 +9,9 @@ coverage/
 database.sqlite
 uploads/
 
+# Nightly DB dumps (scripts/backup.sh) — contain real data, never commit
+backups/*.sql
+
 # Supabase CLI local state
 supabase/.temp/
 supabase/.branches/
