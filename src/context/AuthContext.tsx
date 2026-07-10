@@ -56,7 +56,7 @@ interface AuthContextType {
   sendOTP: (phoneNumber: string) => Promise<void>;
   verifyOTP: (phoneNumber: string, otp: string) => Promise<void>;
   logout: () => Promise<void>;
-  checkAuth: () => Promise<void>;
+  checkAuth: () => Promise<User | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -77,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const loadUser = async (authUserId: string, authEmail: string | undefined) => {
+  const loadUser = async (authUserId: string, authEmail: string | undefined): Promise<User | null> => {
     try {
       const { data: profile, error } = await supabase
         .from("profiles")
@@ -93,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await supabase.auth.signOut();
           setUser(null);
           setLoading(false);
-          return;
+          return null;
         }
         currentUserData = {
           id: authUserId,
@@ -178,17 +178,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setUser(currentUserData);
+      return currentUserData;
     } catch (error) {
       handleSupabaseError(error, OperationType.GET, "profiles", authUserId, authEmail);
       setUser(null);
+      return null;
     }
   };
 
-  const checkAuth = async () => {
+  // Returns the freshly-resolved user (including organizationId) rather than
+  // just triggering a side effect — callers that need to act on a just-set
+  // organizationId (e.g. onboarding writing a role profile right after
+  // bootstrap) must use this return value, not a stale `user` closure, since
+  // a React state update from setUser() inside loadUser() isn't visible to
+  // the caller's own variables until a re-render happens.
+  const checkAuth = async (): Promise<User | null> => {
     const { data: { session: currentSession } } = await supabase.auth.getSession();
     if (currentSession?.user) {
-      await loadUser(currentSession.user.id, currentSession.user.email);
+      return await loadUser(currentSession.user.id, currentSession.user.email);
     }
+    return null;
   };
 
   useEffect(() => {

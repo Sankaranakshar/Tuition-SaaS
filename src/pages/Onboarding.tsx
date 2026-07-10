@@ -105,14 +105,33 @@ export default function Onboarding() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role, step]);
 
+  // Resolves a current organizationId rather than trusting `user.organizationId`
+  // directly: that value can be stale if bootstrap (triggered by loadUser when
+  // role_type first becomes 'tutor'/'admin') hasn't finished updating context
+  // yet, or if this is a page reload where role_type was already set on a
+  // prior attempt but bootstrap never actually completed. Re-resolving via
+  // checkAuth() before writing a role profile closes that race instead of
+  // letting a null organization_id hit the database as a constraint violation.
+  const resolveOrganizationId = async (): Promise<string | null> => {
+    if (user?.organizationId) return user.organizationId;
+    const refreshed = await checkAuth();
+    return refreshed?.organizationId || null;
+  };
+
   const handleCompleteOnboarding = async () => {
     if (!user?.id) return;
     setLoading(true);
     try {
       if (role === 'tutor') {
+        const organizationId = await resolveOrganizationId();
+        if (!organizationId) {
+          setError("We couldn't finish setting up your organization. Please try again in a moment.");
+          setLoading(false);
+          return;
+        }
         const { error } = await supabase.from("tutor_profiles").upsert({
           user_id: user.id,
-          organization_id: user.organizationId,
+          organization_id: organizationId,
           full_name: tutorData.fullName,
           subjects: tutorData.subjects.split(',').map(s => s.trim()).filter(Boolean),
           grades: tutorData.grades.split(',').map(s => s.trim()).filter(Boolean),
@@ -138,9 +157,22 @@ export default function Onboarding() {
         // parentCode is a raw invite-code string, not a parent auth uid, so it
         // is not written to the uuid parent_id column — real parent<->student
         // linkage happens via redeemParentInvite / parent_links (see above).
+        // KNOWN GAP: unlike tutor/admin, nothing bootstraps an organization
+        // for a student — role_type 'student' never triggers loadUser's
+        // bootstrap path, and parentCode above is captured but never sent
+        // anywhere to resolve a membership. A student has no way to acquire
+        // an organizationId today; this will surface the clear error below
+        // rather than crash, but the underlying join flow still needs to be
+        // built (see DEV_PLAN.md Tech Debt).
+        const organizationId = await resolveOrganizationId();
+        if (!organizationId) {
+          setError("Student self-onboarding isn't fully wired up yet — ask your tutor for an invite.");
+          setLoading(false);
+          return;
+        }
         const { error } = await supabase.from("student_profiles").upsert({
           user_id: user.id,
-          organization_id: user.organizationId,
+          organization_id: organizationId,
           full_name: studentData.fullName,
           grade: studentData.grade,
           board: studentData.board,
