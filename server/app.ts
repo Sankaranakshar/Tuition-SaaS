@@ -83,8 +83,6 @@ export function createApp() {
   app.use("/api/v1/scheduling", schedulingRoutes);
   app.use("/api/v1/documents", documentsRoutes);
   app.use("/api/cron", cronRoutes);
-  // Temporary alias while the frontend migrates to /api/v1.
-  app.use("/api/settings", settingsRoutes);
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });

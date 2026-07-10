@@ -19,7 +19,6 @@ export default function BillingInvoiceSettings() {
     rolloverArrears: false,
     statusMapping: 'manual',
     invoiceSchema: ['tutorId', 'courseId', 'studentId'],
-    pdfTemplate: { logoUrl: '', address: '', footerText: '' },
     excelExportFields: ['Invoice ID', 'Student Name', 'Amount', 'Status', 'Issue Date', 'Due Date', 'Services']
   });
 
@@ -74,16 +73,6 @@ export default function BillingInvoiceSettings() {
     setSettings((prev: any) => ({
       ...prev,
       [field]: value
-    }));
-  };
-
-  const updatePdfTemplate = (field: string, value: string) => {
-    setSettings((prev: any) => ({
-      ...prev,
-      pdfTemplate: {
-        ...prev.pdfTemplate,
-        [field]: value
-      }
     }));
   };
 
@@ -344,44 +333,8 @@ export default function BillingInvoiceSettings() {
           {/* 5. Document & Export Settings */}
           <section>
             <h3 className="text-md font-semibold text-gray-800 mb-4 border-b pb-2">5. Document & Export Settings</h3>
-            
-            <div className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">PDF Template Customization</label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-md border border-gray-200">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700">Logo URL</label>
-                    <input
-                      type="text"
-                      value={settings.pdfTemplate?.logoUrl || ''}
-                      onChange={(e) => updatePdfTemplate('logoUrl', e.target.value)}
-                      placeholder="https://example.com/logo.png"
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 sm:text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700">Footer Text</label>
-                    <input
-                      type="text"
-                      value={settings.pdfTemplate?.footerText || ''}
-                      onChange={(e) => updatePdfTemplate('footerText', e.target.value)}
-                      placeholder="Thank you for your business!"
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 sm:text-sm"
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-medium text-gray-700">Tuition Center Address</label>
-                    <textarea
-                      value={settings.pdfTemplate?.address || ''}
-                      onChange={(e) => updatePdfTemplate('address', e.target.value)}
-                      rows={2}
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 sm:text-sm"
-                      placeholder="123 Education St, Knowledge City"
-                    />
-                  </div>
-                </div>
-              </div>
 
+            <div className="space-y-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Excel Export Fields</label>
                 <div className="flex flex-wrap gap-2">

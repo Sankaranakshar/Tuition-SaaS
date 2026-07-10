@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Receipt, CheckCircle, Download, FileSpreadsheet, AlertCircle, IndianRupee, Trash2 } from "lucide-react";
 import { supabase } from "../supabase";
-import { createInvoice, recordManualPayment } from "../lib/api";
+import { createInvoice, recordManualPayment, downloadInvoicePdf } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
-
+import { toast } from "sonner";
 
 import LoadingSpinner from "../components/LoadingSpinner";
 
@@ -177,76 +175,20 @@ export default function Invoices() {
   // kept only as a legacy rupee mirror. Prefer paise, fall back to the
   // rupee mirror for older rows.
   const invoiceTotalRupees = (inv: any) => (inv.total_paise != null ? inv.total_paise / 100 : (inv.total_amount || inv.amount || 0));
-  const invoiceSubtotalRupees = (inv: any) => (inv.subtotal_paise != null ? inv.subtotal_paise / 100 : (inv.subtotal || 0));
   const invoiceTaxRupees = (inv: any) => (inv.tax_paise != null ? inv.tax_paise / 100 : (inv.tax || 0));
   const invoiceDiscountRupees = (inv: any) => (inv.discount_paise != null ? inv.discount_paise / 100 : (inv.discount || 0));
 
-  const downloadPDF = (invoice: any) => {
-    const doc = new jsPDF();
-    const studentName = getStudentName(invoice.student_id);
-    
-    // Header
-    if (billingSettings.pdfTemplate?.logoUrl) {
-      try {
-        doc.addImage(billingSettings.pdfTemplate.logoUrl, 'PNG', 14, 10, 30, 30);
-      } catch (e) {
-        console.error("Failed to load logo", e);
-      }
+  // Tech Debt #2 (DEV_PLAN.md): this used to render its own jsPDF invoice
+  // client-side, which could diverge from the server's GST-snapshot invoice
+  // (server/utils/invoicePdf.ts) — a parent and an accountant could hold two
+  // different PDFs for the same invoice. Now downloads the one canonical
+  // artifact via GET /api/v1/billing/invoices/:id/pdf.
+  const downloadPDF = async (invoice: any) => {
+    try {
+      await downloadInvoicePdf(invoice.id);
+    } catch (error: any) {
+      toast.error("Could not download invoice PDF", { description: error.message });
     }
-    
-    doc.setFontSize(20);
-    doc.text("INVOICE", 14, billingSettings.pdfTemplate?.logoUrl ? 50 : 22);
-    
-    doc.setFontSize(10);
-    const startY = billingSettings.pdfTemplate?.logoUrl ? 60 : 30;
-    doc.text(`Invoice ID: INV-${invoice.id.substring(0, 6).toUpperCase()}`, 14, startY);
-    doc.text(`Date: ${new Date(invoice.created_at).toLocaleDateString()}`, 14, startY + 5);
-    doc.text(`Due Date: ${invoice.due_date || 'N/A'}`, 14, startY + 10);
-    
-    if (billingSettings.pdfTemplate?.address) {
-      doc.text(billingSettings.pdfTemplate.address, 120, startY, { maxWidth: 70 });
-    }
-    
-    doc.text(`Billed To:`, 14, startY + 20);
-    doc.setFont("helvetica", "bold");
-    doc.text(studentName, 14, startY + 25);
-    doc.setFont("helvetica", "normal");
-
-    const tableData = (invoice.items || []).map((item: any) => [
-      item.description,
-      item.quantity,
-      `Rs. ${item.amount.toFixed(2)}`,
-      `Rs. ${(item.quantity * item.amount).toFixed(2)}`
-    ]);
-
-    autoTable(doc, {
-      startY: startY + 35,
-      head: [['Description', 'Qty', 'Unit Price', 'Total']],
-      body: tableData,
-      theme: 'grid',
-      headStyles: { fillColor: [79, 70, 229] }
-    });
-
-    const finalY = (doc as any).lastAutoTable.finalY || (startY + 35);
-    
-    const taxRupees = invoiceTaxRupees(invoice);
-    if (taxRupees > 0) {
-      doc.text(`Subtotal: Rs. ${invoiceSubtotalRupees(invoice).toFixed(2)}`, 14, finalY + 10);
-      doc.text(`Tax: Rs. ${taxRupees.toFixed(2)}`, 14, finalY + 15);
-      doc.setFont("helvetica", "bold");
-      doc.text(`Total Amount: Rs. ${invoiceTotalRupees(invoice).toFixed(2)}`, 14, finalY + 25);
-    } else {
-      doc.setFont("helvetica", "bold");
-      doc.text(`Total Amount: Rs. ${invoiceTotalRupees(invoice).toFixed(2)}`, 14, finalY + 10);
-    }
-    
-    if (billingSettings.pdfTemplate?.footerText) {
-      doc.setFont("helvetica", "italic");
-      doc.setFontSize(9);
-      doc.text(billingSettings.pdfTemplate.footerText, 14, finalY + 40);
-    }
-
-    doc.save(`Invoice_${studentName.replace(/\s+/g, '_')}_${invoice.id.substring(0, 4)}.pdf`);
   };
 
   const exportToExcel = async () => {

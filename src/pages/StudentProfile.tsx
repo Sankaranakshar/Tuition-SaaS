@@ -3,8 +3,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Edit2, FileText, Calendar, DollarSign, MessageSquare, User, BookOpen, Clock, CreditCard, Plus, Save, X, CheckCircle, XCircle, Link as LinkIcon, Award, Download } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
-import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
 import { toast } from "sonner";
 
 import LoadingSpinner from "../components/LoadingSpinner";
@@ -346,9 +344,16 @@ export default function StudentProfile() {
     }
   };
 
-  const generateProgressReport = () => {
+  // Tech Debt #6 (DEV_PLAN.md): jspdf/jspdf-autotable are loaded on demand,
+  // like exceljs elsewhere, so they don't sit in this page's chunk unless the
+  // report is actually generated.
+  const generateProgressReport = async () => {
+    const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+      import("jspdf"),
+      import("jspdf-autotable"),
+    ]);
     const doc = new jsPDF();
-    
+
     // Header
     doc.setFontSize(22);
     doc.setTextColor(79, 70, 229); // Indigo 600

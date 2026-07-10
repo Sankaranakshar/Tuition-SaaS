@@ -3,8 +3,6 @@ import { BookOpen, FileText, Download, Award } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { format, parseISO } from "date-fns";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 
 const ASSESSMENT_SELECT =
   "id, studentId:student_id, organizationId:organization_id, date, title, type, score, totalScore:total_score, maxScore:max_score, feedback, comments, createdAt:created_at";
@@ -49,9 +47,15 @@ export default function AcademicProgress() {
     };
   }, [user]);
 
-  const generateProgressReport = () => {
+  // Tech Debt #6 (DEV_PLAN.md): jspdf/jspdf-autotable loaded on demand, not
+  // eagerly, matching the exceljs convention used elsewhere in the app.
+  const generateProgressReport = async () => {
+    const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+      import("jspdf"),
+      import("jspdf-autotable"),
+    ]);
     const doc = new jsPDF();
-    
+
     doc.setFontSize(20);
     doc.text("Academic Progress Report", 14, 22);
     

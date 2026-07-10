@@ -57,7 +57,7 @@ export default function Settings() {
       const { supabase } = await import("../supabase");
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
-      const response = await fetch('/api/settings/google/url', {
+      const response = await fetch('/api/v1/settings/google/url', {
         headers: {
           'Authorization': `Bearer ${token || ''}`
         }
@@ -111,7 +111,7 @@ export default function Settings() {
       const { supabase } = await import("../supabase");
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
-      const response = await fetch('/api/settings/google/disconnect', {
+      const response = await fetch('/api/v1/settings/google/disconnect', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token || ''}`
@@ -256,7 +256,7 @@ export default function Settings() {
                     <li>Go to Google Cloud Console and create an OAuth Client ID.</li>
                     <li>Add the following URL to your Authorized redirect URIs:</li>
                     <li className="font-mono bg-blue-100 p-1 rounded mt-1 break-all">
-                      {window.location.origin}/api/settings/google/callback
+                      {window.location.origin}/api/v1/settings/google/callback
                     </li>
                     <li className="mt-2">Ensure you have <code className="bg-blue-100 px-1 rounded">GOOGLE_CLIENT_ID</code> and <code className="bg-blue-100 px-1 rounded">GOOGLE_CLIENT_SECRET</code> set in your environment variables.</li>
                   </ol>
