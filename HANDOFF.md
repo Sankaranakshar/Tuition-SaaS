@@ -1,6 +1,6 @@
 # ClassStackr — Engineering Handoff
 
-_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12), the first live deploy to Vercel + Supabase Cloud (§13), a multi-stage incident chase that got the tutor onboarding flow fully working end to end for the first time (§14), then the Courses UI, Add Class pricing fields, student self-onboarding, and a tech-debt cleanup pass (§15). **Picking up in a new session? Read §15.6 first — it's a one-screen snapshot of exactly what's live, what's broken, and what's next.**_
+_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12), the first live deploy to Vercel + Supabase Cloud (§13), a multi-stage incident chase that got the tutor onboarding flow fully working end to end for the first time (§14), the Courses UI, Add Class pricing fields, student self-onboarding, and a tech-debt cleanup pass (§15), then the first live, verified run of the full wedge-demo money loop plus two more real infra bugs found and fixed along the way (§16). **Picking up in a new session? Read §16.5 first — it's a one-screen snapshot of exactly what's live, what's broken, and what's next.**_
 
 This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked on you, and what comes next.
 
@@ -532,7 +532,7 @@ After the first commit of this session (`69babe5`), a post-push check (new JS ch
 
 **Lesson for next time:** to check "did my push actually deploy," query `gh api repos/{owner}/{repo}/deployments` (filter/sort by `sha`) rather than inferring integration status from the classic webhooks endpoint, and don't reach for a manual `vercel deploy` unless auto-deploy is *actually* confirmed absent by that check.
 
-### 15.6 Current status snapshot (end of this session, 2026-07-10) — read this first if picking up cold
+### 15.6 Current status snapshot (end of this session, 2026-07-10) — superseded, see §16.5
 
 **Live environment:** unchanged from §14.5 — `https://tuition-saas-two.vercel.app`, Vercel project `tuition-saas`, Supabase Cloud project `cwugpiernnwrhcximjwh`. Repo `Sankaranakshar/Tuition-SaaS`, branch `main`, HEAD at commit `c907fd7` as of this writing. GitHub → Vercel auto-deploy confirmed real (§15.5) — a plain `git push` to `main` is sufficient, no manual deploy step needed.
 
@@ -556,3 +556,83 @@ After the first commit of this session (`69babe5`), a post-push check (new JS ch
 4. The gated tech debt items (#3 Stage 2 rebuild, #4 dual money columns, #5 Realtime perf, #7 multi-org membership) each need their stated prerequisite (a live e2e pass, a product decision, or the Stage 2 schedule) before they're actionable — not before.
 
 **Read order for a fresh session:** this §15.6 → §15.1–15.5 for this session's detail → §14.1–14.4 for the still-relevant infra incident writeups → DEV_PLAN.md's Immediate Blockers and remaining Tech Debt items for the prioritized task list.
+
+---
+
+## 16. The wedge demo, live and verified — plus two more real infra bugs (2026-07-10, same day, third pass)
+
+Picking up straight from §15: with Tech Debt #16/#19/#20 built, the actual live walkthrough from §15.6's next-steps list finally ran. It surfaced two more genuine, previously-undetected bugs before it could succeed — both fixed, both re-verified. This section is the account; §16.5 is the new "read this first" snapshot.
+
+### 16.1 Bug 4 — `dotenv` was never actually invoked (commit `d13f742`)
+
+**Symptom:** testing locally against the real Supabase project for the first time (`.env` populated with real values, not placeholders), tutor org bootstrap failed with `401 unauthenticated`, `{"error":{"code":"unauthenticated","message":"Invalid or expired token"}}`. Server logs (via `server/middleware/auth.ts`'s deliberate `console.error`, added in the §14.2 incident) showed the real cause: `Error: SUPABASE_URL is required to verify asymmetric access tokens`.
+
+**Actual cause:** `dotenv` is a listed dependency in `package.json` but is **never imported or invoked anywhere in the server code**. `server.ts` never called `dotenv.config()` or `import "dotenv/config"`. Every `process.env.*` read on the server side was silently `undefined` in local dev. This had gone unnoticed because (a) production on Vercel doesn't need dotenv — the platform injects env vars directly into `process.env` — and (b) client-side Supabase calls worked fine regardless, since Vite's dev server loads `.env` independently for `import.meta.env.VITE_*`, a completely separate mechanism from Node's `process.env`. The two looking-identical-but-actually-separate env systems masked the gap: the browser could sign up and log in against the real project the whole time, while every server-side route silently ran with no config at all.
+
+**Fix:** `server.ts` now has `import "dotenv/config";` as its literal first line — before `import { createApp } from "./server/app.ts"`. This has to be first because ESM import evaluation order matters here: `server/app.ts` transitively imports `server/middleware/auth.ts`, which computes its JWKS client (`createRemoteJWKSet(new URL(...SUPABASE_URL...))`) as a **module-level constant at import time**, not lazily inside a function. If `dotenv/config` ran after that import, `SUPABASE_URL` would still read as `undefined` at the moment the constant was computed.
+
+**Lesson:** a dependency being installed proves nothing about whether it's wired up. If local dev behavior seems to contradict what env vars should produce, check whether the env-loading mechanism is actually invoked, not just present in `package.json`.
+
+### 16.2 Bug 5 — Realtime was never enabled at the database level (commit `d13f742`, migration `20260710120000_realtime_publication.sql`)
+
+**Symptom:** using the new Courses screen (§15.1) for the first time in a real browser: creating a course showed the "Course added" success toast (proving the insert succeeded), but the list stayed on its empty state. A manual page reload showed the new course fine.
+
+**Actual cause:** Postgres/Supabase Realtime only streams `postgres_changes` events for tables explicitly added to the `supabase_realtime` publication — unlike Firestore's `onSnapshot`, this is not automatic. Checking every migration file (`grep -rl "supabase_realtime\|publication" supabase/migrations/`) turned up **zero** — no migration, ever, added any table to this publication. Every single `.channel(...).on("postgres_changes", ...)` subscription across the entire app (~63 call sites per HANDOFF §11.6/§13.4, previously flagged only as "untested," never confirmed broken) was a silent no-op the whole time. This affects every live-updating list in the product: Today's session line and Pulse stats, Calendar, Students, Invoices, Leads, Messaging — all of it.
+
+**Fix:** new migration adds the 15 actively-subscribed tables (`assessments`, `attendance_records`, `class_sessions`, `class_templates`, `courses`, `documents`, `invoices`, `leads`, `messages`, `parent_links`, `payments`, `profiles`, `students`, `wallet_ledger`, `wallets`) to the publication, in an idempotent `do $$ ... $$` block (loops and adds only tables not already members — `ALTER PUBLICATION ... ADD TABLE` errors on a duplicate). It's also guarded to no-op if the `supabase_realtime` publication doesn't exist at all: the PGlite-based RLS test harness (`tests/integration/db.ts`) boots a bare Postgres with no Supabase platform bootstrapping, so it has no such publication, and the migration would otherwise fail every RLS suite run. Confirmed the guard works (`npm run test:rls` 41/41 unaffected) before applying to the live project.
+
+**Adding a table to a Realtime publication does not bypass RLS** — `postgres_changes` still filters each subscriber's events through the table's existing RLS policies, so server-only tables (`attendance_records`, `payments`, `wallets`, `wallet_ledger`, `parent_links`) remain invisible to clients exactly as before; this only turns on the change-stream mechanism for rows a client could already `SELECT`.
+
+**Verification:** re-tested the exact same Courses flow after applying the migration — a second course ("Grade 9 Science") appeared in the list instantly, no reload. Also confirmed for `students` (adding "Aarav Mehta" showed up live) and Today's Pulse (`Outstanding` went from ₹0 to ₹500 live the moment attendance was marked, no reload) during the full walkthrough in §16.3.
+
+### 16.3 The wedge demo, run live for the first time
+
+With both bugs fixed, the actual walkthrough ran start to finish in a browser against the real Supabase project:
+
+1. **Signup** (email/password) → **onboarding** (tutor role, profile form) → org bootstrap succeeded (this is the exact step Bug 4 blocked).
+2. **Course created** via the new Courses screen (§15.1) — confirmed live via Realtime (Bug 5's fix).
+3. **Student added** via Students.tsx's "Add Student" modal. Hit a real automation snag debugging this (not a product bug): the modal has two fields named "Add Student" (header button that reopens an empty modal vs. the form's submit button) and two `required` fields (Student Name, Parent Name) enforced by native HTML5 validation, which silently blocks submission with no visible error if either is empty. Once both were actually filled and submitted via `form.requestSubmit()`, the student appeared in the list live, no reload.
+4. **Class booked** via Calendar → Add Class → 1:1 Session, with the new pricing fields (§15.1/Tech Debt #20) — Pricing Model correctly defaulted to **Per Session**, Fee Amount set to ₹500, course and student selected. Session appeared on the calendar live.
+5. **Attendance marked** from Today: the session appeared in Today's Line, "Mark attendance" → roster popover defaulted to all-present → Confirm.
+6. **Billing fired immediately**: Today's "Outstanding" stat went from ₹0 to ₹500 live (matching the fee exactly), the attention-queue item cleared, the session showed "Marked."
+7. **Invoice confirmed** on the Invoices page: `INV-C3E7DA`, Aarav Mehta, "ONE_ON_ONE session on 2026-07-10", ₹500.00 — auto-created by the attendance-marking transaction, never touched by hand.
+8. **Invoice PDF download confirmed**: clicking Download PDF hit `GET /api/v1/billing/invoices/:id/pdf` → `200`, the canonical server-rendered PDF (Tech Debt #2's fix from §15.4), not a client-side duplicate.
+
+This is the first time the attendance → invoice money loop — the actual product wedge — has run successfully end to end against real infrastructure, in any session on this project.
+
+**Not covered by this walkthrough:** student-sees-own-session (needs a second login as the student, via the Tech Debt #16 invite flow — built, not yet exercised), manual payment recording against the invoice, and anything Razorpay (still no live gateway connected).
+
+### 16.4 Remaining engineering-only tasks closed the same session
+
+With the walkthrough done, the rest of DEV_PLAN's engineering-only MVP tasks (the ones not gated on external accounts) were closed out — commit `fd8ff8f`:
+
+- **`scripts/seed.ts`** (`npm run seed`): idempotent demo-org seed — a tutor, 2 courses, 3 students, one completed+billed session, one upcoming session. Verified against the live project twice (second run correctly skipped via the idempotency guard).
+- **Payment-reminder share button**: `Invoices.tsx` gained a "Share payment link via WhatsApp" action per unpaid invoice, calling the same `createInvoicePaymentLink` endpoint the parent portal's own Share button uses. This is the documented manual interim for Epic 7 (deferred on WhatsApp/SMS/email provider KYC) — degrades to a clear error toast until a real Razorpay gateway is connected.
+- **`scripts/backup.sh`**: nightly backup via a real standalone `pg_dump`. `supabase db dump --linked` was tried first and rejected — it shells out to a pg_dump the Supabase CLI runs inside a Docker container it manages, and fails outright with no Docker installed. Installed `libpq` via Homebrew (keg-only, not on `PATH` by default) for a real `pg_dump`/`psql`. The direct connection (port 5432) is IPv6-only and unreachable from this environment (`No route to host`); the script uses the transaction pooler connection instead, stripping the `?pgbouncer=true` query param `pg_dump` doesn't recognize.
+  - **The restore procedure was actually rehearsed, not just documented**: installed `postgresql@16` via Homebrew for a real local Postgres server, dumped the live project, restored the dump into a scratch local database, verified row counts matched the source (3 orgs / 6 students / 5 courses / 3 invoices / 24 sessions — consistent with everything created across this session's testing), then tore the scratch database down and deleted the local dump file (it contained real data).
+- **CI bundle-size gate**: `scripts/check-bundle-size.mjs` checks the main entry chunk's gzip size on every build, wired into `.github/workflows/ci.yml` after the build step. Set at ~260KB (current real size ~217KB) as a **regression gate**, not the original unenforced 200KB target from the old plan — that target isn't met today and forcing it would fail CI on unrelated work. Verified the check logic actually fails over-budget and passes under before wiring it in; confirmed the live CI run on GitHub Actions passed with the new step.
+
+**Deliberately not done, and why:** uptime monitoring/Sentry (needs a Sentry account — outside what an agent can create), staging environment (a real recurring-cost/product decision, not pure engineering), and everything gated on Google OAuth, phone OTP/SMS, or Razorpay credentials.
+
+### 16.5 Current status snapshot (end of this session, 2026-07-10) — read this first if picking up cold
+
+**Live environment:** unchanged — `https://tuition-saas-two.vercel.app`, Vercel project `tuition-saas`, Supabase Cloud project `cwugpiernnwrhcximjwh`. Repo `Sankaranakshar/Tuition-SaaS`, branch `main`, HEAD at commit `fd8ff8f`. GitHub Actions CI green on this commit; Vercel auto-deploy confirmed firing on push (checked via `gh api repos/{owner}/{repo}/deployments`, not by inference — see §15.5's lesson).
+
+**What's confirmed working, verified live, in addition to everything in §15.6:**
+- The full wedge-demo money loop: signup → onboarding → course → student → `PER_SESSION` booking → attendance → invoice accrual → PDF download (§16.3)
+- Realtime `postgres_changes` subscriptions — genuinely working now, confirmed on `courses`, `students`, and Today's Pulse stats
+- `scripts/seed.ts`, `scripts/backup.sh` (backup + a full rehearsed restore), `scripts/check-bundle-size.mjs` — all three actually run and verified, not just written
+
+**What's confirmed NOT working / not yet reachable:**
+- Student-sees-own-session (§11.4 regression) — the invite/redeem flow (Tech Debt #16) is built but has never been exercised as a second login
+- Parent portal at 375px, Google OAuth, phone OTP, Razorpay (webhook/reconcile/live payment) — still none configured or tested
+- Storage upload/download — still untested; no file has been uploaded through the app yet in any session
+
+**Immediate next steps, in priority order:**
+1. Second-login walkthrough: redeem a student invite (Tech Debt #16) as a fresh account, confirm that student sees their own session on Today/Timetable/StudentDashboard — the exact regression §11.4 introduced and the one thing every prior session's next-steps list has deferred.
+2. Configure Google OAuth + an SMS provider (Twilio/MSG91) in Supabase Auth providers — needed for parent portal / broader login testing, and requires accounts an agent can't create.
+3. Razorpay live KYC + webhook wiring — the long-lead item, start whenever, doesn't block anything else.
+4. Sentry account + DSNs, for uptime/error visibility in production.
+5. The remaining gated tech debt items (#3 Stage 2 rebuild, #4 dual money columns, #5 Realtime refetch perf, #7 multi-org membership) each need their stated prerequisite (a live e2e pass — now largely done, a product decision, or the Stage 2 schedule) before they're actionable.
+
+**Read order for a fresh session:** this §16.5 → §16.1–16.4 for this session's detail → §15.1–15.5 and §14.1–14.4 for still-relevant prior incident writeups → DEV_PLAN.md's Immediate Blockers and remaining Tech Debt items for the prioritized task list.
