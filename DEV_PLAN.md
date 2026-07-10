@@ -72,7 +72,7 @@ Effort in engineer-days (ed).
 
 | Task | Effort | Notes |
 |---|---|---|
-| **Fix: client-side jsPDF invoice/report generation** (Invoices.tsx, StudentProfile.tsx, AcademicProgress.tsx) | 1 ed | Duplicates the server PDF with a different (non-GST-snapshot) layout; also statically imports jspdf + autotable (~620KB of chunks). Invoices should call `downloadInvoicePdf`; progress reports either move server-side or dynamic-import |
+| ~~Fix: client-side jsPDF invoice/report generation~~ **DONE (2026-07-10)** — see Tech Debt #2/#6 | — | `Invoices.tsx` now calls `downloadInvoicePdf`; `StudentProfile.tsx`/`AcademicProgress.tsx` progress reports (a different document, not an invoice) now dynamic-import jspdf instead of moving server-side — the task's own listed alternative |
 | Seed script for demo/staging data | 1 ed | Unblocks all QA; no seed exists |
 | Uptime monitoring + Sentry DSNs wired in prod, alert on 5xx | 0.5 ed | |
 | Onboarding walkthrough polish after first real signup attempt | 1 ed | Bootstrap flow has never run |
@@ -82,9 +82,9 @@ Effort in engineer-days (ed).
 
 | Task | Effort | Notes |
 |---|---|---|
-| Bundle budget: dynamic-import jspdf, drop `recharts` (imported nowhere), verify exceljs stays lazy, add size check to CI | 1 ed | Main chunk is 678KB raw today; the old plan's 200KB-gzip gate was never enforced |
-| Delete `/api/settings` alias once frontend confirmed on `/api/v1` | 0.2 ed | |
-| Sweep stale Firestore-era comments (~20 files) and the `.env.example` AI-Studio header | 0.5 ed | Cheap, prevents newcomer confusion |
+| Bundle budget: add a bundle-size check to CI | 1 ed | dynamic-import jspdf, drop `recharts`, verify exceljs stays lazy — all **done (2026-07-10)**, see Tech Debt #6. Only the CI size gate itself remains; main chunk is still 755KB raw, the old plan's 200KB-gzip budget still isn't enforced |
+| ~~Delete `/api/settings` alias once frontend confirmed on `/api/v1`~~ **DONE (2026-07-10)** — see Tech Debt #9 | — | |
+| ~~Sweep stale Firestore-era comments (~20 files) and the `.env.example` AI-Studio header~~ **Partially done (2026-07-10)** — see Tech Debt #9 | — | `.env.example` was already clean, no fix needed. The comment sweep was deliberately **not** done — those ~30 files document real migration history per this repo's own commenting philosophy; a blanket removal would cost more (lost context) than the 0.5 ed estimate assumed it would save |
 | Resume Epic 7 (comms router) when provider KYC clears | 5 ed | Was fully specced in the old plan; templates, fallback, quiet hours, bulk remind |
 | Resume Epic 8 (Calendar/Meet) when OAuth verification clears | 3 ed | Token storage already migrated |
 
@@ -92,7 +92,7 @@ Effort in engineer-days (ed).
 
 | Task | Effort |
 |---|---|
-| Drop vestigial `profiles.organization_id` column (currently trigger-guarded) | 0.5 ed |
+| ~~Drop vestigial `profiles.organization_id` column~~ **CORRECTED (2026-07-10), do not do this** — see Tech Debt #8. `Today.tsx`'s admin per-tutor lanes actively query and subscribe to this column; it's not vestigial, dropping it breaks a live feature. |
 | Remove legacy rupee mirror columns once all readers use paise (see Tech Debt) | 1 ed |
 | i18n: move remaining hardcoded strings in legacy pages through `t()` as they are rebuilt | rolls into Stage 2 |
 
