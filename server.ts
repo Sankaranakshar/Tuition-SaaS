@@ -1,3 +1,10 @@
+// Must be the first import: server/app.ts transitively imports
+// server/middleware/auth.ts, which reads process.env.SUPABASE_URL etc. as a
+// module-level constant at import time. `dotenv` was a listed dependency
+// but was never actually invoked anywhere — every server-side process.env
+// read was silently undefined in local dev (client-side calls worked fine
+// since Vite auto-loads .env for import.meta.env.VITE_* independently).
+import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import { createApp } from "./server/app.ts";
