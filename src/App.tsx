@@ -1,6 +1,7 @@
 import React, { Suspense, lazy } from "react";
 import { Toaster } from "sonner";
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Analytics } from "@vercel/analytics/react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Layout from "./components/Layout";
 import PublicLayout from "./components/PublicLayout";
@@ -141,6 +142,7 @@ export default function App() {
           </Routes>
         </Suspense>
       </Router>
+      <Analytics />
     </AuthProvider>
   );
 }
