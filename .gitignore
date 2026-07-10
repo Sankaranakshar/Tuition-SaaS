@@ -13,7 +13,13 @@ uploads/
 supabase/.temp/
 supabase/.branches/
 
-# Generated Vercel serverless function bundle (built from
-# server/vercelHandler.ts by vercel.json's buildCommand) — not source.
-api/index.js
-api/index.js.map
+# NOTE: api/index.js is intentionally NOT gitignored — see server/vercelHandler.ts
+# for why. Vercel detects Serverless Functions under /api by scanning the git
+# tree BEFORE running buildCommand; a gitignored (build-time-only) file at that
+# path is never registered as a function at all, and every request silently
+# falls through to static SPA serving instead (the actual cause of a real
+# production incident — 405/200-with-wrong-content on every /api/* request,
+# regardless of vercel.json routing config, until this was fixed). The
+# committed copy is a checked-in placeholder; buildCommand overwrites it with
+# a fresh bundle on every deploy, which Vercel then deploys as that
+# already-registered function.
