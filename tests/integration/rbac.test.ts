@@ -432,6 +432,26 @@ describe("Parent and student access", () => {
       expect(asAdmin.rows.length).toBe(0);
     })
   );
+
+  // Tech Debt #16: student_invites mirrors parent_invites exactly — a token
+  // store minted/redeemed only by /api/v1/students (service_role), zero
+  // client read or write path for anyone, including staff who created it.
+  it(
+    "student_invites has no client read or write path at all",
+    withFixtures(async (tx, as) => {
+      await as(uids.owner, "authenticated");
+      const asOwner = await tx.query(`select * from student_invites where token = 'stok1'`);
+      expect(asOwner.rows.length).toBe(0);
+      await expectDenied(tx, () => tx.query(
+          `insert into student_invites (token, organization_id, student_id, expires_at) values ('stok2', $1, $2, now() + interval '1 day')`,
+          [ORG, ids.stu1]
+        ));
+
+      await as(uids.admin, "authenticated");
+      const asAdmin = await tx.query(`select * from student_invites where token = 'stok1'`);
+      expect(asAdmin.rows.length).toBe(0);
+    })
+  );
 });
 
 // ===================================================================

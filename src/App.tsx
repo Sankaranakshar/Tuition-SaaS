@@ -83,6 +83,16 @@ function capturePendingParentInvite() {
 }
 capturePendingParentInvite();
 
+// Same deep-link problem as the parent invite above (Tech Debt #16): a
+// logged-out student opening /onboarding?studentInvite=TOKEN gets bounced
+// through /login → /app before landing on /onboarding, dropping the query
+// string along the way.
+function capturePendingStudentInvite() {
+  const token = new URLSearchParams(window.location.search).get("studentInvite");
+  if (token) sessionStorage.setItem("pendingStudentInvite", token);
+}
+capturePendingStudentInvite();
+
 export default function App() {
   return (
     <AuthProvider>

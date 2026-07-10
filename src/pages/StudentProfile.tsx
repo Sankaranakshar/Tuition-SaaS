@@ -8,7 +8,7 @@ import autoTable from "jspdf-autotable";
 import { toast } from "sonner";
 
 import LoadingSpinner from "../components/LoadingSpinner";
-import { createParentInvite } from "../lib/api";
+import { createParentInvite, createStudentInvite } from "../lib/api";
 
 // --- Supabase row <-> camelCase UI-shape mappers. The students table grew a
 // large ad-hoc field set under the old Firestore model; keep the UI's camelCase
@@ -163,6 +163,8 @@ export default function StudentProfile() {
   // Parent portal invite state (E10.1) — the real, verified linking path.
   const [parentInvite, setParentInvite] = useState<{ link: string; expiresAt: string } | null>(null);
   const [isCreatingInvite, setIsCreatingInvite] = useState(false);
+  const [studentInvite, setStudentInvite] = useState<{ link: string; expiresAt: string } | null>(null);
+  const [isCreatingStudentInvite, setIsCreatingStudentInvite] = useState(false);
 
   useEffect(() => {
     if (!user || !id || !user.organizationId) return;
@@ -282,6 +284,20 @@ export default function StudentProfile() {
       toast.error(error instanceof Error ? error.message : "Couldn't generate an invite link");
     } finally {
       setIsCreatingInvite(false);
+    }
+  };
+
+  const handleCreateStudentInvite = async () => {
+    if (!id) return;
+    setIsCreatingStudentInvite(true);
+    try {
+      const result = await createStudentInvite(id);
+      const link = `${window.location.origin}/onboarding?studentInvite=${result.token}`;
+      setStudentInvite({ link, expiresAt: result.expiresAt });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't generate an invite link");
+    } finally {
+      setIsCreatingStudentInvite(false);
     }
   };
 
@@ -659,6 +675,61 @@ export default function StudentProfile() {
                 Share via WhatsApp
               </a>
             </div>
+          )}
+        </div>
+
+        {/* Student self-onboarding invite (Tech Debt #16): the only path a
+            student account can claim this roster row and see their own
+            sessions/attendance. Hidden once already claimed. */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <h3 className="text-md font-semibold text-gray-900 mb-1 flex items-center">
+            <LinkIcon className="w-5 h-5 mr-2 text-indigo-500" /> Student Portal Access
+          </h3>
+          {student.studentUserId ? (
+            <p className="text-sm text-gray-500">This student already has a portal account linked.</p>
+          ) : (
+            <>
+              <p className="text-sm text-gray-500 mb-4">
+                Generate a one-time invite link so the student can create their own account and see
+                their schedule, attendance, and materials.
+              </p>
+              <button
+                onClick={handleCreateStudentInvite}
+                disabled={isCreatingStudentInvite}
+                className="text-sm text-white bg-indigo-600 px-3 py-1.5 rounded hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {isCreatingStudentInvite ? "Generating…" : "Generate invite link"}
+              </button>
+              {studentInvite && (
+                <div className="mt-4 bg-indigo-50 border border-indigo-100 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-indigo-700">
+                    Expires {new Date(studentInvite.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={studentInvite.link}
+                      onClick={(e) => (e.target as HTMLInputElement).select()}
+                      className="flex-1 min-w-0 text-xs bg-white border border-indigo-200 rounded px-2 py-1.5 font-mono"
+                    />
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(studentInvite.link); }}
+                      className="text-xs text-indigo-700 bg-white border border-indigo-200 px-2 py-1.5 rounded hover:bg-indigo-100"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <a
+                    href={`https://wa.me/?text=${encodeURIComponent(`Set up your student account: ${studentInvite.link}`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block text-xs text-green-700 bg-white border border-green-200 px-2 py-1.5 rounded hover:bg-green-50"
+                  >
+                    Share via WhatsApp
+                  </a>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

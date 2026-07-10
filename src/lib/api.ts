@@ -220,6 +220,33 @@ export function redeemParentInvite(token: string) {
   });
 }
 
+// Student self-onboarding (Tech Debt #16). Mirrors the parent invite calls
+// above: staff mints a token tied to an existing `students` roster row, the
+// student previews it, then redeems it to claim that row and join the org.
+
+/** Staff: mint a single-use, 7-day invite token for an unclaimed student row. */
+export function createStudentInvite(studentId: string) {
+  return api<{ ok: true; token: string; expiresAt: string; studentName: string | null }>(
+    "/students/invites",
+    { method: "POST", body: { studentId } }
+  );
+}
+
+/** Preview which student/org an invite links to before redeeming. */
+export function previewStudentInvite(token: string) {
+  return api<{ ok: true; studentName: string | null; organizationName: string | null }>(
+    `/students/invites/${encodeURIComponent(token)}/preview`
+  );
+}
+
+/** Redeem an invite: claims the students row (student_user_id) and grants the student role. */
+export function redeemStudentInvite(token: string) {
+  return api<{ ok: true; organizationId: string; studentId: string }>("/students/redeem", {
+    method: "POST",
+    body: { token },
+  });
+}
+
 /** Parent-authorized Razorpay UPI payment link for one of their linked children's invoices. */
 export function payInvoiceAsParent(invoiceId: string) {
   return api<{ ok: true; shortUrl: string; reused: boolean }>(`/billing/invoices/${invoiceId}/pay`, {

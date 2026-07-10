@@ -123,6 +123,10 @@ export async function seed(tx: PGlite) {
     `insert into parent_invites (token, organization_id, student_id, expires_at) values ('tok1', $1, $2, now() + interval '7 days')`,
     [ORG, ids.stu1]
   );
+  await tx.query(
+    `insert into student_invites (token, organization_id, student_id, expires_at) values ('stok1', $1, $2, now() + interval '7 days')`,
+    [ORG, ids.stu1]
+  );
   await tx.query(`insert into invoice_counters (organization_id, year, seq) values ($1, 2026, 1)`, [ORG]);
   await tx.query(`insert into payment_gateways (organization_id, key_id) values ($1, 'rzp_test')`, [ORG]);
   await tx.query(

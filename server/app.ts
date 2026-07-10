@@ -9,6 +9,7 @@ import membersRoutes from "./routes/members.ts";
 import billingRoutes from "./routes/billing.ts";
 import gatewayRoutes from "./routes/gateway.ts";
 import parentsRoutes from "./routes/parents.ts";
+import studentsRoutes from "./routes/students.ts";
 import webhookRoutes from "./routes/webhooks.ts";
 import schedulingRoutes from "./routes/scheduling.ts";
 import cronRoutes from "./routes/cron.ts";
@@ -78,6 +79,7 @@ export function createApp() {
   app.use("/api/v1/billing", billingRoutes);
   app.use("/api/v1/gateway", gatewayRoutes);
   app.use("/api/v1/parents", parentsRoutes);
+  app.use("/api/v1/students", studentsRoutes);
   app.use("/api/v1/scheduling", schedulingRoutes);
   app.use("/api/v1/documents", documentsRoutes);
   app.use("/api/cron", cronRoutes);

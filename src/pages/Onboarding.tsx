@@ -3,7 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../supabase";
 import { CheckCircle, ChevronRight, User, BookOpen, Users, DollarSign, MapPin, GraduationCap } from "lucide-react";
-import { previewParentInvite, redeemParentInvite } from "../lib/api";
+import { previewParentInvite, redeemParentInvite, previewStudentInvite, redeemStudentInvite } from "../lib/api";
 
 export default function Onboarding() {
   const { user, checkAuth } = useAuth();
@@ -42,16 +42,15 @@ export default function Onboarding() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [consent, setConsent] = useState(false);
 
-  // Student State
-  const [studentData, setStudentData] = useState({
-    fullName: user?.name || "",
-    dob: "",
-    grade: "",
-    board: "",
-    subjectsNeeded: "",
-    learningPreferences: "",
-    parentCode: ""
-  });
+  // Student State: joining an org happens via a staff-issued invite token tied
+  // to an existing `students` roster row (Tech Debt #16 / DEV_PLAN.md), the
+  // same pattern as the parent flow above — a student has no client write
+  // path to claim a roster row on their own.
+  const [studentInviteToken, setStudentInviteToken] = useState(
+    searchParams.get("studentInvite") || sessionStorage.getItem("pendingStudentInvite") || ""
+  );
+  const [studentInvitePreview, setStudentInvitePreview] = useState<{ studentName: string | null; organizationName: string | null } | null>(null);
+  const [studentPreviewLoading, setStudentPreviewLoading] = useState(false);
 
   useEffect(() => {
     if (user?.profile_status === 'complete') {
@@ -105,6 +104,31 @@ export default function Onboarding() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role, step]);
 
+  const handlePreviewStudentInvite = async () => {
+    const token = studentInviteToken.trim();
+    if (!token) return;
+    setStudentPreviewLoading(true);
+    setError("");
+    setStudentInvitePreview(null);
+    try {
+      const result = await previewStudentInvite(token);
+      setStudentInvitePreview({ studentName: result.studentName, organizationName: result.organizationName });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invite not found or expired.");
+    } finally {
+      setStudentPreviewLoading(false);
+    }
+  };
+
+  // A link opened with ?studentInvite=TOKEN previews itself once the student
+  // has chosen the student role and reached step 2.
+  useEffect(() => {
+    if (role === 'student' && step === 2 && studentInviteToken && !studentInvitePreview && !studentPreviewLoading) {
+      handlePreviewStudentInvite();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, step]);
+
   // Resolves a current organizationId rather than trusting `user.organizationId`
   // directly: that value can be stale if bootstrap (triggered by loadUser when
   // role_type first becomes 'tutor'/'admin') hasn't finished updating context
@@ -154,33 +178,11 @@ export default function Onboarding() {
         // from Postgres on every request, unlike the old Firebase-custom-claims
         // model where a stale ID token could hide a just-granted role.
       } else if (role === 'student') {
-        // parentCode is a raw invite-code string, not a parent auth uid, so it
-        // is not written to the uuid parent_id column — real parent<->student
-        // linkage happens via redeemParentInvite / parent_links (see above).
-        // KNOWN GAP: unlike tutor/admin, nothing bootstraps an organization
-        // for a student — role_type 'student' never triggers loadUser's
-        // bootstrap path, and parentCode above is captured but never sent
-        // anywhere to resolve a membership. A student has no way to acquire
-        // an organizationId today; this will surface the clear error below
-        // rather than crash, but the underlying join flow still needs to be
-        // built (see DEV_PLAN.md Tech Debt).
-        const organizationId = await resolveOrganizationId();
-        if (!organizationId) {
-          setError("Student self-onboarding isn't fully wired up yet — ask your tutor for an invite.");
-          setLoading(false);
-          return;
-        }
-        const { error } = await supabase.from("student_profiles").upsert({
-          user_id: user.id,
-          organization_id: organizationId,
-          full_name: studentData.fullName,
-          grade: studentData.grade,
-          board: studentData.board,
-          dob: studentData.dob || null,
-          subjects_needed: studentData.subjectsNeeded.split(',').map(s => s.trim()).filter(Boolean),
-          learning_preferences: studentData.learningPreferences
-        }, { onConflict: "user_id" });
-        if (error) throw error;
+        if (!studentInvitePreview) return;
+        await redeemStudentInvite(studentInviteToken.trim());
+        sessionStorage.removeItem("pendingStudentInvite");
+        // No token refresh needed: organization membership is read fresh
+        // from Postgres on every request, same as the parent redeem above.
       }
 
       const { error: profileError } = await supabase
@@ -354,44 +356,51 @@ export default function Onboarding() {
   };
 
   const renderStudentSteps = () => {
-    if (step === 2) {
-      return (
-        <div className="space-y-4">
-          <h3 className="text-xl font-bold">Student Profile</h3>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Full Name</label>
-            <input type="text" value={studentData.fullName} onChange={e => setStudentData({...studentData, fullName: e.target.value})} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border" />
+    if (step !== 2) return null;
+    return (
+      <div className="space-y-4">
+        <h3 className="text-xl font-bold">Join your tutoring center</h3>
+        <p className="text-sm text-gray-500">
+          Ask your tutor or tutoring center for an invite code — they generate one from your student profile.
+        </p>
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Invite code</label>
+          <div className="mt-1 flex gap-2">
+            <input
+              type="text"
+              value={studentInviteToken}
+              onChange={e => { setStudentInviteToken(e.target.value); setStudentInvitePreview(null); }}
+              placeholder="Paste the code from your center"
+              className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border"
+            />
+            <button
+              onClick={handlePreviewStudentInvite}
+              disabled={studentPreviewLoading || !studentInviteToken.trim()}
+              className="whitespace-nowrap py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+            >
+              {studentPreviewLoading ? "Looking up…" : "Look up"}
+            </button>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Date of Birth</label>
-            <input type="date" value={studentData.dob} onChange={e => setStudentData({...studentData, dob: e.target.value})} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border" />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Grade</label>
-              <input type="text" value={studentData.grade} onChange={e => setStudentData({...studentData, grade: e.target.value})} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Board</label>
-              <input type="text" value={studentData.board} onChange={e => setStudentData({...studentData, board: e.target.value})} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Subjects Needed (comma separated)</label>
-            <input type="text" value={studentData.subjectsNeeded} onChange={e => setStudentData({...studentData, subjectsNeeded: e.target.value})} placeholder="e.g. Math, Physics" className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Learning Preferences</label>
-            <textarea value={studentData.learningPreferences} onChange={e => setStudentData({...studentData, learningPreferences: e.target.value})} placeholder="e.g. Needs extra help with algebra, prefers visual learning" className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border" rows={3}></textarea>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Parent Invite Code (Optional)</label>
-            <input type="text" placeholder="Enter code from parent" value={studentData.parentCode} onChange={e => setStudentData({...studentData, parentCode: e.target.value})} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border" />
-          </div>
-          <button onClick={handleCompleteOnboarding} disabled={loading} className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700">Complete Profile</button>
         </div>
-      );
-    }
+
+        {studentInvitePreview && (
+          <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4">
+            <p className="text-sm text-indigo-900">
+              This will link your account to <span className="font-semibold">{studentInvitePreview.studentName || "this student"}</span> at{" "}
+              <span className="font-semibold">{studentInvitePreview.organizationName || "this tutoring center"}</span>.
+            </p>
+          </div>
+        )}
+
+        <button
+          onClick={handleCompleteOnboarding}
+          disabled={loading || !studentInvitePreview}
+          className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {loading ? "Joining…" : "Join"}
+        </button>
+      </div>
+    );
   };
 
   const renderAdminSteps = () => {
