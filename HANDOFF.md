@@ -1,6 +1,6 @@
 # ClassStackr — Engineering Handoff
 
-_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12), the first live deploy to Vercel + Supabase Cloud (§13), then a multi-stage incident chase that got the tutor onboarding flow fully working end to end for the first time (§14)._
+_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12), the first live deploy to Vercel + Supabase Cloud (§13), then a multi-stage incident chase that got the tutor onboarding flow fully working end to end for the first time (§14). **Picking up in a new session? Read §14.5 first — it's a one-screen snapshot of exactly what's live, what's broken, and what's next.**_
 
 This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked on you, and what comes next.
 
@@ -389,7 +389,7 @@ Then redeploy — Vite bakes `VITE_*` vars in at **build** time, so saving the e
 
 **Takeaway for next time / other projects on this integration:** don't assume the integration's auto-added vars are sufficient for a Vite app. Audit for `VITE_*` names specifically, and manually add `DATABASE_URL`.
 
-### 13.4 Status after this pass
+### 13.4 Status after this pass (superseded — see §14.5 for current status)
 
 | Check | Status |
 |---|---|
@@ -445,3 +445,38 @@ Across this incident, "wait for the deploy, then retest" produced false confiden
 - **Only the tutor path of onboarding is confirmed working.** Parent (invite-based) and student (no join mechanism at all, per DEV_PLAN Tech Debt #16) paths are unverified against live infra.
 - **`DATABASE_URL` was initially set to a garbage value** (`getaddrinfo ENOTFOUND base` — a malformed/wrong-source connection string, likely copied from a Vercel-native `POSTGRES_URL` var rather than the actual Supabase project's own pooler string) before being corrected to the `cwugpiernnwrhcximjwh` project's transaction-pooler URI directly from its Connect dialog. Same category of "trust the integration's auto-populated var less than the source project's own dashboard" lesson as Bug 2 (§14.2).
 - **The Add Class modal cannot produce a billable class at all** — confirmed live while testing attendance→invoice: marking attendance on a class created through the current UI never bills, because the UI has no control for pricing model or fee amount (both silently default to Monthly/₹0, and the billing route only bills `PER_SESSION`-priced templates). See DEV_PLAN Tech Debt #20. Verified via direct SQL (`class_templates.fee_amount` was `0.00` on every template created through the app) rather than pursuing a UI fix in this pass — deferred to future work.
+
+### 14.5 Current status snapshot (end of this session, 2026-07-10) — read this first if picking up cold
+
+**Live environment:** production app at `https://tuition-saas-two.vercel.app`, Vercel project `tuition-saas`, backend Supabase Cloud project `cwugpiernnwrhcximjwh` ("supabase-bronze-pendant", region `ap-south-1`). Repo `Sankaranakshar/Tuition-SaaS`, branch `main`, HEAD at commit `6c08c6c` as of this writing.
+
+**What's confirmed working, verified live (not just built/tested):**
+- Migrations applied, schema live (37 tables, RLS enabled)
+- Vercel deploy pipeline: `vercel.json` runs `vite build && esbuild server/vercelHandler.ts ...` → `api/index.js` (committed to git, regenerated fresh each build — see §14.1, do not re-gitignore it)
+- Signup (email/password, confirmation disabled), login, org bootstrap (`POST /api/v1/members/bootstrap`)
+- Tutor onboarding (role select → profile form → complete)
+- Course creation (currently SQL-only, no UI — Tech Debt #19)
+- Class/session creation via Calendar → Add Class (currently always Monthly/₹0 pricing — Tech Debt #20)
+- Attendance marking from Today (persists to `attendance_records` correctly)
+
+**What's confirmed NOT working / not yet reachable:**
+- Attendance → invoice/wallet billing (blocked by Tech Debt #20 — no UI path to a `PER_SESSION`-priced class)
+- Course creation UI (Tech Debt #19 — SQL-only workaround in use)
+- Student self-onboarding (Tech Debt #16 — no join mechanism exists)
+- Parent portal, Google OAuth, phone OTP, Razorpay — none configured or tested this session
+- Realtime subscriptions, Storage upload/download — untested this session
+
+**Env vars that were wrong and are now fixed (all in Vercel → Settings → Environment Variables, Production):**
+- `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` — were pointing at a different Supabase project entirely (§14.2); now correctly set to `cwugpiernnwrhcximjwh`'s own values
+- `DATABASE_URL` — was malformed (`getaddrinfo ENOTFOUND base`); now the `cwugpiernnwrhcximjwh` project's transaction-pooler URI (port 6543), password embedded
+- `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — added manually (§13.3), correct
+- **If any of these ever look wrong again, re-verify the project ref (`cwugpiernnwrhcximjwh`) matches, don't just trust an auto-populated integration value** — this exact mistake happened twice in one session (§14.2, and the `DATABASE_URL` note in this section).
+
+**Immediate next steps, in priority order:**
+1. Build the two missing UI pieces blocking the wedge demo: a minimal courses-management screen (Tech Debt #19) and pricing model/fee fields in Add Class (Tech Debt #20) — both are small, well-scoped frontend tasks with backend/RLS already in place.
+2. Once #20 lands, re-run the attendance→invoice check live.
+3. Add a student, verify student-sees-own-session (the §11.4 regression — still never actually checked this session; the student-onboarding gap made it impractical, see §16).
+4. Configure Google OAuth + phone OTP in Supabase Auth providers if parent portal / broader login testing is next.
+5. Razorpay live KYC + webhook wiring is the long-lead item — start whenever, doesn't block anything else.
+
+**Read order for a fresh session:** this §14.5 → §14.1–14.4 for the incident details if something in the above breaks again → DEV_PLAN.md's Immediate Blockers and Tech Debt #16–#20 for the prioritized task list.
