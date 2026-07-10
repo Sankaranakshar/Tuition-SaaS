@@ -170,7 +170,7 @@ function StudentsLens({ search, user, navigate, t }: any) {
             </button>
             {selected.size === 1 && (
               <button
-                onClick={() => navigate(`/app/invoices?new=1&studentId=${Array.from(selected)[0]}`)}
+                onClick={() => navigate(`/app/money?new=1&studentId=${Array.from(selected)[0]}`)}
                 className="rounded-[6px] border border-[var(--cs-border)] px-2.5 py-1.5 hover:bg-[var(--cs-bg)]"
               >
                 <Receipt className="mr-1 inline h-3.5 w-3.5" /> {t("people.bulkInvoice")}
@@ -213,7 +213,7 @@ function StudentsLens({ search, user, navigate, t }: any) {
                         <button onClick={(e) => { e.stopPropagation(); navigate("/app/messaging"); }} title="Message" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
                           <MessageSquare className="h-4 w-4" />
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); navigate(`/app/invoices?new=1&studentId=${student.id}`); }} title="Invoice" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
+                        <button onClick={(e) => { e.stopPropagation(); navigate(`/app/money?new=1&studentId=${student.id}`); }} title="Invoice" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
                           <Receipt className="h-4 w-4" />
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); setToArchive(student.id); }} title="Archive" className="p-1.5 text-[var(--cs-text-muted)] hover:text-red-600">

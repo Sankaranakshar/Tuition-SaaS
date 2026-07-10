@@ -890,7 +890,7 @@ function QueueAction({ item, phone }: { item: QueueItem; phone: string }) {
   switch (item.kind) {
     case "overdue_invoice":
       return (
-        <Link to="/app/invoices" className={base}>
+        <Link to="/app/money" className={base}>
           <Receipt className="h-3.5 w-3.5" strokeWidth={1.75} /> Collect
         </Link>
       );

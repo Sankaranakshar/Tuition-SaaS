@@ -59,7 +59,7 @@ export default function Layout() {
         { to: "/app", label: t("nav.today"), icon: LayoutDashboard, end: true },
         { to: "/app/timetable", label: t("nav.schedule"), icon: Calendar },
         { to: "/app/my-story", label: t("nav.learn"), icon: BookOpen },
-        { to: "/app/wallet", label: t("nav.money"), icon: Wallet },
+        { to: "/app/money", label: t("nav.money"), icon: Wallet },
         { to: "/app/messaging", label: t("nav.inbox"), icon: MessageSquare },
       ]
     : isParent
@@ -71,7 +71,7 @@ export default function Layout() {
         { to: "/app", label: t("nav.today"), icon: LayoutDashboard, end: true },
         { to: "/app/people", label: t("nav.people"), icon: Users },
         { to: "/app/calendar", label: t("nav.schedule"), icon: Calendar },
-        { to: "/app/invoices", label: t("nav.money"), icon: Wallet },
+        { to: "/app/money", label: t("nav.money"), icon: Wallet },
         { to: "/app/messaging", label: t("nav.inbox"), icon: MessageSquare },
       ];
 

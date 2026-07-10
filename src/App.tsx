@@ -23,7 +23,7 @@ const StudentStory = lazy(() => import("./pages/StudentStory"));
 const Calendar = lazy(() => import("./pages/Calendar"));
 const Courses = lazy(() => import("./pages/Courses"));
 const Documents = lazy(() => import("./pages/Documents"));
-const Invoices = lazy(() => import("./pages/Invoices"));
+const Money = lazy(() => import("./pages/Money"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Messaging = lazy(() => import("./pages/Messaging"));
 const Kit = lazy(() => import("./pages/Kit"));
@@ -32,8 +32,6 @@ const Kit = lazy(() => import("./pages/Kit"));
 const Notifications = lazy(() => import("./pages/Notifications"));
 const Timetable = lazy(() => import("./pages/Timetable"));
 const Bookings = lazy(() => import("./pages/Bookings"));
-const Wallet = lazy(() => import("./pages/Wallet"));
-const Transactions = lazy(() => import("./pages/Transactions"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Preferences = lazy(() => import("./pages/Preferences"));
 
@@ -116,7 +114,7 @@ export default function App() {
               <Route path="calendar" element={<Calendar />} />
               <Route path="courses" element={<Courses />} />
               <Route path="documents" element={<Documents />} />
-              <Route path="invoices" element={<Invoices />} />
+              <Route path="money" element={<Money />} />
               <Route path="messaging" element={<Messaging />} />
               <Route path="settings" element={<Settings />} />
               <Route path="kit" element={<Kit />} />
@@ -126,8 +124,6 @@ export default function App() {
               <Route path="my-story" element={<StudentStory />} />
               <Route path="timetable" element={<Timetable />} />
               <Route path="bookings" element={<Bookings />} />
-              <Route path="wallet" element={<Wallet />} />
-              <Route path="transactions" element={<Transactions />} />
               <Route path="profile" element={<Profile />} />
               <Route path="preferences" element={<Preferences />} />
             </Route>
