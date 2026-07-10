@@ -94,6 +94,11 @@ export const authenticateToken = async (
     };
     next();
   } catch (err) {
+    // Logged deliberately: this catch previously swallowed the real cause of
+    // every 401 (JWKS fetch failure, clock skew, wrong SUPABASE_URL, a
+    // Postgres error on the membership lookup, etc.), making a genuine auth
+    // bug indistinguishable from an expired token in the logs.
+    console.error("authenticateToken failed:", err);
     return res.status(401).json({ error: { code: "unauthenticated", message: "Invalid or expired token" } });
   }
 };
