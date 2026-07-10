@@ -1,6 +1,6 @@
 # ClassStackr — Engineering Handoff
 
-_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12), then the first live deploy to Vercel + Supabase Cloud with migrations applied and the frontend confirmed rendering (§13)._
+_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12), the first live deploy to Vercel + Supabase Cloud (§13), then a multi-stage incident chase that got the tutor onboarding flow fully working end to end for the first time (§14)._
 
 This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked on you, and what comes next.
 
@@ -401,3 +401,45 @@ Then redeploy — Vite bakes `VITE_*` vars in at **build** time, so saving the e
 | Razorpay live keys / webhook registered | ⚠️ not yet done |
 
 Next action: run the walkthrough in 13.4's third row and report what happens (screenshot the Network tab on any failure — most informative signal for a live-infra bug).
+
+---
+
+## 14. First successful onboarding: three real bugs found chasing one symptom (2026-07-10)
+
+The walkthrough from §13.4 uncovered three genuinely separate bugs, all first surfaced as some flavor of "the tutor onboarding flow fails." Each is now fixed and verified; **the tutor signup → role select → profile → Complete flow works end to end on production as of this writing.** This section is the incident writeup — read it before touching Vercel deploy config, `server/middleware/auth.ts`, or Supabase env vars on this or a similar project again.
+
+### 14.1 Bug 1 — Vercel never registered the API as a function at all (commits `21081bc`, `093e64a`, `c921d88`)
+
+**Symptom:** every `/api/*` request, including a plain `GET /api/health`, silently returned the SPA's `index.html` (`Content-Disposition: inline; filename="index.html"`, `x-vercel-cache: HIT`) instead of reaching Express — a `200` for GET (wrong content, right-looking status) and a `405` for POST (static assets don't support it). Confirmed with `curl` directly against production, bypassing the browser entirely, including hitting the literal rewrite destination `/api/index` and getting the same static response.
+
+**Chased and ruled out first (none of these were it):** switching `vercel.json` from `rewrites` to the classic `routes` + `{"handle":"filesystem"}` pattern (no change); changing the dashboard Framework Preset from "Vite" to "Other" to match `vercel.json`'s `"framework": null` (no change); disabling Vercel Deployment Protection entirely, including on the assumption that "Standard Protection: protect all except Production Custom Domains" meant even the `*.vercel.app` production URL was gated (no change — this *is* worth fixing for other reasons, see §14.4, but it wasn't this bug).
+
+**Actual cause:** `api/index.ts` was deleted in favor of a build-time-generated `api/index.js` (bundled by `vercel.json`'s `buildCommand` via esbuild) and gitignored. Vercel detects which files under `/api` are Serverless Functions by scanning the **git-cloned repository before running `buildCommand`**. A gitignored, build-time-only file at that path is invisible to that scan, so Vercel never registered a function there — every request, regardless of routing rules, fell through to static SPA serving.
+
+**Fix:** commit a real, working `api/index.js` to git (un-gitignore it) so Vercel's pre-build scan finds and registers it. `buildCommand` still regenerates it fresh from `server/vercelHandler.ts` on every deploy, overwriting the committed placeholder with current code before Vercel packages the output — so the deployed function always reflects `server/` code, never a stale commit.
+
+**Verification that actually worked:** `curl -i` directly against the production URL with a cache-busting query param and `Cache-Control: no-cache`, confirming `content-type: application/json` and real helmet security headers (`content-security-policy`, `cross-origin-opener-policy`) in the response — proof Express was actually handling the request, not Vercel's edge. Browser-based checks (`fetch(...).then(r => r.status)`) were misleading throughout this bug because a 200 status looked like success even when the body was the wrong content — **always inspect `content-type` and body, not just status code, when debugging a suspected routing issue.**
+
+### 14.2 Bug 2 — server-side `SUPABASE_URL` pointed at a different Supabase project (no code change; env var fix only)
+
+**Symptom:** once Bug 1 was fixed, every authenticated API call (`/api/v1/members/bootstrap`) returned `401 unauthenticated`, including immediately after a fresh login (ruling out simple token expiry).
+
+**How it was found:** `server/middleware/auth.ts`'s catch block was silently swallowing the real verification error (commit `88eb458` added a `console.error` — a change worth keeping generally, not just for this incident). Even with that, the generic pino request log didn't show it because the *deployment being tested was stale* (see the meta-lesson in §14.3). The real signal came from Vercel's per-request **Function Invocation → External APIs** panel, which showed the exact outbound call: `GET dnjjjzyvogqtsqupihcq.supabase.co/auth/v1/.well-known/jwks.json` — a **completely different project ref** than `cwugpiernnwrhcximjwh` (the project every migration, every test, and the client's own login had been running against).
+
+**Actual cause:** the Vercel↔Supabase integration, when first connected, populated `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_JWT_SECRET` / `SUPABASE_ANON_KEY` from a **different Supabase project** than the one being actively developed against (`cwugpiernnwrhcximjwh`, "supabase-bronze-pendant"). Only `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — added manually per §13.3 — pointed at the right project, which is exactly why the client could log in (issuing a valid token from the *correct* project) while the server verified against JWKS keys from the *wrong* one and never found a matching `kid`. Had auth somehow "worked" here, `supabaseAdmin` (same `SUPABASE_URL`) would also have been reading/writing the wrong, migration-less database.
+
+**Fix:** manually edit `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (and, for consistency, `SUPABASE_ANON_KEY` / `SUPABASE_JWT_SECRET`) in Vercel to the values from the `cwugpiernnwrhcximjwh` project's own dashboard (API Keys → Legacy tab; JWT Keys → Legacy JWT Secret tab), then redeploy.
+
+**Lesson — the load-bearing one for this section:** when a Supabase project is connected to Vercel via its integration, **verify every auto-populated `SUPABASE_*`/`NEXT_PUBLIC_SUPABASE_*` env var actually points at the project you think it does** (compare the ref in the URL value against the dashboard you're working in) before debugging anything else. An integration silently wiring the wrong project is indistinguishable from a dozen other plausible causes (expired token, wrong algorithm, clock skew, RLS) until you look at the actual outbound network call.
+
+### 14.3 Meta-lesson: verifying "is the fix actually live" needs a real fingerprint, not a proxy signal
+
+Across this incident, "wait for the deploy, then retest" produced false confidence twice:
+- A `curl`/`fetch` health-check polling loop that only checked for `"status":"ok"` in the body considered the deploy "live" the instant Bug 1's fix landed — then kept reporting success on every subsequent, unrelated deploy (including the one that added the `console.error` logging in §14.2) because that check was already true from the earlier fix. The loop never actually confirmed *which* deployment was being hit.
+- Vercel's own per-deployment preview URLs are a better fingerprint than a status code: the `x-vercel-deployment-url` response header (or, better, the deployment ID visible in the dashboard) tells you unambiguously which build served a given request. When "the fix isn't working" and you've already redeployed, check that header or the Deployments tab's commit hash **before** re-diagnosing the original bug — you may just be looking at a stale deployment.
+
+### 14.4 Deferred, not forgotten
+
+- **Deployment Protection was disabled entirely** while chasing Bug 1 (turned out not to be the cause) and was never re-enabled. Fine for now during active development; revisit before a real pilot goes live on this URL, and remember Bug 2's project-mismatch risk if protection is reconfigured on the wrong project by mistake.
+- **`DATABASE_URL` and the app-only secrets** (`JWT_SECRET`, `ENCRYPTION_KEY`, `CRON_SECRET`, `APP_URL`) were being added/fixed in parallel with this incident — confirm all are set to the `cwugpiernnwrhcximjwh` project's values (not copied from the wrong project) before trusting billing/scheduling routes, which were untested throughout this section.
+- **Only the tutor path of onboarding is confirmed working.** Parent (invite-based) and student (no join mechanism at all, per DEV_PLAN Tech Debt #16) paths are unverified against live infra.
