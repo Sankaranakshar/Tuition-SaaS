@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Plus, Receipt, CheckCircle, Download, FileSpreadsheet, AlertCircle, IndianRupee, Trash2, Share2 } from "lucide-react";
 import { supabase } from "../supabase";
 import { createInvoice, recordManualPayment, downloadInvoicePdf, createInvoicePaymentLink } from "../lib/api";
@@ -9,6 +10,7 @@ import LoadingSpinner from "../components/LoadingSpinner";
 
 export default function Invoices() {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [invoices, setInvoices] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
   const [templates, setTemplates] = useState<any[]>([]);
@@ -114,10 +116,10 @@ export default function Invoices() {
 
   const totalAmount = lineItems.reduce((sum, item) => sum + (item.amount * item.quantity), 0);
 
-  const handleOpenModal = () => {
+  const handleOpenModal = (prefillStudentId?: string) => {
     const today = new Date();
     setIssueDate(today.toISOString().split('T')[0]);
-    
+
     if (billingSettings.defaultDueDays) {
       const due = new Date(today);
       due.setDate(today.getDate() + parseInt(billingSettings.defaultDueDays));
@@ -125,9 +127,21 @@ export default function Invoices() {
     } else {
       setDueDate("");
     }
-    
+    if (prefillStudentId) setStudentId(prefillStudentId);
+
     setIsModalOpen(true);
   };
+
+  // People's Money bulk action (DEV_PLAN §2a Stage 2 item 1) links here as
+  // `?new=1&studentId=…` to jump straight into a prefilled invoice draft.
+  // Clears the params once consumed so a refresh doesn't reopen the modal.
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      handleOpenModal(searchParams.get("studentId") || undefined);
+      setSearchParams({}, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -262,8 +276,8 @@ export default function Invoices() {
             <FileSpreadsheet className="w-4 h-4 mr-2 text-green-600" />
             Export to Excel
           </button>
-          <button 
-            onClick={handleOpenModal}
+          <button
+            onClick={() => handleOpenModal()}
             className="flex items-center px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 transition-colors"
           >
             <Plus className="w-4 h-4 mr-2" />

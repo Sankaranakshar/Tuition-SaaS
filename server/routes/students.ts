@@ -122,6 +122,16 @@ router.post("/redeem", async (req: AuthRequest, res, next) => {
         `update student_invites set used_at = now(), used_by = $1 where token = $2`,
         [uid, body.token]
       );
+      // Sessions materialized before this redeem never had this student's
+      // user id in their id-space array (resolveUserIds only sees it at
+      // insert/materialize time, scheduling.ts) — backfill existing rows so
+      // the student can see sessions booked before they had a portal account.
+      await client.query(
+        `update class_sessions
+         set student_user_ids = array_append(student_user_ids, $1)
+         where organization_id = $2 and $3 = any(student_ids) and not ($1 = any(student_user_ids))`,
+        [uid, invite.organization_id, invite.student_id]
+      );
     });
 
     await setMembership(invite.organization_id, uid, "student", uid);

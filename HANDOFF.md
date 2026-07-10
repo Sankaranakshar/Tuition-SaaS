@@ -1,6 +1,6 @@
 # ClassStackr — Engineering Handoff
 
-_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12), the first live deploy to Vercel + Supabase Cloud (§13), a multi-stage incident chase that got the tutor onboarding flow fully working end to end for the first time (§14), the Courses UI, Add Class pricing fields, student self-onboarding, and a tech-debt cleanup pass (§15), then the first live, verified run of the full wedge-demo money loop plus two more real infra bugs found and fixed along the way (§16). **Picking up in a new session? Read §16.5 first — it's a one-screen snapshot of exactly what's live, what's broken, and what's next.**_
+_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12), the first live deploy to Vercel + Supabase Cloud (§13), a multi-stage incident chase that got the tutor onboarding flow fully working end to end for the first time (§14), the Courses UI, Add Class pricing fields, student self-onboarding, and a tech-debt cleanup pass (§15), then the first live, verified run of the full wedge-demo money loop plus two more real infra bugs found and fixed along the way (§16), the founder's decision to defer ALL external integrations to post-Stage-4 plus the Stage 2 entry playbook (§17), closing Stage 1 Step 0 — the student invite walkthrough (finally live-verified, two real bugs found and fixed) plus the `shared/` Zod schema package (§18), then Stage 2 item 1, the People workspace, including a real pre-existing RLS bug found while porting tutor verification (§19). **Picking up in a new session? Read §17 first for the playbook, then §18–§19 for what closed since — before writing new code, run a real browser walkthrough of the People workspace per §19.4/§19.6, then start Stage 2 item 2 (Student Story, REDESIGN §6.3).**_
 
 This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked on you, and what comes next.
 
@@ -614,7 +614,7 @@ With the walkthrough done, the rest of DEV_PLAN's engineering-only MVP tasks (th
 
 **Deliberately not done, and why:** uptime monitoring/Sentry (needs a Sentry account — outside what an agent can create), staging environment (a real recurring-cost/product decision, not pure engineering), and everything gated on Google OAuth, phone OTP/SMS, or Razorpay credentials.
 
-### 16.5 Current status snapshot (end of this session, 2026-07-10) — read this first if picking up cold
+### 16.5 Current status snapshot (end of this session, 2026-07-10) — superseded as the entry point by §17; still accurate as the infra/status record
 
 **Live environment:** unchanged — `https://tuition-saas-two.vercel.app`, Vercel project `tuition-saas`, Supabase Cloud project `cwugpiernnwrhcximjwh`. Repo `Sankaranakshar/Tuition-SaaS`, branch `main`, HEAD at commit `fd8ff8f`. GitHub Actions CI green on this commit; Vercel auto-deploy confirmed firing on push (checked via `gh api repos/{owner}/{repo}/deployments`, not by inference — see §15.5's lesson).
 
@@ -636,3 +636,144 @@ With the walkthrough done, the rest of DEV_PLAN's engineering-only MVP tasks (th
 5. The remaining gated tech debt items (#3 Stage 2 rebuild, #4 dual money columns, #5 Realtime refetch perf, #7 multi-org membership) each need their stated prerequisite (a live e2e pass — now largely done, a product decision, or the Stage 2 schedule) before they're actionable.
 
 **Read order for a fresh session:** this §16.5 → §16.1–16.4 for this session's detail → §15.1–15.5 and §14.1–14.4 for still-relevant prior incident writeups → DEV_PLAN.md's Immediate Blockers and remaining Tech Debt items for the prioritized task list.
+
+---
+
+## 17. Founder decision + Stage 2 entry playbook (2026-07-10) — READ THIS FIRST in a new session
+
+_Written at the end of the 2026-07-10 sessions, verified against the repo at commit `39fe301` (tsc clean, 51/51 unit, 41/41 RLS, working tree clean). This section is deliberately prescriptive so any session — including one on a smaller model — can execute it without re-deriving context._
+
+### 17.1 The decision that reshapes the plan
+
+**All external integrations and third-party accounts are deferred until Stages 2–4 are fully built and go-to-market begins.** That means: Razorpay KYC/webhooks/live payments, Google OAuth, phone OTP / SMS providers (and therefore live parent-portal testing), Sentry, staging-environment spend, Epic 7 comms providers, Epic 8 Calendar/Meet, and legal docs are **not blockers and not your job**. Do not ask about them, do not attempt to configure them, do not stall on them.
+
+Rules that follow from this:
+1. Build every feature to completion in code, with the external call sitting behind the existing degradation path (error toast, "link pending", manual WhatsApp share). The codebase already does this everywhere — keep the pattern.
+2. When you build or touch a seam that will need external wiring at go-to-market, add one line to the checklist in §17.4.
+3. Anything in DEV_PLAN/older HANDOFF sections that says "start Razorpay KYC now" or "configure GoTrue providers next" is superseded by this decision.
+
+### 17.2 What is true right now (one paragraph)
+
+The app is live at `https://tuition-saas-two.vercel.app` (Vercel project `tuition-saas`, Supabase Cloud `cwugpiernnwrhcximjwh`, repo `Sankaranakshar/Tuition-SaaS` branch `main`). The full wedge-demo money loop is live-verified end to end (§16.3): signup → tutor onboarding → course → student → PER_SESSION class → attendance from Today → auto-accrued invoice → server PDF. Realtime genuinely works (§16.2 fixed it). All engineering-only MVP tasks are done (§16.4). The only unverified internal flow is the **student invite second login** (§11.4 regression). Verification gates: `npx tsc --noEmit` (clean), `npm test` (51/51), `npm run test:rls` (41/41), `npm run build`. Local dev: `npm run dev` (`.env` is real and loaded via `server.ts`'s first-line `import "dotenv/config"` — do not move that import, see §16.1).
+
+### 17.3 The work, in exact order
+
+**Step 0 — close Stage 1 (do first, ~1 day):**
+1. **Student invite walkthrough.** As staff: StudentProfile → "Student Portal Access" → mint invite. In a fresh browser profile: open invite link → sign up (email/password) → redeem → verify the student account sees its own booked session on Today/Timetable/StudentDashboard. If sessions are missing, the cause is almost certainly the `class_sessions` three-array id-space — read §11.4 and security invariant §8.9 before touching anything.
+2. **`shared/` Zod package.** Create `shared/` with Zod schemas for API request/response shapes; server routes validate with them, client infers types from them. Migrate billing + scheduling contracts first. All suites must stay green.
+3. _(Optional)_ Playwright E2E journeys 1–2 against local dev + `npm run seed`.
+
+**Then Stage 2 — five workspace rebuilds, in this order** (full table with specs and estimates in DEV_PLAN §2a; product specs in REDESIGN.md §6.2–6.7):
+1. **People** (REDESIGN 6.2) — replaces Students, Leads, Admin tutor mgmt.
+2. **Student Story** (REDESIGN 6.3) — replaces StudentProfile, AcademicProgress, StudyMaterial.
+3. **Money** (REDESIGN 6.4) — replaces Invoices, Wallet, Transactions, BillingInvoiceSettings.
+4. **Inbox + homework** (REDESIGN 6.5) — replaces Messaging, Notifications.
+5. **Onboarding rebuild** (REDESIGN 6.7) — replaces the form sequence; KEEP the parent/student invite-redeem branches, they are current product.
+
+**Per-workspace rules (every PR, no exceptions):**
+- Delete the legacy page(s) in the same PR as the replacement. Never leave both alive.
+- Pure logic in a unit-tested `src/lib/*.ts` module (copy the `src/lib/today.ts` pattern); the page stays thin.
+- Data access through a per-entity hook (`useStudents`, `useInvoices`, …) owning the query + Realtime subscription + bounds + errors. New tables must be added to the `supabase_realtime` publication by migration (§16.2) or subscriptions silently no-op.
+- New/changed tables and policies land with RLS tests in `tests/integration/rbac.test.ts`; if unsure a policy works, deliberately re-break it and confirm the expected test fails (§11.3).
+- Strings through `t()`, money through `formatINR`/`formatPaise`, components from `src/components/kit/`.
+- Any code inserting `class_sessions` rows goes through `resolveUserIds()` (§11.4).
+- Run all four verification gates before every commit. Push to `main` auto-deploys (§15.5).
+
+### 17.4 Go-live checklist (maintain this; execute only at go-to-market)
+
+Seams that need external wiring when the founder starts selling — add to this list as you build:
+- [ ] Razorpay: live KYC, per-org keys via `PUT /api/v1/gateway/razorpay`, webhook URL `${APP_URL}/api/webhooks/razorpay/{orgId}` (payment_link.paid, payment.captured), real ₹1 test, hourly `POST /api/v1/billing/reconcile` cron + `POST /api/cron/materialize-sessions` cron (`CRON_SECRET` header)
+- [ ] Supabase Auth providers: Google OAuth redirect URI; SMS provider (MSG91/Twilio) for phone OTP → then the parent-portal 375px real-device pass
+- [ ] Sentry: account + `SENTRY_DSN`/`VITE_SENTRY_DSN` in Vercel (code is already wired, DSN-gated)
+- [ ] Uptime probe on `/api/health` + 5xx alerting
+- [ ] Legal: privacy policy, ToS, DPDP consent doc (portal already stamps `consentVersion` — the doc it references must exist), refund policy
+- [ ] Staging environment decision (second Supabase project) + Playwright journeys 3–4 (payment, parent OTP)
+- [ ] Re-enable Vercel Deployment Protection (disabled during §14.1, never re-enabled)
+- [ ] Epic 7 comms providers (WhatsApp Business API, SMS DLT, email domain); Epic 8 Google OAuth verification
+
+### 17.5 Read order for the new session
+
+This §17 → DEV_PLAN §2a (the executable Stage 2 plan) → REDESIGN §6.2 (People spec, the first build) → §8 security invariants (memorize; they are non-negotiable) → §16.5/§16.1–16.2 only if something infra-shaped breaks → §14 only if Vercel/env/auth breaks.
+
+---
+
+## 18. Step 0 closed: student invite walkthrough (live-verified, two real bugs fixed) + `shared/` Zod package (2026-07-10)
+
+_This is the session that executed §17.3 Step 0. Both items are done; Stage 2 (People workspace) is next._
+
+### 18.1 Student invite second-login walkthrough — live-verified, two real bugs found and fixed
+
+The walkthrough in §17.3.1 was run against local dev pointed at the real Supabase Cloud project (same one production uses — there is still no staging project, see DEV_PLAN §3 Critical). Two genuine bugs surfaced, both now fixed and re-verified live:
+
+**Bug 6 — People → student profile link missing the `/app` prefix.** `Students.tsx`'s student-name `Link` used `to={`/students/${id}`}` and three `navigate()` calls in `StudentProfile.tsx` used `"/students"` / `"/messaging"` — but those routes are only registered nested under `/app` in `App.tsx` (`<Route path="/app">...<Route path="students/:id">`). Since the `Link`/`navigate` targets were absolute (leading `/`), React Router resolved them to the bare, unregistered path and rendered a blank page — this silently blocked reaching "Student Portal Access" from the UI at all, not just for this walkthrough. Fixed all four call sites to `/app/students...` / `/app/messaging`. Confirmed live: clicking a student's name from People now opens their profile.
+
+**Bug 7 — the actual §11.4-class regression: invite redeem never backfilled `class_sessions`' id-space arrays.** `server/routes/students.ts` `/redeem` sets `students.student_user_id` but a session materialized *before* the student ever had a portal account has an empty `student_user_ids` array (only populated by `resolveUserIds()` at insert/materialize time, `scheduling.ts`). A student who redeems an invite for a class already on the calendar saw "No upcoming classes scheduled" and an empty attendance log — reproduced live with a real invite/signup/redeem cycle. `server/routes/parents.ts` `/redeem` has the identical gap for `parent_user_ids` (never yet caught because parent-portal testing is blocked on phone OTP, §17.1). Fixed both: the same transaction that claims the roster row / creates the parent link now also runs `update class_sessions set student_user_ids = array_append(student_user_ids, $uid) where organization_id = $org and $studentId = any(student_ids) and not ($uid = any(student_user_ids))` (mirror for `parent_user_ids`).
+
+**Verification, not just code review:** reset the test student's `student_user_id` to `null` and the invite's `used_at` to `null` directly in Postgres to reproduce the pre-redeem state, redeemed the same invite again through the running (patched) server, confirmed via `psql` that `student_user_ids` now contains the student's uid, then confirmed in the browser that Today shows "Class Session — Jul 10, 2026 • 6:00 PM - 7:00 PM" and Timetable's Attendance Log shows "Class Session — Jul 10, 2026 — Present" for that account. This is the first time the student side of the invite flow (Tech Debt #16) has been exercised end to end; it is no longer "built but not yet browser-verified."
+
+All four gates green after both fixes: `tsc --noEmit` clean, 51/51 unit, 41/41 RLS, build passes.
+
+### 18.2 `shared/` Zod schema package — billing + scheduling contracts
+
+Added `shared/schemas/billing.ts` and `shared/schemas/scheduling.ts`: one Zod schema per request/response shape, request schemas re-exported into `server/routes/billing.ts` and `server/routes/scheduling.ts` (replacing the six/two schemas previously declared inline there), and `z.infer` types consumed by `src/lib/api.ts`, `src/services/ClassManager.ts`, and `src/pages/Calendar.tsx` in place of the ad-hoc inline object types those files used before. No behavior change — same validation rules, same wire shapes; this only removes the duplication DEV_PLAN §7 flagged ("no shared type package between `server/` and `src/`").
+
+Covered: `createInvoice`, `wallets/topup`, `attendance`, `sessions/cancel`, `payments/manual`, `refunds`, `invoices/void`, `invoices/finalize`, `invoices/payment-link` (billing); `enrollments`, `sessions`, `materialize` (scheduling).
+
+Cross-directory import verified two ways: `tsx server.ts` (dev) resolves `../../shared/schemas/*.ts` directly (Node ESM, relative + explicit extension, no bundler needed), and the production build's `esbuild --bundle` step (the same one that fixed Tech Debt #14's Vercel function bug) inlines `shared/` into `dist/server.js` without issue — bundle went from 86.5kb to 88.1kb. Live-verified end to end, not just typechecked: logged in as the demo tutor, clicked "Mark as Paid" on a real unpaid invoice — this calls `recordManualPayment()` in `api.ts`, which is now typed from `RecordManualPaymentRequest`/`Response` in `shared/schemas/billing.ts` — and confirmed the invoice flipped to PAID with revenue/outstanding updating correctly.
+
+All four gates green: `tsc --noEmit` clean, 51/51 unit, 41/41 RLS, build passes (`check:bundle-size` also still green at 216.5 KB gzip, budget 260 KB).
+
+### 18.3 What's still "built, not confirmed" (unchanged from §17.2, restated for a fresh session)
+
+Everything gated on Razorpay, Google OAuth, or phone OTP/SMS remains deferred by founder decision (§17.1) — do not attempt it. The parent-portal-at-375px pass specifically still can't run because it needs phone OTP.
+
+### 18.4 Next: Stage 2, People workspace (REDESIGN §6.2)
+
+Step 0 is fully closed. Next session should start Stage 2 item 1 — the People workspace — per DEV_PLAN §2a's table and the per-workspace rules in §17.3 (delete Students.tsx/Leads.tsx/tutor-mgmt-in-Admin.tsx in the same PR, pure core module, per-entity query hook with Realtime, RLS tests for any schema change, `t()`/`formatINR`/`kit` components).
+
+---
+
+## 19. Stage 2 item 1: People workspace shipped (REDESIGN §6.2) (2026-07-10)
+
+**One directory, four lenses (Students/Leads/Parents/Tutors), built and static/RLS-verified this session; the money/lead-conversion/tutor-verify flows were also exercised live in a real browser against the live Supabase Cloud project before the "no live testing" instruction landed — see 19.4 for exactly what that covered.**
+
+### 19.1 What shipped
+
+- **Pure core module** `src/lib/people.ts` (mirrors `today.ts`'s discipline — no React, no Supabase, explicit `now`), unit-tested in `tests/unit/people.test.ts` (8 tests): `rankStudentsByAttention` (overdue fee > absence streak > stale contact > alphabetical, reusing `today.ts`'s `daysOverdue`/`absenceStreaks` rather than re-deriving that math), `buildLeadFunnel`, `rankLeadsByGoingCold`.
+- **Query hooks** `src/hooks/usePeople.ts`: `useStudentsList`, `useStudentInvoices`, `useStudentAttendance`, `useLeadsList`, `useParentsList` (joins `parent_links` → `profiles`/`students`), `useTutorsList` — each owns its Realtime subscription + bounding + error state.
+- **`src/pages/People.tsx`**: lens tabs driven by `?lens=` query param, `PersonRow`/`EmptyState`/`SkeletonRow` from the kit, needs-attention-sorted Students list with an attention `StatusChip`, Leads funnel strip (click a stage to filter) + going-cold list + **convert-to-student** action (new functionality — REDESIGN explicitly calls for it, nothing did this before), Parents read-only list, Tutors list with verify/revoke. Bulk actions on multi-select: Message (opens Inbox), Invoice (single-select only, deep-links into a prefilled Invoices.tsx draft), Export (real CSV of selected rows).
+- **Deleted in this PR**: `src/pages/Students.tsx`, `src/pages/Leads.tsx`, `src/pages/Admin.tsx` (Admin.tsx was *entirely* tutor verification — nothing else — so the whole file goes, not just a section). Updated every reference: `App.tsx` routes, `Layout.tsx` nav (`/app/people`), `CommandPalette.tsx` (Students/Leads/Tutors entries, `?new=1` deep-links), `Today.tsx`'s quiet-lead follow-up link, `StudentProfile.tsx`'s two "back to list" navigates. `src/pages/Invoices.tsx` gained a small, contained `?new=1&studentId=` prefill effect to make the Invoice bulk action a real deep-link rather than a dead end — not a rewrite, Invoices.tsx itself is still legacy pending the Money workspace (item 3).
+- **New locale keys**: `people.*` block in `src/locales/en.json`; removed the now-dead `nav.students`/`nav.leads`/`nav.admin` keys.
+
+### 19.2 A real bug found while porting tutor verification: RLS silently blocked the entire feature
+
+Auditing `tutor_profiles_rw`'s policy before reusing Admin.tsx's verify/revoke logic in the new Tutors lens surfaced a genuine, pre-existing bug: the policy's `with check` was `user_id = auth.uid()` only — no staff/admin clause. For an UPDATE, Postgres RLS evaluates `using` against the *existing* row and `with check` against the *new* row; `using (user_id = auth.uid() or is_staff(organization_id))` let an admin's query find and attempt to update another tutor's row, but `with check` then rejected the write outright (`error: new row violates row-level security policy`, confirmed via a direct `psql` UPDATE against the live Supabase Cloud project). **This means the original Admin.tsx's Verify/Revoke buttons could never have worked for their entire stated purpose** — an admin verifying someone else — for as long as that table has existed; only a tutor editing their own row would have silently succeeded.
+
+Fixed in migration `20260710140000_tutor_verify_fix.sql`: `with check (user_id = auth.uid() or is_org_admin(organization_id))` — deliberately `is_org_admin` (owner/admin only), not the broader `is_staff` (which includes tutors — verification must not be peer-service). Added three new RLS tests to `tests/integration/rbac.test.ts`'s C5 block, following the §11.3 discipline: admin can verify another tutor (now passes), frontdesk cannot (still correctly denied), a tutor cannot verify a peer (still correctly denied). RLS suite: 44/44 (was 41/41 before this session; +3 for this fix). Migration applied to the live Supabase Cloud project via `supabase db push`.
+
+### 19.3 Realtime publication gap for the new Tutors lens
+
+`tutor_profiles` was never added to the `supabase_realtime` publication in the original §16.2 fix (that migration's table list predates the Tutors lens existing at all). Subscribing to it without fixing this would have silently repeated the exact HANDOFF §16.2 bug for one more table. Added migration `20260710130000_realtime_tutor_profiles.sql` (idempotent, same guarded pattern as §16.2's), applied via `supabase db push`, confirmed live via `psql` against `pg_publication_tables`.
+
+### 19.4 Verification status — what was actually exercised live vs. static/RLS-only
+
+Before being told to stop live-testing this session, the following were confirmed live in a real browser against the live Supabase Cloud project (same one production uses):
+- People page loads at `/app/people`, all four lens tabs switch correctly, students list renders with parent-name subtitles.
+- Clicking a student row navigates to `/app/students/:id` and the profile actually renders (the §18.1 nav-prefix fix holds).
+- Adding a lead via the modal — funnel strip count updated live via the Realtime subscription, no manual refresh.
+- **Convert-to-student**: converted a live-created lead into a real `students` row and confirmed it appeared in the Students lens.
+- Bulk multi-select: checkbox selection, the Message/Invoice/Export action bar appearing, the Invoice action's `?new=1&studentId=` deep-link opening `Invoices.tsx`'s Generate Invoice modal with the correct student **already selected in the dropdown** — confirms the cross-page prefill wiring actually works, not just typechecks.
+- Tutors lens renders and correctly hides the Verify/Revoke actions for a non-admin (logged in as a tutor) — the `canVerify` client-side gate.
+- Parents lens empty state renders correctly for an org with no linked parents.
+
+Test data created during this walkthrough (a lead and the student it converted into) was deleted afterward via `psql` — the live org's data is back to its pre-session state.
+
+**Not exercised live this session** (static/typecheck/RLS-only, same "expected working, not confirmed" caveat as everywhere else in this doc): the Student/Lead edit flows (only add was exercised), the Archive-student confirm modal, the Documents modal reached from a PersonRow's hover action, the CSV Export button's actual file download, and — most importantly — **an admin actually clicking Verify/Revoke on another tutor in the browser** (the RLS fix itself was verified two ways that don't need a browser: a direct `psql` UPDATE reproducing the bug before the fix, and the three new automated RLS tests after it — but nobody has clicked the button as an admin yet).
+
+### 19.5 All four gates green
+
+`npx tsc --noEmit` clean · `npm test` 59/59 (51 prior + 8 new in `people.test.ts`) · `npm run test:rls` 44/44 (41 prior + 3 new) · `npm run build` passes · `npm run check:bundle-size` 217.0 KB gzip (budget 260 KB, People.tsx itself is a 7.23 KB gzip lazy chunk).
+
+### 19.6 Next: Stage 2 item 2, Student Story (REDESIGN §6.3)
+
+Replaces `StudentProfile.tsx` (1,308 lines), `AcademicProgress.tsx`, `StudyMaterial.tsx`. Per DEV_PLAN §2a's estimate, the largest of the five Stage 2 items (~2.5 wk). Before starting: run a real browser walkthrough of the People workspace shipped this session (the items listed in §19.4's "not exercised live" paragraph) so any issue is caught before more code is layered on top of `StudentProfile.tsx`'s replacement.

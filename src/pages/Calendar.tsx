@@ -18,6 +18,7 @@ import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { ClassManager, ClassType, PricingModel } from "../services/ClassManager";
 import { markAttendance as apiMarkAttendance, cancelSession, api } from "../lib/api";
+import type { MaterializeResponse } from "../../shared/schemas/scheduling";
 import { toast } from "sonner";
 import LoadingSpinner from "../components/LoadingSpinner";
 
@@ -346,7 +347,7 @@ export default function Calendar() {
       } else {
         // Recurring batch: fill the rolling window immediately so the
         // calendar isn't empty until the next cron run.
-        const { conflicts } = await api<{ ok: true; created: string[]; conflicts: { templateId: string; date: string }[] }>(
+        const { conflicts } = await api<MaterializeResponse>(
           "/scheduling/materialize",
           { method: "POST" }
         );

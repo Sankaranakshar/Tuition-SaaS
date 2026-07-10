@@ -105,16 +105,16 @@ export default function CommandPalette({ open, onOpenChange }: PaletteProps) {
     }
     const items = [
       { label: "Today", to: "/app", icon: LayoutDashboard },
-      { label: "Students", to: "/app/students", icon: Users },
+      { label: "People", to: "/app/people?lens=students", icon: Users },
       { label: "Calendar", to: "/app/calendar", icon: Calendar },
       { label: "Courses", to: "/app/courses", icon: Layers },
       { label: "Money", to: "/app/invoices", icon: Wallet },
       { label: "Messages", to: "/app/messaging", icon: MessageSquare },
-      { label: "Leads", to: "/app/leads", icon: TrendingUp },
+      { label: "Leads", to: "/app/people?lens=leads", icon: TrendingUp },
+      { label: "Tutors", to: "/app/people?lens=tutors", icon: Shield },
       { label: "Documents", to: "/app/documents", icon: BookOpen },
       { label: "Settings", to: "/app/settings", icon: Settings },
     ];
-    if (currentRole === "admin") items.push({ label: "Admin panel", to: "/app/admin", icon: Shield });
     items.push({ label: "Component kit", to: "/app/kit", icon: LayoutGrid });
     return items;
   }, [isStaff, currentRole]);

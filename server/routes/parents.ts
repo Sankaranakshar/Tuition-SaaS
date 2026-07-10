@@ -119,6 +119,14 @@ router.post("/redeem", async (req: AuthRequest, res, next) => {
         `update parent_invites set used_at = now(), used_by = $1 where token = $2`,
         [uid, body.token]
       );
+      // Same id-space backfill as students.ts redeem: sessions materialized
+      // before this parent linked never had their user id in the array.
+      await client.query(
+        `update class_sessions
+         set parent_user_ids = array_append(parent_user_ids, $1)
+         where organization_id = $2 and $3 = any(student_ids) and not ($1 = any(parent_user_ids))`,
+        [uid, invite.organization_id, invite.student_id]
+      );
     });
 
     await setMembership(invite.organization_id, uid, "parent", uid);

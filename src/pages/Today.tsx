@@ -907,13 +907,13 @@ function QueueAction({ item, phone }: { item: QueueItem; phone: string }) {
           <Phone className="h-3.5 w-3.5" strokeWidth={1.75} /> Call
         </a>
       ) : (
-        <Link to={item.studentId ? `/app/students/${item.studentId}` : "/app/students"} className={base}>
+        <Link to={item.studentId ? `/app/students/${item.studentId}` : "/app/people?lens=students"} className={base}>
           Open
         </Link>
       );
     case "quiet_lead":
       return (
-        <Link to="/app/leads" className={base}>
+        <Link to="/app/people?lens=leads" className={base}>
           <Flame className="h-3.5 w-3.5" strokeWidth={1.75} /> Follow up
         </Link>
       );

@@ -1,5 +1,6 @@
 import { supabase } from "../supabase";
 import { api } from "../lib/api";
+import type { EnrollResponse, CreateSessionResponse } from "../../shared/schemas/scheduling";
 
 export enum ClassType {
   BATCH = "BATCH",
@@ -77,7 +78,7 @@ export class ClassManager {
   // a client read-then-write here would let two parallel enrollments both
   // see "capacity OK" before either write lands.
   static async enrollStudent(_organizationId: string, studentId: string, templateId: string) {
-    await api<{ ok: true; enrollmentId: string }>("/scheduling/enrollments", {
+    await api<EnrollResponse>("/scheduling/enrollments", {
       method: "POST",
       body: { studentId, templateId },
     });
@@ -143,7 +144,7 @@ export class ClassManager {
   // E3.6): a client read-then-write here would let two parallel bookings
   // both see "no conflict" before either write lands.
   static async createSession(sessionData: ClassSession) {
-    return await api<{ ok: true; sessionId: string }>("/scheduling/sessions", {
+    return await api<CreateSessionResponse>("/scheduling/sessions", {
       method: "POST",
       body: {
         templateId: sessionData.templateId,

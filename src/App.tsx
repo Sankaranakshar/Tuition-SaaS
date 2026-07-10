@@ -18,16 +18,14 @@ const HowItWorks = lazy(() => import("./pages/public/HowItWorks"));
 
 // Lazy load protected app pages
 const Today = lazy(() => import("./pages/Today"));
-const Students = lazy(() => import("./pages/Students"));
+const People = lazy(() => import("./pages/People"));
 const StudentProfile = lazy(() => import("./pages/StudentProfile"));
-const Leads = lazy(() => import("./pages/Leads"));
 const Calendar = lazy(() => import("./pages/Calendar"));
 const Courses = lazy(() => import("./pages/Courses"));
 const Documents = lazy(() => import("./pages/Documents"));
 const Invoices = lazy(() => import("./pages/Invoices"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Messaging = lazy(() => import("./pages/Messaging"));
-const Admin = lazy(() => import("./pages/Admin"));
 const Kit = lazy(() => import("./pages/Kit"));
 
 // Lazy load student pages
@@ -115,16 +113,14 @@ export default function App() {
             {/* Protected App Routes */}
             <Route path="/app" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               <Route index element={<Today />} />
-              <Route path="students" element={<Students />} />
+              <Route path="people" element={<People />} />
               <Route path="students/:id" element={<StudentProfile />} />
-              <Route path="leads" element={<Leads />} />
               <Route path="calendar" element={<Calendar />} />
               <Route path="courses" element={<Courses />} />
               <Route path="documents" element={<Documents />} />
               <Route path="invoices" element={<Invoices />} />
               <Route path="messaging" element={<Messaging />} />
               <Route path="settings" element={<Settings />} />
-              <Route path="admin" element={<Admin />} />
               <Route path="kit" element={<Kit />} />
               
               {/* Student Routes */}

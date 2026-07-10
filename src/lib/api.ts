@@ -1,4 +1,20 @@
 import { supabase } from "../supabase";
+import type {
+  AttendanceStatus as SharedAttendanceStatus,
+  MarkAttendanceResponse,
+  CancelSessionResponse,
+  RecordManualPaymentRequest,
+  RecordManualPaymentResponse,
+  CreateInvoiceRequest,
+  CreateInvoiceResponse,
+  TopupRequest,
+  TopupResponse,
+  VoidInvoiceResponse,
+  FinalizeInvoiceResponse,
+  PaymentLinkResponse,
+  RefundRequest,
+  RefundResponse,
+} from "../../shared/schemas/billing";
 
 // Thin authenticated client for the privileged API (/api/v1).
 // Money and attendance mutations must go through here; they have no
@@ -28,66 +44,51 @@ export async function api<T = unknown>(
   return data as T;
 }
 
-export type AttendanceStatus = "present" | "absent" | "late" | "excused";
+export type AttendanceStatus = SharedAttendanceStatus;
 
 export function markAttendance(sessionId: string, records: { studentId: string; status: AttendanceStatus }[]) {
-  return api<{ ok: true; billed: string[]; invoiced: string[] }>("/billing/attendance", {
+  return api<MarkAttendanceResponse>("/billing/attendance", {
     method: "POST",
     body: { sessionId, records },
   });
 }
 
 export function cancelSession(sessionId: string) {
-  return api<{ ok: true }>("/billing/sessions/cancel", { method: "POST", body: { sessionId } });
+  return api<CancelSessionResponse>("/billing/sessions/cancel", { method: "POST", body: { sessionId } });
 }
 
-export function recordManualPayment(input: {
-  invoiceId: string;
-  amountPaise: number;
-  method: "cash" | "upi" | "bank_transfer" | "cheque" | "other";
-  note?: string;
-}) {
-  return api<{ ok: true; invoiceStatus: string }>("/billing/payments/manual", {
+export function recordManualPayment(input: Omit<RecordManualPaymentRequest, "idempotencyKey">) {
+  return api<RecordManualPaymentResponse>("/billing/payments/manual", {
     method: "POST",
     body: { ...input, idempotencyKey: crypto.randomUUID() },
   });
 }
 
 /** Create a free-form invoice with custom line items (rupee amounts). */
-export function createInvoice(input: {
-  studentId: string;
-  items: { description: string; amount: number; quantity: number }[];
-  taxPercentage?: number;
-  dueDate?: string;
-}) {
-  return api<{ ok: true; invoiceId: string }>("/billing/invoices", { method: "POST", body: input });
+export function createInvoice(input: CreateInvoiceRequest) {
+  return api<CreateInvoiceResponse>("/billing/invoices", { method: "POST", body: input });
 }
 
 /** Staff-recorded wallet top-up (offline/in-person payment credited to the student's prepaid balance). */
-export function topUpWallet(input: {
-  studentId: string;
-  amountPaise: number;
-  method: "cash" | "upi" | "bank_transfer" | "cheque" | "other";
-  note?: string;
-}) {
-  return api<{ ok: true; duplicate: boolean }>("/billing/wallets/topup", {
+export function topUpWallet(input: Omit<TopupRequest, "idempotencyKey">) {
+  return api<TopupResponse>("/billing/wallets/topup", {
     method: "POST",
     body: { ...input, idempotencyKey: crypto.randomUUID() },
   });
 }
 
 export function voidInvoice(invoiceId: string) {
-  return api<{ ok: true }>(`/billing/invoices/${invoiceId}/void`, { method: "POST" });
+  return api<VoidInvoiceResponse>(`/billing/invoices/${invoiceId}/void`, { method: "POST" });
 }
 
 /** Assign a gap-free invoice number and snapshot tax details (draft → sent). */
 export function finalizeInvoice(invoiceId: string) {
-  return api<{ ok: true; invoiceNumber: string }>(`/billing/invoices/${invoiceId}/finalize`, { method: "POST" });
+  return api<FinalizeInvoiceResponse>(`/billing/invoices/${invoiceId}/finalize`, { method: "POST" });
 }
 
 /** Create (or reuse) a Razorpay UPI payment link for the outstanding amount. */
 export function createInvoicePaymentLink(invoiceId: string) {
-  return api<{ ok: true; shortUrl: string; reused: boolean }>(
+  return api<PaymentLinkResponse>(
     `/billing/invoices/${invoiceId}/payment-link`,
     { method: "POST" }
   );
@@ -158,8 +159,8 @@ export function deleteDocument(documentId: string) {
   return api<{ ok: true }>(`/documents/${documentId}`, { method: "DELETE" });
 }
 
-export function refundPayment(input: { invoiceId: string; amountPaise: number; reason?: string }) {
-  return api<{ ok: true; invoiceStatus: string; duplicate: boolean }>("/billing/refunds", {
+export function refundPayment(input: Omit<RefundRequest, "idempotencyKey">) {
+  return api<RefundResponse>("/billing/refunds", {
     method: "POST",
     body: { ...input, idempotencyKey: crypto.randomUUID() },
   });

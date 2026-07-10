@@ -1,9 +1,12 @@
 import express from "express";
-import { z } from "zod";
 import type { PoolClient } from "pg";
 import { pool, withTransaction } from "../db.ts";
 import { authenticateToken, requireRole, requireOrg, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
+import {
+  enrollRequestSchema as enrollSchema,
+  createSessionRequestSchema as sessionSchema,
+} from "../../shared/schemas/scheduling.ts";
 
 // Capacity and double-booking checks used to run client-side (read-then-write
 // from the browser SDK), which is a race: two parallel enrollments/bookings
@@ -15,11 +18,6 @@ const router = express.Router();
 router.use(authenticateToken, requireOrg);
 
 const CAN_SCHEDULE = ["owner", "admin", "tutor", "frontdesk"] as const;
-
-const enrollSchema = z.object({
-  studentId: z.string().uuid(),
-  templateId: z.string().uuid(),
-});
 
 router.post("/enrollments", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, next) => {
   try {
@@ -65,16 +63,6 @@ router.post("/enrollments", requireRole(...CAN_SCHEDULE), async (req: AuthReques
     await writeAudit(orgId, req.user!.id, "enrollment.create", "enrollments", enrollmentId, { studentId, templateId });
     res.json({ ok: true, enrollmentId });
   } catch (err) { next(err); }
-});
-
-const sessionSchema = z.object({
-  templateId: z.string().uuid(),
-  tutorId: z.string().uuid(),
-  studentIds: z.array(z.string().uuid()).optional(),
-  startTime: z.string().min(1),
-  endTime: z.string().min(1),
-  isOnline: z.boolean().optional(),
-  roomNumber: z.string().optional(),
 });
 
 /**

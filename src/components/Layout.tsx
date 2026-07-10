@@ -48,10 +48,12 @@ export default function Layout() {
   const isStudent = currentRole === "student";
   const isParent = currentRole === "parent";
 
-  // Five workspaces. Leads, Documents, Admin are reachable via the palette;
-  // the rail stays furniture, not a table of contents. Parents get a
-  // deliberately short rail (Epic 10): their children overview holds
-  // schedule/invoices/wallet as tabs, so there's nothing else to navigate to.
+  // Five workspaces. Documents is reachable via the palette; the rail stays
+  // furniture, not a table of contents. Leads and tutor verification are
+  // lenses inside People now (REDESIGN §6.2), not separate destinations.
+  // Parents get a deliberately short rail (Epic 10): their children overview
+  // holds schedule/invoices/wallet as tabs, so there's nothing else to
+  // navigate to.
   const rail = isStudent
     ? [
         { to: "/app", label: t("nav.today"), icon: LayoutDashboard, end: true },
@@ -67,7 +69,7 @@ export default function Layout() {
       ]
     : [
         { to: "/app", label: t("nav.today"), icon: LayoutDashboard, end: true },
-        { to: "/app/students", label: t("nav.people"), icon: Users },
+        { to: "/app/people", label: t("nav.people"), icon: Users },
         { to: "/app/calendar", label: t("nav.schedule"), icon: Calendar },
         { to: "/app/invoices", label: t("nav.money"), icon: Wallet },
         { to: "/app/messaging", label: t("nav.inbox"), icon: MessageSquare },

@@ -1,5 +1,4 @@
 import express from "express";
-import { z } from "zod";
 import type { PoolClient } from "pg";
 import { pool, withTransaction } from "../db.ts";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
@@ -9,23 +8,20 @@ import { applyPayment, type InvoiceStatus } from "../utils/invoiceStatus.ts";
 import { allocateInvoiceNumber } from "../utils/invoiceNumber.ts";
 import { getGatewayCreds, createPaymentLink, fetchPaymentLink } from "../utils/razorpay.ts";
 import { renderInvoicePdf, type InvoicePdfInvoice } from "../utils/invoicePdf.ts";
+import {
+  createInvoiceRequestSchema as createInvoiceSchema,
+  topupRequestSchema as topupSchema,
+  markAttendanceRequestSchema as attendanceSchema,
+  cancelSessionRequestSchema as cancelSchema,
+  recordManualPaymentRequestSchema as paymentSchema,
+  refundRequestSchema as refundSchema,
+} from "../../shared/schemas/billing.ts";
 
 const router = express.Router();
 router.use(authenticateToken, requireOrg);
 
 const CAN_MARK = ["owner", "admin", "tutor", "frontdesk"] as const;
 const CAN_MONEY = ["owner", "admin", "frontdesk"] as const;
-
-const createInvoiceSchema = z.object({
-  studentId: z.string().uuid(),
-  items: z.array(z.object({
-    description: z.string().min(1),
-    amount: z.number().nonnegative(), // rupees, as entered in the line-item form
-    quantity: z.number().int().positive(),
-  })).min(1),
-  taxPercentage: z.number().min(0).max(100).optional().default(0),
-  dueDate: z.string().optional(),
-});
 
 // Free-form invoice with custom line items (e.g. a one-off charge outside
 // the attendance-billing flow). Created directly as "unpaid" — draft/finalize
@@ -61,14 +57,6 @@ router.post("/invoices", requireRole(...CAN_MARK), async (req: AuthRequest, res,
     await writeAudit(orgId, req.user!.id, "invoice.create", "invoices", inv.id, { studentId: body.studentId, totalPaise });
     res.status(201).json({ ok: true, invoiceId: inv.id });
   } catch (err) { next(err); }
-});
-
-const topupSchema = z.object({
-  studentId: z.string().uuid(),
-  amountPaise: z.number().int().positive(),
-  method: z.enum(["cash", "upi", "bank_transfer", "cheque", "other"]),
-  idempotencyKey: z.string().min(8).max(128),
-  note: z.string().max(500).optional(),
 });
 
 // Wallet top-up: staff records a payment received in person/offline and
@@ -115,14 +103,6 @@ router.post("/wallets/topup", requireRole(...CAN_MONEY), async (req: AuthRequest
     }
     res.status(outcome.duplicate ? 200 : 201).json({ ok: true, duplicate: outcome.duplicate });
   } catch (err) { next(err); }
-});
-
-const attendanceSchema = z.object({
-  sessionId: z.string().uuid(),
-  records: z.array(z.object({
-    studentId: z.string().uuid(),
-    status: z.enum(["present", "absent", "late", "excused"]),
-  })).min(1),
 });
 
 // Marks attendance for a session and settles per-session billing atomically.
@@ -246,8 +226,6 @@ router.post("/attendance", requireRole(...CAN_MARK), async (req: AuthRequest, re
   } catch (err) { next(err); }
 });
 
-const cancelSchema = z.object({ sessionId: z.string().uuid() });
-
 router.post("/sessions/cancel", requireRole(...CAN_MARK), async (req: AuthRequest, res, next) => {
   try {
     const { sessionId } = cancelSchema.parse(req.body);
@@ -269,14 +247,6 @@ router.post("/sessions/cancel", requireRole(...CAN_MARK), async (req: AuthReques
     await writeAudit(orgId, req.user!.id, "session.cancel", "class_sessions", sessionId, {});
     res.json({ ok: true });
   } catch (err) { next(err); }
-});
-
-const paymentSchema = z.object({
-  invoiceId: z.string().uuid(),
-  amountPaise: z.number().int().positive(),
-  method: z.enum(["cash", "upi", "bank_transfer", "cheque", "other"]),
-  idempotencyKey: z.string().min(8).max(128),
-  note: z.string().max(500).optional(),
 });
 
 // Record an offline payment against an invoice. Gateway payments arrive via
@@ -583,13 +553,6 @@ router.get("/invoices/:invoiceId/pdf", async (req: AuthRequest, res, next) => {
     res.setHeader("Cache-Control", "private, no-store");
     res.end(pdf);
   } catch (err) { next(err); }
-});
-
-const refundSchema = z.object({
-  invoiceId: z.string().uuid(),
-  amountPaise: z.number().int().positive(),
-  reason: z.string().max(500).optional(),
-  idempotencyKey: z.string().min(8).max(128),
 });
 
 // Manual refund (E6.6). Records an immutable refund entry, decrements the paid

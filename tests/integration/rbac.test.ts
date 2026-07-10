@@ -331,6 +331,45 @@ describe("C5: tutor profiles are org-scoped", () => {
       expect(res.rows.length).toBe(1);
     })
   );
+
+  // Real bug found rebuilding tutor verification into the People workspace
+  // (DEV_PLAN §2a Stage 2 item 1): the old policy's `with check` only ever
+  // allowed `user_id = auth.uid()`, so an admin's UPDATE of someone else's
+  // `is_verified` always satisfied `using` but always failed `with check` —
+  // 0 rows updated, no error. Fixed in migration 20260710140000.
+  it(
+    "an org admin can verify another tutor's profile",
+    withFixtures(async (tx, as) => {
+      await as(uids.admin, "authenticated");
+      const res = await tx.query(
+        `update tutor_profiles set is_verified = true where user_id = $1 returning user_id`,
+        [uids.tutor]
+      );
+      expect(res.rows.length).toBe(1);
+    })
+  );
+
+  it(
+    "a non-admin staff member (frontdesk) cannot verify a tutor",
+    withFixtures(async (tx, as) => {
+      await as(uids.frontdesk, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `update tutor_profiles set is_verified = true where user_id = $1`,
+        [uids.tutor]
+      ));
+    })
+  );
+
+  it(
+    "a tutor cannot verify another tutor's profile",
+    withFixtures(async (tx, as) => {
+      await as(uids.tutor2, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `update tutor_profiles set is_verified = true where user_id = $1`,
+        [uids.tutor]
+      ));
+    })
+  );
 });
 
 // ===================================================================
