@@ -4,7 +4,7 @@ _Rewritten from scratch on 2026-07-10, after the Firebase → self-hosted Supaba
 
 **Stack (current, verified):** React 19 + Vite + Tailwind 4 SPA, stateless Express API (`server/`), self-hosted Supabase (Postgres + RLS, GoTrue auth, Realtime, Storage), direct `pg` transactions for money/scheduling, Razorpay per-org payment links.
 
-**Audit basis:** every claim in "Current Status" was re-verified against the code on 2026-07-10: `tsc --noEmit` clean, 51/51 unit tests, 40/40 RLS integration tests (PGlite), production build passing. Nothing in this repo has ever run against a live Supabase instance or a browser; that gap defines the blocker list.
+**Audit basis:** every claim in "Current Status" was re-verified against the code on 2026-07-10: `tsc --noEmit` clean, 51/51 unit tests, 41/41 RLS integration tests (PGlite), production build passing. The app has run against the real Supabase project and production Vercel deploy this same day (HANDOFF §13–§15), but the specific flows below marked "not yet browser-verified" have not been exercised in a browser; that gap defines the blocker list.
 
 ---
 
@@ -19,7 +19,7 @@ _Rewritten from scratch on 2026-07-10, after the Firebase → self-hosted Supaba
 - **Scheduling:** server-side enrollment capacity + tutor conflict checks in transactions; session materialization (rolling 8-week window, idempotent, cron-triggered); the `class_sessions` three-array id-space model (`student_ids` record ids, `student_user_ids`/`parent_user_ids` auth uids) with `resolveUserIds()` as the mandatory write path.
 - **Today workspace (Epic 9):** pure tested core (`src/lib/today.ts`, 26 tests), session Line, one-tap optimistic attendance with undo-then-flush, attention queue, Pulse, admin per-tutor lanes. Legacy Dashboard deleted.
 - **Parent portal (Epic 10):** staff-minted single-use invites, phone-OTP redeem with DPDP consent capture, mobile-first portal (overview/invoices/wallet), Pay Now via hosted Razorpay page, WhatsApp share, PDF download.
-- **Security test suite:** `npm run test:rls` (40 assertions, PGlite, no Docker/Java) is the constitution. It has caught two real shipped bugs (profiles org immutability, class_sessions id-space). CI runs typecheck → unit → RLS → build.
+- **Security test suite:** `npm run test:rls` (41 assertions, PGlite, no Docker/Java) is the constitution. It has caught two real shipped bugs (profiles org immutability, class_sessions id-space). CI runs typecheck → unit → RLS → build.
 - **Hygiene:** Sentry (both sides, DSN-gated), pino with redaction, helmet, per-user rate limiting, JSON 404s, central error handler with Zod → 422, graceful shutdown, error boundaries per route, bounded + org-scoped queries throughout, INR formatting everywhere.
 
 ### Deferred by design (external blockers, not engineering)
@@ -30,6 +30,8 @@ _Rewritten from scratch on 2026-07-10, after the Firebase → self-hosted Supaba
 ### Built but not yet fully runtime-verified (the single biggest remaining risk)
 
 **Update 2026-07-10:** the app is live on Vercel against the real Supabase project, and **signup → email/password auth → org bootstrap → tutor onboarding now works end to end for the first time** (HANDOFF.md §14). Getting there required fixing two infrastructure bugs that had nothing to do with application logic — Vercel silently never registered the API as a function (gitignored build artifact invisible to its pre-build scan), and the server was verifying tokens against an entirely different Supabase project than the one actually in use (a Vercel↔Supabase integration mis-wiring, not a code bug). Both are fixed and documented in HANDOFF §14 as a general lesson for this stack. Still genuinely unverified: booking a session, student-sees-own-session (the §11.4 regression), attendance, invoicing, Realtime subscriptions (all 63 `postgres_changes` call sites), Storage upload/download, Google/phone auth providers, and any Razorpay flow. Treat those as "expected working, not confirmed" until Blocker 3's remaining steps are run.
+
+**Update 2026-07-10 (later same day, HANDOFF §15):** the three UI/flow gaps that were blocking that remaining walkthrough are now built — a courses-management screen (Tech Debt #19), Add Class pricing/fee controls defaulting to Per Session (Tech Debt #20), and a student self-onboarding invite flow mirroring the parent one (Tech Debt #16, new `student_invites` table + `server/routes/students.ts`). None of the three have been exercised in a browser yet — they're built and statically/RLS-verified only, same "expected working, not confirmed" caveat as the rest of this section.
 
 ### Not started
 

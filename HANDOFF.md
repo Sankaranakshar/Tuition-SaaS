@@ -1,6 +1,6 @@
 # ClassStackr — Engineering Handoff
 
-_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12), the first live deploy to Vercel + Supabase Cloud (§13), then a multi-stage incident chase that got the tutor onboarding flow fully working end to end for the first time (§14). **Picking up in a new session? Read §14.5 first — it's a one-screen snapshot of exactly what's live, what's broken, and what's next.**_
+_Last updated: 2026-07-10. Author: Firebase → self-hosted Supabase/Postgres migration (§11), a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12), the first live deploy to Vercel + Supabase Cloud (§13), a multi-stage incident chase that got the tutor onboarding flow fully working end to end for the first time (§14), then the Courses UI, Add Class pricing fields, student self-onboarding, and a tech-debt cleanup pass (§15). **Picking up in a new session? Read §15.6 first — it's a one-screen snapshot of exactly what's live, what's broken, and what's next.**_
 
 This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked on you, and what comes next.
 
@@ -446,7 +446,7 @@ Across this incident, "wait for the deploy, then retest" produced false confiden
 - **`DATABASE_URL` was initially set to a garbage value** (`getaddrinfo ENOTFOUND base` — a malformed/wrong-source connection string, likely copied from a Vercel-native `POSTGRES_URL` var rather than the actual Supabase project's own pooler string) before being corrected to the `cwugpiernnwrhcximjwh` project's transaction-pooler URI directly from its Connect dialog. Same category of "trust the integration's auto-populated var less than the source project's own dashboard" lesson as Bug 2 (§14.2).
 - **The Add Class modal cannot produce a billable class at all** — confirmed live while testing attendance→invoice: marking attendance on a class created through the current UI never bills, because the UI has no control for pricing model or fee amount (both silently default to Monthly/₹0, and the billing route only bills `PER_SESSION`-priced templates). See DEV_PLAN Tech Debt #20. Verified via direct SQL (`class_templates.fee_amount` was `0.00` on every template created through the app) rather than pursuing a UI fix in this pass — deferred to future work.
 
-### 14.5 Current status snapshot (end of this session, 2026-07-10) — read this first if picking up cold
+### 14.5 Current status snapshot (end of this session, 2026-07-10) — superseded, see §15.6
 
 **Live environment:** production app at `https://tuition-saas-two.vercel.app`, Vercel project `tuition-saas`, backend Supabase Cloud project `cwugpiernnwrhcximjwh` ("supabase-bronze-pendant", region `ap-south-1`). Repo `Sankaranakshar/Tuition-SaaS`, branch `main`, HEAD at commit `6c08c6c` as of this writing.
 
@@ -480,3 +480,79 @@ Across this incident, "wait for the deploy, then retest" produced false confiden
 5. Razorpay live KYC + webhook wiring is the long-lead item — start whenever, doesn't block anything else.
 
 **Read order for a fresh session:** this §14.5 → §14.1–14.4 for the incident details if something in the above breaks again → DEV_PLAN.md's Immediate Blockers and Tech Debt #16–#20 for the prioritized task list.
+
+---
+
+## 15. Courses UI, Add Class pricing, student self-onboarding, and a tech-debt cleanup pass (2026-07-10)
+
+Three commits landed this session, closing Tech Debt #16/#19/#20 (all three items §14.5 called out as immediate next steps) plus a batch of smaller cleanup items (#2, #6, #9, #10). This section also documents two operational lessons from the session — a false alarm about "empty" production env vars, and a real gap in how deploys were being verified — because both are easy to repeat on this stack.
+
+### 15.1 Courses management screen + Add Class pricing fields (Tech Debt #19, #20) — commit `69babe5`
+
+- New [Courses.tsx](src/pages/Courses.tsx) at `/app/courses` (reachable via the command palette, not the icon rail — same pattern as Leads/Documents): list, create, delete. Direct client writes, matching the existing `courses_write` RLS policy (org-admin). Closes the "every new org's course dropdown is permanently empty" blocker.
+- [Calendar.tsx](src/pages/Calendar.tsx)'s Add Class modal now has real Pricing Model (Per Session / Monthly) and Fee Amount form controls, wired to the `pricingModel`/`feeAmount` state that was already declared but never rendered. Default changed from `MONTHLY` to `PER_SESSION` so a class created without touching the field is still billable — closes the "attendance never bills" gap from §14.4.
+
+### 15.2 Env var incident: a false alarm, then real corrections — no commit (Vercel dashboard only)
+
+While preparing to test these changes locally, `vercel env pull` showed `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, and `DATABASE_URL` as **empty strings** in the Production environment. This was initially (wrongly) reported as "production is broken." It wasn't, or at least not provably so from that signal alone:
+
+**The false-alarm mechanism:** Vercel env vars marked **"Sensitive"** are write-only — `vercel env pull` and the dashboard both return them as empty by design, for *every* sensitive var regardless of who set it or when (confirmed by checking `STORAGE_SUPABASE_JWT_SECRET`, a var this session never touched, which also pulled empty). An empty pull is not evidence a var is unset. **Lesson: never diagnose a Vercel env var as "missing" from a `pull`/dashboard read alone if it might be marked Sensitive — check `vercel env ls` for existence/recency instead, and if you must confirm the *value*, that requires either a non-sensitive re-add or trusting the source of truth (the dashboard of the service that issued the credential).**
+
+That said, real corrections were still made (with values pasted directly by the founder, sourced fresh from the Supabase dashboard for project `cwugpiernnwrhcximjwh`): `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` (Legacy JWT Secret), and `DATABASE_URL` (transaction pooler, port 6543, password URL-encoded — `*` → `%2A`, `$` → `%24`) were removed and re-added via `vercel env add ... --force` (existing entries don't get overwritten by `--force` alone; they must be `vercel env rm`'d first). `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` were re-set to values confirmed correct by decoding the JWT actually baked into the then-live production bundle (`grep -oE` for the `supabase.co` host and the JWT's `ref` claim) — a good general technique for verifying what a *running* deployment actually has, independent of what the dashboard currently shows.
+
+One real, low-severity, still-open finding from this pass: the non-sensitive `SUPABASE_ANON_KEY` var (different from `VITE_SUPABASE_ANON_KEY`) decodes to project ref `dnjjjzyvogqtsqupihcq` — the *other* wrong-project value from Bug 2 (§14.2). Confirmed harmless: `server/supabaseAdmin.ts` and `server/middleware/auth.ts` only ever read `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` — never `SUPABASE_ANON_KEY`. Left as-is; flagged here in case a future code path starts reading it.
+
+### 15.3 Student self-onboarding (Tech Debt #16) — commit `ede70a3`
+
+Migration `20260709021400_student_invites.sql` applied to the live Supabase project (`supabase db push`, confirmed via `supabase migration list` showing local↔remote match on all 14 migrations). New `student_invites` table mirrors `parent_invites` exactly — server-only, zero client read/write path (RLS enabled, no policies), verified with a new deny-all test in `tests/integration/rbac.test.ts` (41/41 green, was 40).
+
+[server/routes/students.ts](server/routes/students.ts) (new): staff mints an invite tied to an existing, unclaimed `students` roster row (`POST /invites`) → student previews it (`GET /invites/:token/preview`) → redeems it (`POST /redeem`), which sets `students.student_user_id` and grants the `student` org role via the same `setMembership()` helper the parent/tutor flows use.
+
+This also surfaced and fixed a real, previously-undiscovered dead-code bug: [Onboarding.tsx](src/pages/Onboarding.tsx)'s student branch used to upsert `full_name`/`grade`/`board`/`subjects_needed`/`learning_preferences` into `student_profiles` — but that table's actual schema (`supabase/migrations/20260709020100_schema.sql`) only has `user_id`, `organization_id`, `parent_id`, `created_at`. This would have thrown a Postgres "column does not exist" error the moment a student ever got past the missing-organization gap that §14.4 documented. It never fired in practice because the gap blocked it first — fixing the gap without checking this would have traded one broken error message for another. Replaced with an invite-code UI mirroring the parent flow; the profile-form fields are gone entirely since claiming an existing staff-created roster row means that data already exists.
+
+New "Student Portal Access" invite card in `StudentProfile.tsx` (hidden once a student has already claimed the row), `?studentInvite=TOKEN` deep-link capture in `App.tsx` matching the existing parent-invite pattern.
+
+**Not done:** no browser walkthrough of the invite → redeem flow itself.
+
+### 15.4 Tech debt cleanup pass (#2, #6, #8, #9, #10) — commit `c907fd7`
+
+- **#2 (done):** `Invoices.tsx`'s `downloadPDF` now calls the canonical server-rendered PDF (`GET /api/v1/billing/invoices/:id/pdf` via `downloadInvoicePdf()`) instead of rendering its own jsPDF copy that could diverge from what a parent/accountant actually see. Removed the `pdfTemplate` (logo/footer/address) settings from `BillingInvoiceSettings.tsx` since they only ever fed the deleted renderer — the server PDF never read them, so leaving that settings UI in place would have silently done nothing the moment a user configured it.
+- **#6 (done):** `recharts` removed from `package.json` (confirmed zero imports anywhere in `src/`, 36 transitive packages dropped). The two remaining jsPDF usages — `StudentProfile.tsx` and `AcademicProgress.tsx`'s progress-report generators, which are a genuinely different document from an invoice, not a duplicate — now dynamically `import("jspdf")`/`import("jspdf-autotable")` inside the click handler instead of a static top-level import, matching the existing `exceljs` lazy-load convention. Confirmed in the build output that `jspdf.es.min` etc. are their own chunks now. **Micro-lesson while doing this:** `jspdf`'s `default` export is not reliably a constructor under plain Node ESM interop (`new jspdf.default()` throws `not a constructor`) — only the named `jsPDF` export is reliable across environments. Vite's dev-server pre-bundling happens to normalize `default` too (verified via `preview_eval` against the actual dev server), but the code now uses the named export everywhere to not depend on that.
+- **#8 (corrected, not done):** the backlog described `profiles.organization_id` as a vestigial, safe-to-drop column. It isn't — `Today.tsx`'s admin per-tutor lanes (`loadTutors`) actively `.eq("organization_id", orgId)` on it and subscribe to it via a `postgres_changes` filter. Not authorization-bearing (RLS never trusts it), but genuinely load-bearing for a real feature. Dropping it as originally scoped would have broken the Today admin view. Left in place; DEV_PLAN.md's tech debt table corrected to say so, with the actual prerequisite (`loadTutors` would need to resolve tutor names via `organization_members` + `profiles.id` first) spelled out for whoever revisits it.
+- **#9 (done):** removed the `/api/settings` alias from `server/app.ts` — the only client code still calling it (`Settings.tsx`'s Google OAuth connect/disconnect fetches) now calls `/api/v1/settings/...` directly. Found and fixed a real, separate bug in the process: `Settings.tsx`'s Google OAuth setup instructions displayed `/api/settings/google/callback` as the redirect URI to register in Google Cloud Console, but `server/routes/settings.ts` actually sends `/api/v1/settings/google/callback` as the real `redirect_uri` — anyone who followed the on-screen instructions literally would have hit `redirect_uri_mismatch` the first time they tried to connect Google Calendar. `.env.example` was checked and found already Supabase-era (no stale header). The ~30 files with historical Firestore-era *comments* were deliberately left alone — per HANDOFF's own stated philosophy (§0/intro) those are intentional migration-history documentation, not cruft, and a blanket sweep would cost far more than the item's 0.5 ed estimate for negative value.
+- **#10 (done):** removed `metadata.json` (unreferenced anywhere — confirmed via grep across `src`/`server`/config files). `vite.config.ts` rewritten to drop the AI-Studio-era `GEMINI_API_KEY` Vite `define` (confirmed unused anywhere in the app) and the `DISABLE_HMR` comment/logic, neither of which apply to this Vercel + local-dev setup.
+
+**Deliberately not touched:** #3 (Stage 2 rebuild — explicitly gated on the Stage 2 schedule), #4 (dual money columns — explicitly gated on "e2e verified first"), #5 (Realtime refetch — gated on "live Realtime observed"), #7 (multi-org membership assumption — gated on a product decision). Forcing any of these now would mean guessing at a decision that isn't an engineering call.
+
+### 15.5 Deploy mechanism: a real gap in how "confirmed live" was being checked
+
+After the first commit of this session (`69babe5`), a post-push check (new JS chunk hash, correct baked-in Supabase URL) was reported as "confirmed live." That check was real, but the *reasoning* about *why* a new deployment existed was wrong: this project's Vercel↔GitHub connection does not create a classic repo webhook (`gh api repos/.../hooks` returns `[]`), which was briefly misread as "there is no auto-deploy at all." That's incorrect — Vercel's official GitHub integration is a **GitHub App**, not a classic webhook, and it registers deployments visible via `gh api repos/.../deployments` (confirmed: a deployment record created by `vercel[bot]` exists for this session's exact commit SHAs). The founder confirmed the GitHub↔Vercel connection is real and auto-deploys every commit.
+
+**What actually happened, most likely:** the first commit's "confirmed live" check was probably validated by a deployment that auto-fired from the git push as intended. Later in the session, uncertainty about this led to one unnecessary manual `vercel deploy --prod --yes` — redundant with, not a replacement for, the auto-deploy, and the permission system correctly flagged it as an under-authorized action after the fact. No harm resulted (it deployed the same already-correct commit), but it's a clean example of over-correcting on an incomplete signal instead of checking the more direct one (`gh api repos/OWNER/REPO/deployments`) first.
+
+**Lesson for next time:** to check "did my push actually deploy," query `gh api repos/{owner}/{repo}/deployments` (filter/sort by `sha`) rather than inferring integration status from the classic webhooks endpoint, and don't reach for a manual `vercel deploy` unless auto-deploy is *actually* confirmed absent by that check.
+
+### 15.6 Current status snapshot (end of this session, 2026-07-10) — read this first if picking up cold
+
+**Live environment:** unchanged from §14.5 — `https://tuition-saas-two.vercel.app`, Vercel project `tuition-saas`, Supabase Cloud project `cwugpiernnwrhcximjwh`. Repo `Sankaranakshar/Tuition-SaaS`, branch `main`, HEAD at commit `c907fd7` as of this writing. GitHub → Vercel auto-deploy confirmed real (§15.5) — a plain `git push` to `main` is sufficient, no manual deploy step needed.
+
+**What's confirmed working, verified live (not just built/tested), in addition to everything in §14.5:**
+- Courses management screen (`/app/courses`) — Tech Debt #19 closed
+- Add Class modal pricing/fee controls, defaulting to Per Session — Tech Debt #20 closed
+- Migration `20260709021400_student_invites` applied and confirmed synced
+- `npm run test:rls` 41/41, `npm test` 51/51, `tsc --noEmit` clean, `npm run build` clean — all re-verified after every change in this session
+
+**What's confirmed NOT working / not yet reachable (updated from §14.5):**
+- Attendance → invoice/wallet billing — should now be reachable via a `PER_SESSION` class created through the new pricing UI, but **not yet re-verified live this session** (deferred per explicit instruction)
+- Student self-onboarding invite/redeem flow — built (§15.3), **not yet browser-verified**
+- Student-sees-own-session (the §11.4 regression) — still never actually checked
+- Parent portal, Google OAuth, phone OTP, Razorpay — still none configured or tested
+- Realtime subscriptions, Storage upload/download — still untested
+
+**Immediate next steps, in priority order:**
+1. Run the full wedge-demo walkthrough live: add a student via the new invite flow → book a `PER_SESSION` class via Calendar → mark attendance from Today → confirm it actually bills (invoice/wallet) → confirm the student's own account sees their session (the §11.4 regression check, finally exercisable now that Tech Debt #16 is closed).
+2. Configure Google OAuth + phone OTP in Supabase Auth providers if parent portal / broader login testing is next.
+3. Razorpay live KYC + webhook wiring is the long-lead item — start whenever, doesn't block anything else.
+4. The gated tech debt items (#3 Stage 2 rebuild, #4 dual money columns, #5 Realtime perf, #7 multi-org membership) each need their stated prerequisite (a live e2e pass, a product decision, or the Stage 2 schedule) before they're actionable — not before.
+
+**Read order for a fresh session:** this §15.6 → §15.1–15.5 for this session's detail → §14.1–14.4 for the still-relevant infra incident writeups → DEV_PLAN.md's Immediate Blockers and remaining Tech Debt items for the prioritized task list.
