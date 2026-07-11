@@ -6,6 +6,9 @@ import { writeAudit } from "../utils/audit.ts";
 import {
   enrollRequestSchema as enrollSchema,
   createSessionRequestSchema as sessionSchema,
+  rescheduleSessionRequestSchema as rescheduleSchema,
+  updateTemplateScopeSchema as templateScopeSchema,
+  findGapsQuerySchema as gapsQuerySchema,
 } from "../../shared/schemas/scheduling.ts";
 
 // Capacity and double-booking checks used to run client-side (read-then-write
@@ -93,14 +96,19 @@ async function resolveUserIds(
   };
 }
 
-/** Range-overlap conflict check for a tutor, scoped by an advisory lock on (org, tutor). */
+/**
+ * Range-overlap conflict check for a tutor, scoped by an advisory lock on
+ * (org, tutor). `excludeSessionId` lets a reschedule of an existing session
+ * re-check against every *other* session without tripping over itself.
+ */
 async function checkTutorConflictAndInsert(
   client: PoolClient,
   orgId: string,
   tutorId: string,
   startTime: string,
   endTime: string,
-  insert: () => Promise<string>
+  insert: () => Promise<string>,
+  excludeSessionId?: string
 ): Promise<string> {
   // pg_advisory_xact_lock serializes all session-creation attempts for this
   // (org, tutor) pair and auto-releases at COMMIT/ROLLBACK — no manual unlock.
@@ -108,7 +116,7 @@ async function checkTutorConflictAndInsert(
 
   const windowStart = new Date(new Date(startTime).getTime() - 12 * 3600 * 1000).toISOString();
   const conflicts = await client.query(
-    `select start_time, end_time from class_sessions
+    `select id, start_time, end_time from class_sessions
      where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
        and start_time >= $3 and start_time < $4`,
     [orgId, tutorId, windowStart, endTime]
@@ -116,6 +124,7 @@ async function checkTutorConflictAndInsert(
   const newStart = new Date(startTime).getTime();
   const newEnd = new Date(endTime).getTime();
   for (const row of conflicts.rows) {
+    if (excludeSessionId && row.id === excludeSessionId) continue;
     const exStart = new Date(row.start_time).getTime();
     const exEnd = new Date(row.end_time).getTime();
     if (newStart < exEnd && newEnd > exStart) {
@@ -147,6 +156,52 @@ router.post("/sessions", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, 
       })
     );
 
+    res.json({ ok: true, sessionId });
+  } catch (err) { next(err); }
+});
+
+// Single-session reschedule (drag-move/resize on the Schedule workspace).
+// Previously the client wrote start_time/end_time directly via the
+// class_sessions_update RLS policy, which has no conflict awareness at all —
+// two staff dragging sessions concurrently, or one drag onto an occupied
+// slot, would both silently succeed. This route runs the same advisory-lock
+// + range-overlap check used at creation, just excluding the row itself.
+router.patch("/sessions/:id", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, next) => {
+  try {
+    const body = rescheduleSchema.parse(req.body);
+    const orgId = req.user!.organizationId!;
+    const sessionId = req.params.id;
+
+    await withTransaction(async (client) => {
+      const existing = await client.query(
+        `select organization_id, tutor_id, status from class_sessions where id = $1`,
+        [sessionId]
+      );
+      if (existing.rowCount === 0) {
+        throw Object.assign(new Error("Session not found"), { status: 404, code: "not_found" });
+      }
+      const row = existing.rows[0];
+      if (row.organization_id !== orgId) {
+        throw Object.assign(new Error("Session belongs to another organization"), { status: 403, code: "forbidden" });
+      }
+      if (row.status === "completed") {
+        throw Object.assign(new Error("Cannot reschedule a completed session"), { status: 409, code: "already_completed" });
+      }
+
+      await checkTutorConflictAndInsert(
+        client, orgId, row.tutor_id, body.startTime, body.endTime,
+        async () => {
+          await client.query(
+            `update class_sessions set start_time = $1, end_time = $2, updated_at = now() where id = $3`,
+            [body.startTime, body.endTime, sessionId]
+          );
+          return sessionId;
+        },
+        sessionId
+      );
+    });
+
+    await writeAudit(orgId, req.user!.id, "session.reschedule", "class_sessions", sessionId, { startTime: body.startTime, endTime: body.endTime });
     res.json({ ok: true, sessionId });
   } catch (err) { next(err); }
 });
@@ -256,6 +311,125 @@ router.post("/materialize", requireRole(...CAN_SCHEDULE), async (req: AuthReques
       aggregate.conflicts.push(...r.conflicts);
     }
     res.json({ ok: true, ...aggregate });
+  } catch (err) { next(err); }
+});
+
+// Recurring-edit scope: "this and future" and "all" both resolve to the same
+// operation — update the template, then drop every not-yet-completed,
+// not-cancelled materialized session and rematerialize through the same
+// conflict-checked path a fresh template would use. Genuinely retroactive
+// "all" (touching completed sessions) isn't offered — those are historical
+// record and class_sessions_update's RLS already blocks that write anyway.
+router.patch("/templates/:id", requireRole("owner", "admin"), async (req: AuthRequest, res, next) => {
+  try {
+    const body = templateScopeSchema.parse(req.body);
+    const orgId = req.user!.organizationId!;
+    const templateId = req.params.id;
+
+    const templateRes = await pool.query(
+      `select id, organization_id, type, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes, is_online, room_number
+       from class_templates where id = $1`,
+      [templateId]
+    );
+    if (templateRes.rowCount === 0) {
+      throw Object.assign(new Error("Class template not found"), { status: 404, code: "not_found" });
+    }
+    const existing = templateRes.rows[0] as Template;
+    if (existing.organization_id !== orgId) {
+      throw Object.assign(new Error("Template belongs to another organization"), { status: 403, code: "forbidden" });
+    }
+
+    const updateRes = await pool.query(
+      `update class_templates set
+         days_of_week = coalesce($1, days_of_week),
+         start_hour = coalesce($2, start_hour),
+         start_minute = coalesce($3, start_minute),
+         duration_minutes = coalesce($4, duration_minutes)
+       where id = $5
+       returning id, organization_id, type, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes, is_online, room_number`,
+      [body.daysOfWeek ?? null, body.startHour ?? null, body.startMinute ?? null, body.durationMinutes ?? null, templateId]
+    );
+    const updated = updateRes.rows[0] as Template;
+
+    // Drop future, still-scheduled sessions for this template so
+    // materializeTemplate can lay down fresh, conflict-checked ones at the
+    // new days/time — a plain UPDATE of start_time/end_time in place would
+    // skip the conflict check entirely.
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    await pool.query(
+      `delete from class_sessions
+       where template_id = $1 and status = 'scheduled' and materialized_date >= $2`,
+      [templateId, today.toISOString().split("T")[0]]
+    );
+
+    const result = await materializeTemplate(updated);
+    await writeAudit(orgId, req.user!.id, "template.update_scope", "class_templates", templateId, { scope: body.scope, ...result });
+    res.json({ ok: true, ...result });
+  } catch (err) { next(err); }
+});
+
+// "Find a gap": scan the tutor's declared availability against their
+// existing sessions over the next 14 days and return open slots of the
+// requested duration. Read-only — no writes, no conflict lock needed.
+router.get("/gaps", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, next) => {
+  try {
+    const query = gapsQuerySchema.parse(req.query);
+    const orgId = req.user!.organizationId!;
+    const LOOKAHEAD_DAYS = 14;
+    const MAX_SLOTS = 10;
+
+    const availabilityRes = await pool.query(
+      `select day_of_week, start_time, end_time from tutor_availability
+       where organization_id = $1 and tutor_id = $2`,
+      [orgId, query.tutorId]
+    );
+    if (availabilityRes.rowCount === 0) {
+      return res.json({ ok: true, slots: [] });
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const horizon = new Date(today.getTime() + LOOKAHEAD_DAYS * 24 * 3600 * 1000);
+
+    const sessionsRes = await pool.query(
+      `select start_time, end_time from class_sessions
+       where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
+         and start_time >= $3 and start_time < $4`,
+      [orgId, query.tutorId, today.toISOString(), horizon.toISOString()]
+    );
+    const busy = sessionsRes.rows.map((r) => ({ start: new Date(r.start_time).getTime(), end: new Date(r.end_time).getTime() }));
+
+    const durationMs = query.durationMinutes * 60 * 1000;
+    const slots: { start: string; end: string }[] = [];
+    const now = Date.now();
+
+    for (let d = new Date(today); d <= horizon && slots.length < MAX_SLOTS; d.setDate(d.getDate() + 1)) {
+      const dayAvailability = availabilityRes.rows.filter((a) => a.day_of_week === d.getDay());
+      for (const window of dayAvailability) {
+        if (slots.length >= MAX_SLOTS) break;
+        const [startH, startM] = String(window.start_time).split(":").map(Number);
+        const [endH, endM] = String(window.end_time).split(":").map(Number);
+        const windowStart = new Date(d);
+        windowStart.setHours(startH, startM, 0, 0);
+        const windowEnd = new Date(d);
+        windowEnd.setHours(endH, endM, 0, 0);
+
+        // 15-minute step across the availability window looking for a gap
+        // of at least durationMinutes that doesn't overlap any busy session.
+        for (let cursor = windowStart.getTime(); cursor + durationMs <= windowEnd.getTime(); cursor += 15 * 60 * 1000) {
+          if (cursor < now) continue;
+          const slotEnd = cursor + durationMs;
+          const overlaps = busy.some((b) => cursor < b.end && slotEnd > b.start);
+          if (!overlaps) {
+            slots.push({ start: new Date(cursor).toISOString(), end: new Date(slotEnd).toISOString() });
+            if (slots.length >= MAX_SLOTS) break;
+          }
+        }
+      }
+    }
+
+    res.json({ ok: true, slots });
   } catch (err) { next(err); }
 });
 

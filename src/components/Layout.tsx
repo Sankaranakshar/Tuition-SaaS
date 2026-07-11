@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import CommandPalette from "./CommandPalette";
+import { useNotificationsList } from "../hooks/useInbox";
 
 // The shell (DEV_PLAN E5.2): a 56px icon rail with five workspaces plus
 // settings, and a topbar whose search box is a real command palette
@@ -29,6 +30,8 @@ export default function Layout() {
   const [showRoleDropdown, setShowRoleDropdown] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { data: notifications } = useNotificationsList();
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -57,22 +60,22 @@ export default function Layout() {
   const rail = isStudent
     ? [
         { to: "/app", label: t("nav.today"), icon: LayoutDashboard, end: true },
-        { to: "/app/timetable", label: t("nav.schedule"), icon: Calendar },
+        { to: "/app/my-schedule", label: t("nav.schedule"), icon: Calendar },
         { to: "/app/my-story", label: t("nav.learn"), icon: BookOpen },
         { to: "/app/money", label: t("nav.money"), icon: Wallet },
-        { to: "/app/messaging", label: t("nav.inbox"), icon: MessageSquare },
+        { to: "/app/inbox", label: t("nav.inbox"), icon: MessageSquare },
       ]
     : isParent
     ? [
         { to: "/app", label: "My children", icon: LayoutDashboard, end: true },
-        { to: "/app/messaging", label: t("nav.inbox"), icon: MessageSquare },
+        { to: "/app/inbox", label: t("nav.inbox"), icon: MessageSquare },
       ]
     : [
         { to: "/app", label: t("nav.today"), icon: LayoutDashboard, end: true },
         { to: "/app/people", label: t("nav.people"), icon: Users },
-        { to: "/app/calendar", label: t("nav.schedule"), icon: Calendar },
+        { to: "/app/schedule", label: t("nav.schedule"), icon: Calendar },
         { to: "/app/money", label: t("nav.money"), icon: Wallet },
-        { to: "/app/messaging", label: t("nav.inbox"), icon: MessageSquare },
+        { to: "/app/inbox", label: t("nav.inbox"), icon: MessageSquare },
       ];
 
   const settingsPath = isStudent || isParent ? "/app/preferences" : "/app/settings";
@@ -153,11 +156,14 @@ export default function Layout() {
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => navigate("/app/notifications")}
+              onClick={() => navigate("/app/inbox?segment=unread")}
               className="relative flex h-9 w-9 items-center justify-center rounded-[6px] text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]"
               title={t("common.notifications")}
             >
               <Bell className="h-[18px] w-[18px]" strokeWidth={1.75} />
+              {unreadCount > 0 && (
+                <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-[var(--cs-danger)]" />
+              )}
             </button>
 
             <div className="relative flex items-center" ref={dropdownRef}>

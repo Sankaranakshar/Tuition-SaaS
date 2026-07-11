@@ -20,18 +20,15 @@ const HowItWorks = lazy(() => import("./pages/public/HowItWorks"));
 const Today = lazy(() => import("./pages/Today"));
 const People = lazy(() => import("./pages/People"));
 const StudentStory = lazy(() => import("./pages/StudentStory"));
-const Calendar = lazy(() => import("./pages/Calendar"));
+const Schedule = lazy(() => import("./pages/Schedule"));
 const Courses = lazy(() => import("./pages/Courses"));
 const Documents = lazy(() => import("./pages/Documents"));
 const Money = lazy(() => import("./pages/Money"));
 const Settings = lazy(() => import("./pages/Settings"));
-const Messaging = lazy(() => import("./pages/Messaging"));
+const Inbox = lazy(() => import("./pages/Inbox"));
 const Kit = lazy(() => import("./pages/Kit"));
 
 // Lazy load student pages
-const Notifications = lazy(() => import("./pages/Notifications"));
-const Timetable = lazy(() => import("./pages/Timetable"));
-const Bookings = lazy(() => import("./pages/Bookings"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Preferences = lazy(() => import("./pages/Preferences"));
 
@@ -111,19 +108,22 @@ export default function App() {
               <Route index element={<Today />} />
               <Route path="people" element={<People />} />
               <Route path="students/:id" element={<StudentStory />} />
-              <Route path="calendar" element={<Calendar />} />
+              <Route path="schedule" element={<Schedule />} />
+              <Route path="calendar" element={<Navigate to="/app/schedule" replace />} />
               <Route path="courses" element={<Courses />} />
               <Route path="documents" element={<Documents />} />
               <Route path="money" element={<Money />} />
-              <Route path="messaging" element={<Messaging />} />
+              <Route path="inbox" element={<Inbox />} />
+              <Route path="messaging" element={<Navigate to="/app/inbox" replace />} />
+              <Route path="notifications" element={<Navigate to="/app/inbox" replace />} />
               <Route path="settings" element={<Settings />} />
               <Route path="kit" element={<Kit />} />
-              
+
               {/* Student Routes */}
-              <Route path="notifications" element={<Notifications />} />
               <Route path="my-story" element={<StudentStory />} />
-              <Route path="timetable" element={<Timetable />} />
-              <Route path="bookings" element={<Bookings />} />
+              <Route path="my-schedule" element={<Schedule />} />
+              <Route path="timetable" element={<Navigate to="/app/my-schedule" replace />} />
+              <Route path="bookings" element={<Navigate to="/app/schedule" replace />} />
               <Route path="profile" element={<Profile />} />
               <Route path="preferences" element={<Preferences />} />
             </Route>

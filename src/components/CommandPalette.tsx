@@ -15,7 +15,6 @@ import {
   TrendingUp,
   Shield,
   GraduationCap,
-  Bell,
   LayoutGrid,
   User as UserIcon,
 } from "lucide-react";
@@ -92,22 +91,21 @@ export default function CommandPalette({ open, onOpenChange }: PaletteProps) {
     if (!isStaff) {
       return [
         { label: "Today", to: "/app", icon: LayoutDashboard },
-        { label: "Timetable", to: "/app/timetable", icon: Calendar },
+        { label: "Schedule", to: "/app/my-schedule", icon: Calendar },
         { label: "Study material", to: "/app/study-material", icon: BookOpen },
         { label: "Academic progress", to: "/app/academic-progress", icon: GraduationCap },
         { label: "Money", to: "/app/money", icon: Wallet },
-        { label: "Messages", to: "/app/messaging", icon: MessageSquare },
-        { label: "Notifications", to: "/app/notifications", icon: Bell },
+        { label: "Inbox", to: "/app/inbox", icon: MessageSquare },
         { label: "Profile", to: "/app/profile", icon: UserIcon },
       ];
     }
     const items = [
       { label: "Today", to: "/app", icon: LayoutDashboard },
       { label: "People", to: "/app/people?lens=students", icon: Users },
-      { label: "Calendar", to: "/app/calendar", icon: Calendar },
+      { label: "Schedule", to: "/app/schedule", icon: Calendar },
       { label: "Courses", to: "/app/courses", icon: Layers },
       { label: "Money", to: "/app/money", icon: Wallet },
-      { label: "Messages", to: "/app/messaging", icon: MessageSquare },
+      { label: "Inbox", to: "/app/inbox", icon: MessageSquare },
       { label: "Leads", to: "/app/people?lens=leads", icon: TrendingUp },
       { label: "Tutors", to: "/app/people?lens=tutors", icon: Shield },
       { label: "Documents", to: "/app/documents", icon: BookOpen },
@@ -160,7 +158,7 @@ export default function CommandPalette({ open, onOpenChange }: PaletteProps) {
                 <UserPlus className="h-4 w-4 text-[var(--cs-text-muted)]" strokeWidth={1.75} />
                 New student
               </Command.Item>
-              <Command.Item value="create schedule class" onSelect={() => go("/app/calendar?new=1")}
+              <Command.Item value="create schedule class" onSelect={() => go("/app/schedule?new=1")}
                 className="flex cursor-pointer items-center gap-3 rounded-[6px] px-3 py-2 text-sm text-[var(--cs-text)] data-[selected=true]:bg-[var(--cs-accent-soft)]">
                 <CalendarPlus className="h-4 w-4 text-[var(--cs-text-muted)]" strokeWidth={1.75} />
                 Schedule a class

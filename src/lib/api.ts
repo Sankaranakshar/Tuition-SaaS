@@ -15,6 +15,13 @@ import type {
   RefundRequest,
   RefundResponse,
 } from "../../shared/schemas/billing";
+import type { EnsureClassChannelResponse } from "../../shared/schemas/inbox";
+import type {
+  RescheduleSessionResponse,
+  UpdateTemplateScopeRequest,
+  UpdateTemplateScopeResponse,
+  FindGapsResponse,
+} from "../../shared/schemas/scheduling";
 
 // Thin authenticated client for the privileged API (/api/v1).
 // Money and attendance mutations must go through here; they have no
@@ -55,6 +62,29 @@ export function markAttendance(sessionId: string, records: { studentId: string; 
 
 export function cancelSession(sessionId: string) {
   return api<CancelSessionResponse>("/billing/sessions/cancel", { method: "POST", body: { sessionId } });
+}
+
+/** Drag-move/resize a single session; server re-checks the tutor conflict under an advisory lock — never a direct client write. */
+export function rescheduleSession(sessionId: string, startTime: string, endTime: string) {
+  return api<RescheduleSessionResponse>(`/scheduling/sessions/${sessionId}`, {
+    method: "PATCH",
+    body: { startTime, endTime },
+  });
+}
+
+/** Recurring-edit scope ("this and future" / "all"): updates the template, then rematerializes its future sessions. */
+export function updateTemplateScope(templateId: string, input: UpdateTemplateScopeRequest) {
+  return api<UpdateTemplateScopeResponse>(`/scheduling/templates/${templateId}`, {
+    method: "PATCH",
+    body: input,
+  });
+}
+
+/** "Find a gap": next open slots for a tutor of the requested duration, scanning declared availability minus existing sessions. */
+export function findScheduleGaps(tutorId: string, durationMinutes: number, templateId?: string) {
+  const params = new URLSearchParams({ tutorId, durationMinutes: String(durationMinutes) });
+  if (templateId) params.set("templateId", templateId);
+  return api<FindGapsResponse>(`/scheduling/gaps?${params.toString()}`);
 }
 
 export function recordManualPayment(input: Omit<RecordManualPaymentRequest, "idempotencyKey">) {
@@ -253,4 +283,33 @@ export function payInvoiceAsParent(invoiceId: string) {
   return api<{ ok: true; shortUrl: string; reused: boolean }>(`/billing/invoices/${invoiceId}/pay`, {
     method: "POST",
   });
+}
+
+/** Ensures a class channel conversation exists for this batch and refreshes it to the current enrolled roster (server-side — needs the student/parent-link lookup RLS doesn't grant clients). */
+export function ensureClassChannel(templateId: string) {
+  return api<EnsureClassChannelResponse>(`/inbox/class-channels/${templateId}/ensure`, { method: "POST" });
+}
+
+/**
+ * Creates the caller's organization with a real, user-chosen name (Epic
+ * 14.5's onboarding rebuild — previously only auto-called by
+ * AuthContext.loadUser() with a hardcoded "<name>'s Tutoring" default). A 409
+ * `already_member` is a benign race (e.g. AuthContext's own auto-bootstrap
+ * effect winning first) rather than a real failure — the caller should just
+ * re-resolve organizationId via checkAuth() either way, so this resolves
+ * `{ conflict: true }` instead of throwing.
+ */
+export async function bootstrapOrganization(
+  organizationName: string
+): Promise<{ organizationId: string | null; conflict: boolean }> {
+  try {
+    const result = await api<{ organizationId: string }>("/members/bootstrap", {
+      method: "POST",
+      body: { organizationName },
+    });
+    return { organizationId: result.organizationId, conflict: false };
+  } catch (err: any) {
+    if (err?.code === "already_member") return { organizationId: null, conflict: true };
+    throw err;
+  }
 }

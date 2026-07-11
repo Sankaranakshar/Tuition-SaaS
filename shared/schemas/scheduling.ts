@@ -31,3 +31,38 @@ export const materializeResponseSchema = z.object({
   conflicts: z.array(z.object({ templateId: z.string().uuid(), date: z.string() })),
 });
 export type MaterializeResponse = z.infer<typeof materializeResponseSchema>;
+
+export const rescheduleSessionRequestSchema = z.object({
+  startTime: z.string().min(1),
+  endTime: z.string().min(1),
+});
+export type RescheduleSessionRequest = z.infer<typeof rescheduleSessionRequestSchema>;
+export const rescheduleSessionResponseSchema = z.object({ ok: z.literal(true), sessionId: z.string().uuid() });
+export type RescheduleSessionResponse = z.infer<typeof rescheduleSessionResponseSchema>;
+
+export const updateTemplateScopeSchema = z.object({
+  scope: z.enum(["future", "all"]),
+  daysOfWeek: z.array(z.number().int().min(0).max(6)).optional(),
+  startHour: z.number().int().min(0).max(23).optional(),
+  startMinute: z.number().int().min(0).max(59).optional(),
+  durationMinutes: z.number().int().positive().optional(),
+});
+export type UpdateTemplateScopeRequest = z.infer<typeof updateTemplateScopeSchema>;
+export const updateTemplateScopeResponseSchema = z.object({
+  ok: z.literal(true),
+  created: z.array(z.string()),
+  conflicts: z.array(z.object({ templateId: z.string().uuid(), date: z.string() })),
+});
+export type UpdateTemplateScopeResponse = z.infer<typeof updateTemplateScopeResponseSchema>;
+
+export const findGapsQuerySchema = z.object({
+  tutorId: z.string().uuid(),
+  durationMinutes: z.coerce.number().int().positive(),
+  templateId: z.string().uuid().optional(),
+});
+export type FindGapsQuery = z.infer<typeof findGapsQuerySchema>;
+export const findGapsResponseSchema = z.object({
+  ok: z.literal(true),
+  slots: z.array(z.object({ start: z.string(), end: z.string() })),
+});
+export type FindGapsResponse = z.infer<typeof findGapsResponseSchema>;
