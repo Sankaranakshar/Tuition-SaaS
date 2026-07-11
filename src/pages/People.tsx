@@ -165,7 +165,7 @@ function StudentsLens({ search, user, navigate, t }: any) {
         {selected.size > 0 ? (
           <div className="flex items-center gap-2 text-sm">
             <span className="text-[var(--cs-text-muted)]">{selected.size} selected</span>
-            <button onClick={() => navigate("/app/messaging")} className="rounded-[6px] border border-[var(--cs-border)] px-2.5 py-1.5 hover:bg-[var(--cs-bg)]">
+            <button onClick={() => navigate("/app/inbox")} className="rounded-[6px] border border-[var(--cs-border)] px-2.5 py-1.5 hover:bg-[var(--cs-bg)]">
               <MessageSquare className="mr-1 inline h-3.5 w-3.5" /> {t("people.bulkMessage")}
             </button>
             {selected.size === 1 && (
@@ -210,7 +210,7 @@ function StudentsLens({ search, user, navigate, t }: any) {
                         <button onClick={(e) => { e.stopPropagation(); setDocsStudent(student); }} title="Documents" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
                           <FileText className="h-4 w-4" />
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); navigate("/app/messaging"); }} title="Message" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
+                        <button onClick={(e) => { e.stopPropagation(); navigate(`/app/inbox?student=${student.id}`); }} title="Message" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
                           <MessageSquare className="h-4 w-4" />
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); navigate(`/app/money?new=1&studentId=${student.id}`); }} title="Invoice" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
@@ -611,7 +611,7 @@ function ParentsLens({ search, navigate, t }: any) {
               name={parent.name}
               subtitle={parent.studentNames.length > 0 ? `Parent of ${parent.studentNames.join(", ")}` : "No linked student"}
               actions={
-                <button onClick={() => navigate("/app/messaging")} title="Message" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
+                <button onClick={() => navigate(`/app/inbox?participant=${parent.parentUserId}`)} title="Message" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
                   <MessageSquare className="h-4 w-4" />
                 </button>
               }

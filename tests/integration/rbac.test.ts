@@ -651,3 +651,129 @@ describe("student_notes: staff-only, never parent/student readable", () => {
     })
   );
 });
+
+// ===================================================================
+// Inbox workspace (DEV_PLAN §2a Stage 2 item 4, REDESIGN §6.5): conversations
+// gained an insert policy (previously nothing could create one at all —
+// Messaging.tsx wrote straight into messages), plus kind/anchor columns and
+// a per-viewer inbox_state table for triage (archive/snooze).
+// ===================================================================
+describe("conversations_insert: participant-of-a-DM, staff-only class_channel", () => {
+  it(
+    "a participant can create a DM they're part of",
+    withFixtures(async (tx, as) => {
+      await as(uids.parent, "authenticated");
+      const res = await tx.query(
+        `insert into conversations (organization_id, participant_ids, kind) values ($1, $2, 'dm') returning id`,
+        [ORG, [uids.parent, uids.tutor2]]
+      );
+      expect(res.rows.length).toBe(1);
+    })
+  );
+
+  it(
+    "cannot create a DM naming yourself as a participant but not actually included",
+    withFixtures(async (tx, as) => {
+      await as(uids.parent, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `insert into conversations (organization_id, participant_ids, kind) values ($1, $2, 'dm')`,
+        [ORG, [uids.tutor, uids.tutor2]]
+      ));
+    })
+  );
+
+  it(
+    "a non-staff participant cannot create a class_channel",
+    withFixtures(async (tx, as) => {
+      await as(uids.parent, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `insert into conversations (organization_id, participant_ids, kind) values ($1, $2, 'class_channel')`,
+        [ORG, [uids.parent]]
+      ));
+    })
+  );
+
+  it(
+    "staff can create a class_channel",
+    withFixtures(async (tx, as) => {
+      await as(uids.tutor, "authenticated");
+      const res = await tx.query(
+        `insert into conversations (organization_id, participant_ids, kind, anchor_type, anchor_id)
+         values ($1, $2, 'class_channel', 'class', $3) returning id`,
+        [ORG, [uids.tutor, uids.parent], ids.stu1]
+      );
+      expect(res.rows.length).toBe(1);
+    })
+  );
+
+  it(
+    "an outsider cannot plant a conversation under another org just by naming themselves a participant",
+    withFixtures(async (tx, as) => {
+      await as(uids.outsider, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `insert into conversations (organization_id, participant_ids, kind) values ($1, $2, 'dm')`,
+        [ORG, [uids.outsider, uids.tutor]]
+      ));
+    })
+  );
+
+  it(
+    "a class_channel conversation is only visible to the users in its participant_ids",
+    withFixtures(async (tx, as) => {
+      await as(uids.tutor, "authenticated");
+      const { rows } = await tx.query<{ id: string }>(
+        `insert into conversations (organization_id, participant_ids, kind, anchor_type, anchor_id)
+         values ($1, $2, 'class_channel', 'class', $3) returning id`,
+        [ORG, [uids.tutor, uids.parent], ids.stu1]
+      );
+      const channelId = rows[0].id;
+
+      await as(uids.parent, "authenticated");
+      const asParent = await tx.query(`select id from conversations where id = $1`, [channelId]);
+      expect(asParent.rows.length).toBe(1);
+
+      await as(uids.tutor2, "authenticated"); // staff, but not a participant of this channel
+      const asOtherTutor = await tx.query(`select id from conversations where id = $1`, [channelId]);
+      expect(asOtherTutor.rows.length).toBe(0);
+    })
+  );
+});
+
+describe("inbox_state: per-viewer triage, never shared", () => {
+  it(
+    "a user can set their own archive/snooze state on a conversation",
+    withFixtures(async (tx, as) => {
+      await as(uids.tutor, "authenticated");
+      const res = await tx.query(
+        `insert into inbox_state (conversation_id, user_id, archived_at) values ($1, $2, now()) returning conversation_id`,
+        [ids.conv1, uids.tutor]
+      );
+      expect(res.rows.length).toBe(1);
+    })
+  );
+
+  it(
+    "cannot forge another user's inbox_state row",
+    withFixtures(async (tx, as) => {
+      await as(uids.tutor, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `insert into inbox_state (conversation_id, user_id, archived_at) values ($1, $2, now())`,
+        [ids.conv1, uids.parent]
+      ));
+    })
+  );
+
+  it(
+    "one participant archiving a thread does not hide it from the other",
+    withFixtures(async (tx, as) => {
+      await as(uids.tutor, "authenticated");
+      await tx.query(`insert into inbox_state (conversation_id, user_id, archived_at) values ($1, $2, now())`, [ids.conv1, uids.tutor]);
+
+      await as(uids.parent, "authenticated");
+      const res = await tx.query(`select * from inbox_state where conversation_id = $1`, [ids.conv1]);
+      // The parent can only ever see their own row (none, in this case) — the
+      // tutor's archive is invisible to them, not shared thread state.
+      expect(res.rows.length).toBe(0);
+    })
+  );
+});

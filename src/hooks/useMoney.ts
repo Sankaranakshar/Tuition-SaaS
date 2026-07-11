@@ -1,61 +1,13 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
+import { useRealtimeList } from "./useRealtimeList";
 import type { MoneyInvoice, MoneyWallet, MoneyPayment } from "../lib/money";
 
 // One hook per Money data need (REDESIGN §6.4), mirroring the usePeople.ts
 // pattern: each owns its query, bounding, Realtime subscription, and error
 // state. Every subscribed table must already be in the supabase_realtime
 // publication (HANDOFF §16.2); invoices, payments, wallets, students are.
-
-function useRealtimeList<T>(
-  table: string,
-  orgId: string | undefined | null,
-  load: () => Promise<T[]>,
-  filter?: string
-) {
-  const [data, setData] = useState<T[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const refetch = useCallback(async () => {
-    try {
-      const rows = await load();
-      setData(rows);
-      setError(null);
-    } catch (err: any) {
-      setError(err?.message || `Could not load ${table}`);
-    } finally {
-      setLoading(false);
-    }
-  }, [load]);
-
-  useEffect(() => {
-    if (!orgId) return;
-    let cancelled = false;
-    (async () => {
-      if (cancelled) return;
-      await refetch();
-    })();
-
-    const channel = supabase
-      .channel(`money-${table}-${orgId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table, filter: filter ?? `organization_id=eq.${orgId}` },
-        () => refetch()
-      )
-      .subscribe();
-
-    return () => {
-      cancelled = true;
-      supabase.removeChannel(channel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, table]);
-
-  return { data, loading, error, refetch };
-}
 
 export interface MoneyInvoiceRow extends MoneyInvoice {
   invoiceNumber?: string | null;
@@ -102,7 +54,7 @@ export function useMoneyInvoices() {
       tutorId: row.tutor_id,
     }));
   }, [orgId, user?.role, user?.id]);
-  return useRealtimeList<MoneyInvoiceRow>("invoices", orgId, load);
+  return useRealtimeList<MoneyInvoiceRow>("money", "invoices", orgId, load);
 }
 
 export function useMoneyWallets() {
@@ -124,7 +76,7 @@ export function useMoneyWallets() {
       balanceCurrencyPaise: Math.round((row.balance_currency || 0) * 100),
     }));
   }, [orgId]);
-  return useRealtimeList<MoneyWallet>("wallets", orgId, load);
+  return useRealtimeList<MoneyWallet>("money", "wallets", orgId, load);
 }
 
 export function useMoneyPayments() {
@@ -148,6 +100,7 @@ export function useMoneyPayments() {
     }));
   }, [orgId]);
   return useRealtimeList<MoneyPayment & { id: string; invoiceId: string | null; method?: string | null }>(
+    "money",
     "payments",
     orgId,
     load

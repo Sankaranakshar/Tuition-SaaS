@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
+import { useRealtimeList } from "./useRealtimeList";
 import type { TodayInvoice, TodayAttendance } from "../lib/today";
 import type { PeopleStudent, PeopleLead } from "../lib/people";
 
@@ -16,55 +17,6 @@ export interface StudentRow extends PeopleStudent {
   grade?: string | null;
   subject?: string | null;
   tutorId?: string | null;
-}
-
-function useRealtimeList<T>(
-  table: string,
-  orgId: string | undefined | null,
-  load: () => Promise<T[]>,
-  filter?: string
-) {
-  const [data, setData] = useState<T[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const refetch = useCallback(async () => {
-    try {
-      const rows = await load();
-      setData(rows);
-      setError(null);
-    } catch (err: any) {
-      setError(err?.message || `Could not load ${table}`);
-    } finally {
-      setLoading(false);
-    }
-  }, [load]);
-
-  useEffect(() => {
-    if (!orgId) return;
-    let cancelled = false;
-    (async () => {
-      if (cancelled) return;
-      await refetch();
-    })();
-
-    const channel = supabase
-      .channel(`people-${table}-${orgId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table, filter: filter ?? `organization_id=eq.${orgId}` },
-        () => refetch()
-      )
-      .subscribe();
-
-    return () => {
-      cancelled = true;
-      supabase.removeChannel(channel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, table]);
-
-  return { data, loading, error, refetch };
 }
 
 export function useStudentsList() {
@@ -88,7 +40,7 @@ export function useStudentsList() {
       createdAt: row.created_at,
     }));
   }, [orgId, user?.role, user?.id]);
-  return useRealtimeList<StudentRow>("students", orgId, load);
+  return useRealtimeList<StudentRow>("people", "students", orgId, load);
 }
 
 export function useStudentInvoices() {
@@ -111,7 +63,7 @@ export function useStudentInvoices() {
       paidPaise: row.paid_paise,
     }));
   }, [orgId]);
-  return useRealtimeList<TodayInvoice>("invoices", orgId, load);
+  return useRealtimeList<TodayInvoice>("people", "invoices", orgId, load);
 }
 
 export function useStudentAttendance() {
@@ -132,7 +84,7 @@ export function useStudentAttendance() {
       sessionStart: row.session_start,
     }));
   }, [orgId]);
-  return useRealtimeList<TodayAttendance>("attendance_records", orgId, load);
+  return useRealtimeList<TodayAttendance>("people", "attendance_records", orgId, load);
 }
 
 export function useLeadsList() {
@@ -156,7 +108,7 @@ export function useLeadsList() {
       updatedAt: row.updated_at,
     }));
   }, [orgId]);
-  return useRealtimeList<PeopleLead>("leads", orgId, load);
+  return useRealtimeList<PeopleLead>("people", "leads", orgId, load);
 }
 
 export interface ParentRow {
@@ -207,7 +159,7 @@ export function useParentsList() {
       };
     });
   }, [orgId]);
-  return useRealtimeList<ParentRow>("parent_links", orgId, load);
+  return useRealtimeList<ParentRow>("people", "parent_links", orgId, load);
 }
 
 export interface TutorRow {
@@ -235,5 +187,5 @@ export function useTutorsList() {
       isVerified: !!row.is_verified,
     }));
   }, [orgId]);
-  return useRealtimeList<TutorRow>("tutor_profiles", orgId, load);
+  return useRealtimeList<TutorRow>("people", "tutor_profiles", orgId, load);
 }

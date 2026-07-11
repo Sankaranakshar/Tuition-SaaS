@@ -298,7 +298,7 @@ export default function StudentDashboard() {
                   <p className="text-xs text-gray-500">Access notes & assignments</p>
                 </div>
               </Link>
-              <Link to="/app/messaging" className="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
+              <Link to="/app/inbox" className="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
                 <div className="bg-green-100 p-2 rounded-md mr-3 text-green-600">
                   <CheckCircle className="w-5 h-5" />
                 </div>
