@@ -10,7 +10,7 @@ This document lets anyone (engineer or agent) pick up the build without re-readi
 
 ---
 
-## 1. Current state in one paragraph (AS OF 2026-07-08, Firestore era — see §11 for current infra)
+## 1. HISTORICAL state in one paragraph (2026-07-08, Firestore era — NOT current; see §25 for the current state)
 
 The repository is a fresh, safe foundation. **Stage 0 of DEV_PLAN.md is complete** (Epics 1–5: security, server money, SQLite removal, query hygiene, and the full design foundation — tokens, shell, palette, component kit, and i18n wrapper), **Stage 1 Epic 6 (Payments) is built server-side** (Razorpay payment links, signature-verified idempotent webhooks, reconciliation poll, gap-free invoice numbering, tax/GST snapshot, manual refunds), **Epic 9 (Today workspace) is built** — the tutor/owner home with the live session Line, one-tap attendance (optimistic + undo), the rules-based attention queue, the three-number Pulse, the attendance-debt counter, and the admin per-tutor lanes; the legacy Dashboard is retired — and **Epic 10 (Parent portal v1) is built**: staff mint a single-use invite from a student's profile, a phone-OTP-verified parent redeems it (with explicit DPDP consent) to get real `parent_links` access and the `parent` custom-claim role, and lands on a mobile-first portal (children overview, invoices with a Razorpay pay button + WhatsApp share, wallet + payment history). **Epics 7 (Outbound comms) and 8 (Real scheduling integrations) are explicitly DEFERRED** — both are blocked on external provider onboarding (WhatsApp/SMS/email; Google Calendar+Meet OAuth verification) that cannot be finished from a dev machine. The four Critical security vulnerabilities (C1–C5) are fixed in `firestore.rules` and codified as an executable test suite (now 38 cases with the Epic 10 addition). SQLite is gone; the app runs on Firestore + a slim stateless Express API. Money and attendance are server-authoritative. The product builds, typechecks clean (0 errors, project-wide — see §10, `@types/react` was missing and has been fixed), unit-tests green (51/51), and boots with all routes wired. It has **not** been deployed to a live Firebase project; the payment loop, the Today workspace, and the parent portal have **not** been exercised in a browser (all three need a live/emulated Firebase project with seeded data + a connected Razorpay account — phone OTP specifically also needs a real Firebase Auth project, since it can't be emulated meaningfully without one). A **Stage 0/1 gap-closing pass** (§10) has since fixed several audit-flagged gaps (server-side enrollment/session-conflict checks, session materialization, soft deletes, Cloud Storage document uploads, Sentry, error boundaries, bounded queries). **All work through this pass is committed and pushed to GitHub `main` (`b28c3a1`).** **This entire paragraph is Firestore-era history — see §11 for what's actually running now.**
 
@@ -186,7 +186,9 @@ npm run build                  # vite build + esbuild server bundle
 
 ---
 
-## 7. Next steps (in order)
+## 7. Next steps (STALE, Firestore era — every item below is long since done or superseded; current next steps are in §25.4)
+
+_This list is kept as historical record only. Item 1's Java rules suite was replaced by `npm run test:rls` (§11.3); item 3's browser walkthroughs all ran (§16, §18.1); item 5's "Stage 1 exit gate" wedge demo ran live on 2026-07-10 (§16.3) and Stages 1–2 plus Stage 3 item 1 are complete (§19–§24)._
 
 1. **Run `npm run test:rules` on a Java-equipped machine / CI**; fix any red before anything else. This suite is the safety net for all future rules work.
 2. ~~Finish Epic 5~~ **done** (kit + i18n + shell). Remaining Epic 5 polish that is deferred into the workspace rebuilds (Stage 1–3): restyling the *legacy* pages to tokens happens when each is retired per DEV_PLAN §"Delete on replace", not in place.
@@ -639,7 +641,7 @@ With the walkthrough done, the rest of DEV_PLAN's engineering-only MVP tasks (th
 
 ---
 
-## 17. Founder decision + Stage 2 entry playbook (2026-07-10) — READ THIS FIRST in a new session
+## 17. Founder decision + operating playbook (2026-07-10) — the standing rules; read AFTER §25 (§17.3's work list is now fully done, see the inline markers)
 
 _Written at the end of the 2026-07-10 sessions, verified against the repo at commit `39fe301` (tsc clean, 51/51 unit, 41/41 RLS, working tree clean). This section is deliberately prescriptive so any session — including one on a smaller model — can execute it without re-deriving context._
 
@@ -658,17 +660,17 @@ The app is live at `https://tuition-saas-two.vercel.app` (Vercel project `tuitio
 
 ### 17.3 The work, in exact order
 
-**Step 0 — close Stage 1 (do first, ~1 day):**
-1. **Student invite walkthrough.** As staff: StudentProfile → "Student Portal Access" → mint invite. In a fresh browser profile: open invite link → sign up (email/password) → redeem → verify the student account sees its own booked session on Today/Timetable/StudentDashboard. If sessions are missing, the cause is almost certainly the `class_sessions` three-array id-space — read §11.4 and security invariant §8.9 before touching anything.
-2. **`shared/` Zod package.** Create `shared/` with Zod schemas for API request/response shapes; server routes validate with them, client infers types from them. Migrate billing + scheduling contracts first. All suites must stay green.
-3. _(Optional)_ Playwright E2E journeys 1–2 against local dev + `npm run seed`.
+**Step 0 — close Stage 1 — ✅ DONE (2026-07-10, §18; kept for record):**
+1. ~~**Student invite walkthrough.**~~ **DONE, live-verified (§18.1, two real bugs found and fixed).** As staff: StudentProfile → "Student Portal Access" → mint invite. In a fresh browser profile: open invite link → sign up (email/password) → redeem → verify the student account sees its own booked session. If sessions are missing, the cause is almost certainly the `class_sessions` three-array id-space — read §11.4 and security invariant §8.9 before touching anything.
+2. ~~**`shared/` Zod package.**~~ **DONE (§18.2)** — billing + scheduling contracts (inbox added later, §22). Server routes validate with them, client infers types from them.
+3. _(Optional)_ Playwright E2E journeys 1–2 against local dev + `npm run seed` — still not done, tracked in DEV_PLAN §9.
 
-**Then Stage 2 — five workspace rebuilds, in this order** (full table with specs and estimates in DEV_PLAN §2a; product specs in REDESIGN.md §6.2–6.7):
-1. **People** (REDESIGN 6.2) — replaces Students, Leads, Admin tutor mgmt.
-2. **Student Story** (REDESIGN 6.3) — replaces StudentProfile, AcademicProgress, StudyMaterial.
-3. **Money** (REDESIGN 6.4) — replaces Invoices, Wallet, Transactions, BillingInvoiceSettings.
-4. **Inbox + homework** (REDESIGN 6.5) — replaces Messaging, Notifications.
-5. **Onboarding rebuild** (REDESIGN 6.7) — replaces the form sequence; KEEP the parent/student invite-redeem branches, they are current product.
+**Then Stage 2 — five workspace rebuilds — ✅ ALL FIVE DONE (2026-07-10/11, §19–§23; exit gate cleared §23.5). Stage 3 item 1 (Schedule) also done (§24):**
+1. ~~**People**~~ done §19 (replaced Students, Leads, Admin tutor mgmt).
+2. ~~**Student Story**~~ done §20 (replaced StudentProfile, AcademicProgress, StudyMaterial).
+3. ~~**Money**~~ done §21 (replaced Invoices, Wallet, Transactions; BillingInvoiceSettings survives in Settings — §25.3).
+4. ~~**Inbox + homework**~~ done §22 (replaced Messaging, Notifications).
+5. ~~**Onboarding rebuild**~~ done §23 (parent/student invite-redeem branches kept, as specified).
 
 **Per-workspace rules (every PR, no exceptions):**
 - Delete the legacy page(s) in the same PR as the replacement. Never leave both alive.
