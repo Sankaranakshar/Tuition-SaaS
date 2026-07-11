@@ -1,12 +1,62 @@
 # ClassStackr — Engineering Handoff
 
-_Last updated: 2026-07-11. Author: Firebase → self-hosted Supabase/Postgres migration (§11), a full engineering audit + DEV_PLAN.md rewrite + Supabase provisioning status (§12), the first live deploy to Vercel + Supabase Cloud (§13), a multi-stage incident chase that got the tutor onboarding flow fully working end to end for the first time (§14), the Courses UI, Add Class pricing fields, student self-onboarding, and a tech-debt cleanup pass (§15), then the first live, verified run of the full wedge-demo money loop plus two more real infra bugs found and fixed along the way (§16), the founder's decision to defer ALL external integrations to post-Stage-4 plus the Stage 2 entry playbook (§17), closing Stage 1 Step 0 — the student invite walkthrough (finally live-verified, two real bugs found and fixed) plus the `shared/` Zod schema package (§18), then Stage 2 item 1, the People workspace, including a real pre-existing RLS bug found while porting tutor verification (§19), then Stage 2 item 2, the Student Story workspace (§20), then Stage 2 item 3, the Money workspace, including two real bugs found via live testing — an invoice-visibility scoping bug and a broken revenue chart (§21), then Stage 2 item 4, the Inbox workspace, including two more real bugs found via live testing — a Realtime channel-topic collision and a camelCase/snake_case column-name mismatch — plus a live-verified class channel, DM, archive/undo, and notification-as-inbox-item flow (§22), then Stage 2 item 5, the Onboarding rebuild — the last Stage 2 workspace, closing Stage 2's exit gate — a three-beat conversational signup (solo/center → first class from a template gallery → students/CSV) that live-verified at ~135 seconds to a real booked session, plus a real regression found and fixed in the parent/student invite-redeem dispatch simplification (§23), then Stage 3 item 1, the Schedule workspace rebuild — a pointer-driven week-grid calendar replacing Calendar.tsx/Bookings.tsx/Timetable.tsx, closing a real server-authoritative gap (reschedule used to be a direct unchecked client write) plus four more real bugs found via the actual drag-and-drop browser walkthrough, not by typecheck or unit tests (§24), then pushing three sessions' worth of accumulated uncommitted work (Inbox, Onboarding, Schedule) to GitHub as three separate epic commits (§24.3), then a full-repository audit against DEV_PLAN.md and this file — all four verification gates re-run green, two new real bugs found (a `tutor_availability` Realtime-publication gap and dead `/app/wallet`/`/app/transactions` links in StudentDashboard), dead code and doc drift catalogued, and both planning documents corrected (§25). **Picking up in a new session? Read §25 first (the current-state snapshot), then §17 for the operating playbook. Stage 2 and Stage 3 item 1 are done and pushed to `main` — clear §25.2's two small fix-first bugs, then continue Stage 3 with SaaS subscription billing, super-admin, org export, hardening (DEV_PLAN §5).**_
+_Last updated: 2026-07-11._ This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked, and what comes next. It is **append-only**: sections are numbered in the order they were written, so the newest (most current) material has the highest numbers. **Do not read it top to bottom — use the dashboard and section map below.**
 
-This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked on you, and what comes next.
+## Where the project is right now (2026-07-11)
 
-**⚠️ Infrastructure changed since §1–§10 below were written.** Sections 1–10 describe the app as it existed on Firebase/Firestore and are kept as historical record — most of the *product* facts in them (which epics are built, what workflows exist) are still accurate, but every reference to Firestore, `firestore.rules`, Firebase Auth/Storage, and the Java-based rules emulator is **stale infrastructure detail**, superseded by §11. **Read §11 first**, then treat §1–§10 as product history only.
+| Stage | Scope | Status |
+|---|---|---|
+| Stage 0 | Foundation: security rewrite, server-authoritative money, design system, i18n | ✅ Complete |
+| Stage 1 | Payments (Razorpay), Today workspace, parent portal, infra live, wedge demo | ✅ Complete — money loop live-verified end to end (§16, §18) |
+| — | Firebase → Supabase migration + first Vercel deploy | ✅ Complete (§11, §13) |
+| Stage 2 | Five workspace rebuilds: People, Student Story, Money, Inbox, Onboarding | ✅ Complete — exit gate cleared (§19–§23) |
+| Stage 3, item 1 | Schedule workspace (drag week grid, server-authoritative reschedule) | ✅ Complete (§24) |
+| **Stage 3, rest** | **SaaS subscription billing, super-admin console, org export, hardening** | **⬅ ACTIVE — this is the next work** (DEV_PLAN §5) |
+| Stage 4 | Mobile polish, growth loop, AI morning brief | Not started |
+| External integrations | Razorpay live keys, Google OAuth, phone OTP/SMS, Sentry, staging, legal docs | ⏸ Deferred by founder until go-to-market (§17.1) — not blockers, do not work on them |
 
-**Read order for a newcomer (updated 2026-07-11):** **§25** (current-state snapshot: architecture, what's live, env vars, known issues, next steps) → §17 (operating playbook and non-negotiable rules) → §8 (security invariants) → [DEV_PLAN.md](DEV_PLAN.md) (the executable plan, Supabase-era, re-audited 2026-07-11) → [REDESIGN.md](REDESIGN.md) (product-experience spec) → [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) (why; its architecture/security sections are Firestore-era history). Then [supabase/README.md](supabase/README.md) and `tests/integration/rbac.test.ts`. §1–§10 are Firestore-era history; §11–§16 are the migration/first-deploy record — consult them when something infra-shaped breaks, not as onboarding.
+**Verification status:** all gates green as of the 2026-07-11 audit — `tsc --noEmit` clean · 132/132 unit · 58/58 RLS · build passing · bundle 223.0 KB gzip (260 KB budget). Live at `https://tuition-saas-two.vercel.app` against Supabase Cloud `cwugpiernnwrhcximjwh`; `git push` to `main` auto-deploys.
+
+**Before starting Stage 3 work:** fix the two small bugs in §25.2 (a missing Realtime publication entry; two dead links on the student dashboard). Together they are under a day.
+
+## How to read this file (section map)
+
+**Current — read these, in this order:**
+
+| § | What it is |
+|---|---|
+| **§25** | **START HERE.** 2026-07-11 full-repo audit + current-state snapshot: architecture, live environment, env vars, commands, known issues ranked, next steps |
+| **§17** | The standing operating playbook: founder's external-integrations deferral (§17.1), per-workspace engineering rules (§17.3 — its work list is now all done, the rules still bind), go-live checklist (§17.4) |
+| **§8** | Security invariants — non-negotiable, updated for Supabase |
+
+**Reference — consult when something breaks (still-accurate runbooks):**
+
+| § | What it covers |
+|---|---|
+| §11 | The Supabase migration: what moved where, the no-claims auth model (§11.2), the RLS test suite discipline (§11.3), the `class_sessions` three-array id-space bug (§11.4) |
+| §13–§14 | Vercel + Supabase deploy incidents: integration env-var traps, wrong-project wiring, the gitignored-function bug — read before touching Vercel env vars or auth |
+| §16.1–§16.2 | The `dotenv` never-invoked bug and the Realtime-publication-is-not-automatic bug — read before adding any Realtime-subscribed table |
+| §15.2, §15.5 | Vercel "Sensitive" env vars pull empty by design; how to verify a deploy actually shipped |
+
+**Historical — the chronological build log; skim only if you need the story behind a decision:**
+
+| § | What happened there |
+|---|---|
+| §1–§10 | Firestore-era build (2026-07-07/08): Epics 1–10, C1–C5 security fixes, Today, parent portal. ⚠️ All infrastructure detail in these sections is obsolete (superseded by §11); product facts still accurate |
+| §12 | Engineering audit + DEV_PLAN rewrite + provisioning status (2026-07-10) |
+| §15 | Courses UI, Add Class pricing, student self-onboarding invites |
+| §16 | First live run of the full wedge-demo money loop |
+| §18 | Stage 1 closed: student-invite walkthrough + `shared/` Zod package |
+| §19–§23 | Stage 2 builds: People, Student Story, Money, Inbox, Onboarding (one section each, with the real bugs each live walkthrough surfaced) |
+| §24 | Stage 3 item 1: Schedule rebuild + the push of three epics to GitHub |
+
+**After this file:** [DEV_PLAN.md](DEV_PLAN.md) (the executable plan, re-audited 2026-07-11) → [REDESIGN.md](REDESIGN.md) (product-experience spec) → [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) (strategy; its architecture/security sections are Firestore-era history) → [supabase/README.md](supabase/README.md) and `tests/integration/rbac.test.ts`.
+
+---
+
+# PART 1 — CHRONOLOGICAL BUILD LOG (§1–§24)
+
+_Everything from here to §24 is the append-only session history, oldest first, with two exceptions that remain current and binding despite living mid-log: **§8 (security invariants)** and **§17 (operating playbook)**. Statuses inside all other sections were true when written and many are long since superseded — each carries its own banner where that matters. For current truth, jump to [§25](#25-full-repository-audit--current-state-snapshot-2026-07-11--read-this-first)._
 
 ---
 
@@ -16,7 +66,7 @@ The repository is a fresh, safe foundation. **Stage 0 of DEV_PLAN.md is complete
 
 ---
 
-## 2. Repository & git state
+## 2. Repository & git state (as of 2026-07-08 — STALE; ~15 further epic commits since, see §24.3 and `git log`)
 
 - **Remote:** `https://github.com/Sankaranakshar/Tuition-SaaS.git` (private), branch `main`, upstream tracking set. Working tree is clean — everything below is pushed.
 - **History (15 commits):**
@@ -214,7 +264,7 @@ _This list is kept as historical record only. Item 1's Java rules suite was repl
 
 ---
 
-## 9. Known tech debt carried forward
+## 9. Known tech debt carried forward (2026-07-08 era — the live, ranked backlog is DEV_PLAN §6)
 
 - Old pages (StudentProfile 1,289 lines, Calendar, Students, Invoices) still exist and function but are slated for rebuild in Stages 2–3 (REDESIGN.md). They work inside the new shell but are not token-styled.
 - Legacy rupee fields coexist with new paise fields on invoices/wallets; a cleanup pass removes the floats once all readers use paise.
@@ -978,6 +1028,10 @@ The Inbox and Onboarding work (§22–§23) had been sitting uncommitted alongsi
 - `1d06d58` Ship Schedule workspace, replacing Calendar/Bookings/Timetable
 
 **One staging mistake caught before it went out:** an earlier `git rm` from a prior step in this same session (deleting `Calendar.tsx`/`Bookings.tsx`/`Timetable.tsx` for the Schedule work) had already staged those deletions in the index. `git add <specific files>` for the Inbox commit didn't touch that pre-existing staged state, so the first commit attempt silently absorbed all three deletions — files that belong to the Schedule commit, not Inbox. Caught by reading the commit's own `--stat` output before moving on; fixed by restoring the three files from the parent commit and amending (safe here only because nothing had been pushed yet — see the git safety rule about never amending shared history). Re-deleted correctly as part of the Schedule commit afterward. `tsc --noEmit` and the full unit suite (132/132) were re-run against the final committed state before the push, not just the working tree.
+
+---
+
+# PART 2 — CURRENT STATE
 
 ---
 
