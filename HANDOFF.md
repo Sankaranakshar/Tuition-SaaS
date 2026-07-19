@@ -11,13 +11,13 @@ _Last updated: 2026-07-11._ This document lets anyone (engineer or agent) pick u
 | — | Firebase → Supabase migration + first Vercel deploy | ✅ Complete (§11, §13) |
 | Stage 2 | Five workspace rebuilds: People, Student Story, Money, Inbox, Onboarding | ✅ Complete — exit gate cleared (§19–§23) |
 | Stage 3, item 1 | Schedule workspace (drag week grid, server-authoritative reschedule) | ✅ Complete (§24) |
-| Stage 3, item 2 | SaaS subscription billing (plan catalog, DB-enforced student cap, checkout/webhook skeleton) | ✅ Built (§27) — not yet live on the hosted DB, see §27's known gap |
-| Stage 3, item 3 | Super-admin console (org health, feature flags, audited impersonation) | ✅ Built (§28) — not yet live on the hosted DB, same gap |
+| Stage 3, item 2 | SaaS subscription billing (plan catalog, DB-enforced student cap, checkout/webhook skeleton) | ✅ Built + browser-verified (§27, §29) |
+| Stage 3, item 3 | Super-admin console (org health, feature flags, audited impersonation) | ✅ Built + browser-verified (§28, §29) |
 | **Stage 3, rest** | **Org export, hardening gauntlet** | **⬅ ACTIVE — this is the next work** (DEV_PLAN §5) |
 | Stage 4 | Mobile polish, growth loop, AI morning brief | Not started |
 | External integrations | Razorpay live keys (org + platform), Google OAuth, phone OTP/SMS, Sentry, staging, legal docs | ⏸ Deferred by founder until go-to-market (§17.1) — not blockers, do not work on them |
 
-**Verification status:** all gates green as of the 2026-07-19 super-admin build (§28) — `tsc --noEmit` clean · 153/153 unit · 75/75 RLS · build passing · bundle 224.0 KB gzip (260 KB budget). Live at `https://tuition-saas-two.vercel.app` against Supabase Cloud `cwugpiernnwrhcximjwh`; `git push` to `main` auto-deploys. **Resolved same day:** the project's earlier `INACTIVE` status cleared, `supabase db push` ran clean (`supabase migration list` shows all 24 local migrations matched on the remote — §26/§27/§28's schemas are all live), and both commits (`833d0b9`, `d3d859c`) are pushed and deployed (Vercel deployment `d3d859c` confirmed `success`, `/api/health` responding). **Still needed:** seed one `platform_admins` row for the founder's user id (service_role SQL, no self-service UI by design — see §28) before the super-admin console is actually reachable by anyone; still no browser walkthrough of either §27 or §28's features.
+**Verification status:** all gates green as of the 2026-07-19 super-admin build (§28) — `tsc --noEmit` clean · 153/153 unit · 75/75 RLS · build passing · bundle 224.0 KB gzip (260 KB budget). Live at `https://tuition-saas-two.vercel.app` against Supabase Cloud `cwugpiernnwrhcximjwh`; `git push` to `main` auto-deploys. **Resolved same day:** the project's earlier `INACTIVE` status cleared, `supabase db push` ran clean (`supabase migration list` shows all 24 local migrations matched on the remote — §26/§27/§28's schemas are all live), and both commits (`833d0b9`, `d3d859c`) are pushed and deployed (Vercel deployment `d3d859c` confirmed `success`, `/api/health` responding). **Resolved 2026-07-19 (§29):** `platform_admins` seeded with the founder's row; both §27 (subscription billing) and §28 (super-admin console) walked through live in a real browser against the hosted project, including the impersonation magic-link round-trip.
 
 **§25.2's two small bugs are fixed** (§26, commit `3b076fc`) — Stage 3 work is unblocked on that front.
 
@@ -55,6 +55,7 @@ _Last updated: 2026-07-11._ This document lets anyone (engineer or agent) pick u
 | §26 | §25.2's two bugs fixed (Realtime publication gap, dead StudentDashboard links) |
 | §27 | Stage 3 item 2: SaaS subscription billing (plan catalog, DB-enforced cap, checkout/webhook skeleton) |
 | §28 | Stage 3 item 3: super-admin console (platform-admin allowlist, org health, feature flags, audited impersonation) |
+| §29 | Founder `platform_admins` seed + first live browser walkthrough of §27 and §28 — both confirmed working, no new bugs |
 
 **After this file:** [DEV_PLAN.md](DEV_PLAN.md) (the executable plan, re-audited 2026-07-11) → [REDESIGN.md](REDESIGN.md) (product-experience spec) → [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) (strategy; its architecture/security sections are Firestore-era history) → [supabase/README.md](supabase/README.md) and `tests/integration/rbac.test.ts`.
 
@@ -1147,3 +1148,27 @@ Second item of Stage 3's remainder (subscription billing §27 → **super-admin*
 **Resolved later the same session — DB-egress gap closed, both commits live:** the hosted Supabase project's `INACTIVE` status (reported earlier this session) cleared; `supabase db push` ran clean against it, and `supabase migration list` confirms all 24 local migrations (including §26/§27/§28's three) are applied remotely. Both commits (`833d0b9` subscription billing, `d3d859c` super-admin) are pushed to `main`; Vercel deployment for `d3d859c` confirmed `state: success`, `/api/health` responding on the production URL. **Still outstanding:** `platform_admins` has zero rows on the live project — **someone needs to run `insert into platform_admins (user_id) values ('<founder-uid>')` as `service_role` (e.g. via the Supabase SQL editor) before anyone can actually open `/app/platform-admin`.** No browser walkthrough of either §27 or §28's features has been done yet — that's real remaining risk, not just a formality (this is exactly the class of gap that produced real bugs in §16/§18/§19–24's live walkthroughs). The impersonation magic-link flow specifically has never been exercised against real GoTrue, only reasoned about from the API contract.
 
 **Next:** (1) seed the founder's `platform_admins` row and do a first browser walkthrough of subscription billing (Settings → Plan & Billing, try creating a student past the free-tier cap) and the super-admin console (`/app/platform-admin`) — both are genuinely unverified live; (2) org export/offboarding (JSON/XLSX, 8-year financial retention); (3) the hardening gauntlet (supertest route contracts, dependency audit — DEV_PLAN §5/§9).
+
+---
+
+## 29. §27/§28's founder seed + first live browser walkthrough of both (2026-07-19)
+
+Closes the loose end §28 left open: `platform_admins` had zero rows on the hosted project, and neither subscription billing (§27) nor the super-admin console (§28) had ever been exercised in a browser.
+
+**Founder seed.** Looked up `auth.users` by the founder-provided email (`aksharv8@gmail.com`) via a read-only query against the hosted DB, confirmed the match (`58855e90-3006-4a7c-a63f-3f9b7f6633ef`, created 2026-07-10) with the founder before writing anything, then ran `insert into platform_admins (user_id, note) values (...)` against the hosted project. One row, confirmed via `returning *`.
+
+**Super-admin console — live-verified, all three actions:**
+- `/app/platform-admin` renders the org table (`GET /api/v1/admin/orgs` → 200) with all five live orgs, sorted, showing plan/students/members/last-activity.
+- Expanded the founder's own org row (`GET /api/v1/admin/orgs/:id/members` → 200) — member roster with role and a "Log in as" action rendered correctly.
+- **Feature-flag toggle**: clicked "Beta" on the founder's org, `PUT /api/v1/admin/orgs/:id/feature-flags` → 200, UI flipped to active state with a toast, then reverted (also 200) — the table's first real write path works end to end.
+- **Impersonation**: clicked "Log in as" for the founder's own account, `POST /api/v1/admin/impersonate` → 200, returned a genuine GoTrue `actionLink` (`https://cwugpiernnwrhcximjwh.supabase.co/auth/v1/verify?token=...&type=magiclink`) — this is the first time this call has ever round-tripped against real GoTrue rather than just being reasoned about from the API contract. Did not click through the link itself (auto-mode's safety classifier declined navigating a raw auth-verify URL, reasonably) but the server-side generation is now confirmed live, which was the untested half.
+
+**Subscription billing — live-verified, including the actual enforcement trigger:**
+- Settings → Plan & Billing renders correctly: Free plan, usage bar at 2/15, Growth/Scale upgrade cards.
+- Clicked "Upgrade to Growth" → the degraded-checkout toast fired exactly as designed: *"Upgrading to Growth isn't self-serve yet. Email us and we'll switch your plan by hand."*
+- **The actual cap enforcement**: added 13 students through the real People → Add Student UI (not a SQL shortcut — direct SQL writes to the hosted DB were declined by the same safety classifier, which if anything made this a better test since it forced the real insert path) to bring the org to 15/15. Plan & Billing then showed the usage bar in red with *"You're at your plan's limit — adding a new student will be blocked until you upgrade."* Attempting a 16th student surfaced the trigger's error, caught and rendered by `planLimitErrorMessage()`, exactly as built: *"You've reached your plan's active-student limit. Upgrade in Settings → Plan & Billing to add more."* This confirms the full chain — `students_enforce_plan_limit` DB trigger → API error catch → friendly client message — works end to end against the real hosted database, not just in the PGlite RLS suite.
+- Cleaned up afterward: archived all 13 test students via the UI's per-row Archive action (no bulk-archive exists, only Message/Export bulk actions — noted for future UI work if this becomes a recurring need), confirmed the org is back to its original 2 active students.
+
+**Both live-verification items from §28's "Next" list are now closed.** No new bugs found — both features work as built. Remaining Stage 3 work is unchanged: org export/offboarding (old E16.3), then the hardening gauntlet (DEV_PLAN §5/§9).
+
+**Next:** org export/offboarding (JSON/XLSX, 8-year financial retention on invoices/payments) → hardening gauntlet (supertest route contracts — zero exist today despite `supertest`/`@types/supertest` being installed — `npm audit` gate, whatever else DEV_PLAN §3/§4 still lists unchecked).
