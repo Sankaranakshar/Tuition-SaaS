@@ -22,6 +22,7 @@ export interface AuthRequest extends Request {
     email?: string;
     role?: Role;
     organizationId?: string;
+    organizationStatus?: string;
   };
 }
 
@@ -80,7 +81,7 @@ export const authenticateToken = async (
 
     const { data: membership, error } = await supabaseAdmin
       .from("organization_members")
-      .select("organization_id, role")
+      .select("organization_id, role, organizations(status)")
       .eq("user_id", userId)
       .limit(1)
       .maybeSingle();
@@ -91,6 +92,7 @@ export const authenticateToken = async (
       email,
       role: membership?.role as Role | undefined,
       organizationId: membership?.organization_id as string | undefined,
+      organizationStatus: (membership?.organizations as { status?: string } | null)?.status,
     };
     next();
   } catch (err) {
@@ -116,6 +118,16 @@ export const requireRole = (...roles: Role[]) => {
 export const requireOrg = (req: AuthRequest, res: Response, next: NextFunction) => {
   if (!req.user?.organizationId) {
     return res.status(403).json({ error: { code: "no_organization", message: "User does not belong to an organization" } });
+  }
+  // Blocks all org-scoped app usage once an org has been offboarded (see
+  // 20260719130000_org_offboarding.sql) — organizationStatus is fetched
+  // alongside the membership lookup in authenticateToken (one query, not
+  // two) so this check adds no extra DB round trip. This is the actual
+  // enforcement point, not a DB-level RLS rule, since offboarding is a
+  // status flip and every existing RLS policy already scoped by
+  // organization_id continues to permit reads/writes on its own.
+  if (req.user.organizationStatus === "offboarded") {
+    return res.status(403).json({ error: { code: "org_offboarded", message: "This organization has been offboarded" } });
   }
   next();
 };

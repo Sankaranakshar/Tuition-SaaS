@@ -7,8 +7,9 @@ import OrganizationSettings from "../components/OrganizationSettings";
 import BillingInvoiceSettings from "../components/BillingInvoiceSettings";
 import TutorProfileSettings from "../components/TutorProfileSettings";
 import SubscriptionSettings from "../components/SubscriptionSettings";
+import OrgExportSettings from "../components/OrgExportSettings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Receipt, CreditCard } from "lucide-react";
+import { Receipt, CreditCard, Database } from "lucide-react";
 
 export default function Settings() {
   const { user, checkAuth } = useAuth();
@@ -170,6 +171,12 @@ export default function Settings() {
             </TabsTrigger>
           )}
           {(user?.role === "admin" || user?.role === "tutor") && (
+            <TabsTrigger value="export" className="flex items-center">
+              <Database className="w-4 h-4 mr-2" />
+              Data & Offboarding
+            </TabsTrigger>
+          )}
+          {(user?.role === "admin" || user?.role === "tutor") && (
             <TabsTrigger value="profile" className="flex items-center">
               <UserIcon className="w-4 h-4 mr-2" />
               Tutor Profile
@@ -288,6 +295,12 @@ export default function Settings() {
         {(user?.role === "admin" || user?.role === "tutor") && (
           <TabsContent value="plan">
             <SubscriptionSettings />
+          </TabsContent>
+        )}
+
+        {(user?.role === "admin" || user?.role === "tutor") && (
+          <TabsContent value="export">
+            <OrgExportSettings />
           </TabsContent>
         )}
 
