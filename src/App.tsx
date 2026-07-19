@@ -27,6 +27,7 @@ const Money = lazy(() => import("./pages/Money"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Inbox = lazy(() => import("./pages/Inbox"));
 const Kit = lazy(() => import("./pages/Kit"));
+const PlatformAdmin = lazy(() => import("./pages/PlatformAdmin"));
 
 // Lazy load student pages
 const Profile = lazy(() => import("./pages/Profile"));
@@ -118,6 +119,7 @@ export default function App() {
               <Route path="notifications" element={<Navigate to="/app/inbox" replace />} />
               <Route path="settings" element={<Settings />} />
               <Route path="kit" element={<Kit />} />
+              <Route path="platform-admin" element={<PlatformAdmin />} />
 
               {/* Student Routes */}
               <Route path="my-story" element={<StudentStory />} />

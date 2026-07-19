@@ -119,3 +119,27 @@ export const requireOrg = (req: AuthRequest, res: Response, next: NextFunction) 
   }
   next();
 };
+
+// Platform-level allowlist (platform_admins table), completely decoupled
+// from any org's own RBAC — see 20260719120000_super_admin.sql's header for
+// why. Deliberately does NOT require requireOrg: a platform admin acts
+// across every org, not from within one.
+export const requirePlatformAdmin = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: { code: "unauthenticated", message: "Missing bearer token" } });
+
+    const { data, error } = await supabaseAdmin
+      .from("platform_admins")
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(403).json({ error: { code: "forbidden", message: "Not a platform admin" } });
+
+    next();
+  } catch (err) {
+    console.error("requirePlatformAdmin failed:", err);
+    return res.status(500).json({ error: { code: "internal", message: "Failed to verify platform-admin access" } });
+  }
+};

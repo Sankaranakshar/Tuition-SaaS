@@ -24,6 +24,7 @@ import type {
 } from "../../shared/schemas/scheduling";
 import type { SubscriptionResponse, CheckoutResponse } from "../../shared/schemas/subscription";
 import type { PlanId } from "../../shared/plans";
+import type { ListOrgsResponse, ImpersonateResponse } from "../../shared/schemas/admin";
 
 // Thin authenticated client for the privileged API (/api/v1).
 // Money and attendance mutations must go through here; they have no
@@ -322,4 +323,26 @@ export function getSubscription() {
 
 export function checkoutSubscription(plan: PlanId) {
   return api<CheckoutResponse>("/subscription/checkout", { method: "POST", body: { plan } });
+}
+
+export function listOrgsForAdmin() {
+  return api<ListOrgsResponse>("/admin/orgs");
+}
+
+export function setOrgFeatureFlag(orgId: string, key: string, enabled: boolean) {
+  return api<{ ok: true }>(`/admin/orgs/${orgId}/feature-flags`, { method: "PUT", body: { key, enabled } });
+}
+
+export interface OrgMember {
+  user_id: string;
+  role: string;
+  profiles: { name: string | null; email: string | null } | null;
+}
+
+export function listOrgMembersForAdmin(orgId: string) {
+  return api<{ members: OrgMember[] }>(`/admin/orgs/${orgId}/members`);
+}
+
+export function impersonateUser(userId: string) {
+  return api<ImpersonateResponse>("/admin/impersonate", { method: "POST", body: { userId } });
 }

@@ -14,10 +14,12 @@ import {
   Wallet,
   BookOpen,
   ChevronDown,
+  ShieldAlert,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import CommandPalette from "./CommandPalette";
 import { useNotificationsList } from "../hooks/useInbox";
+import { useIsPlatformAdmin } from "../hooks/usePlatformAdmin";
 
 // The shell (DEV_PLAN E5.2): a 56px icon rail with five workspaces plus
 // settings, and a topbar whose search box is a real command palette
@@ -32,6 +34,7 @@ export default function Layout() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { data: notifications } = useNotificationsList();
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const isPlatformAdmin = useIsPlatformAdmin();
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -118,6 +121,21 @@ export default function Layout() {
         </nav>
 
         <div className="flex flex-col items-center gap-1">
+          {isPlatformAdmin && (
+            <NavLink
+              to="/app/platform-admin"
+              title="Platform admin"
+              className={({ isActive }) =>
+                `flex h-10 w-10 items-center justify-center rounded-[6px] transition-colors ${
+                  isActive
+                    ? "bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]"
+                    : "text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]"
+                }`
+              }
+            >
+              <ShieldAlert className="h-[18px] w-[18px]" strokeWidth={1.75} />
+            </NavLink>
+          )}
           <NavLink
             to={settingsPath}
             title={t("common.settings")}
