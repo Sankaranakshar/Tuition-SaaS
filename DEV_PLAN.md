@@ -226,7 +226,7 @@ Effort in engineer-days (ed).
 
 **Infrastructure:** □ Supabase stack live with restart policies □ TLS + domain □ staging environment □ resource monitoring (disk, RAM, connections) □ documented rebuild-from-scratch procedure
 
-**Security:** □ RLS suite green in CI (standing) □ service-role key only on server □ `SUPABASE_JWT_SECRET` rotated from default □ GoTrue email-confirmation + rate limits on □ secrets in a manager, not files □ dependency audit clean □ pentest scheduled (Phase 2)
+**Security:** □ RLS suite green in CI (standing) □ service-role key only on server □ `SUPABASE_JWT_SECRET` rotated from default □ GoTrue email-confirmation + rate limits on □ secrets in a manager, not files □ dependency audit clean □ pentest scheduled (Phase 2) ☑ Supabase DB linter clean — search_path pinned, dead SECURITY DEFINER RPC surface closed, schema drift (`notes` quickstart leftover, undocumented `rls_auto_enable` event trigger) resolved (2026-07-19, HANDOFF §31) □ leaked-password-protection enabled in Auth dashboard (outstanding, HANDOFF §31)
 
 **Payments:** □ Razorpay live KYC □ per-org webhook secrets set □ webhook URL registered (payment_link.paid, payment.captured) □ real ₹1 payment reconciled on staging □ hourly reconcile cron □ refund flow rehearsed □ CA-approved GST invoice sample
 
