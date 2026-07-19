@@ -156,7 +156,7 @@ export default function StudentDashboard() {
             <div className="ml-3">
               <p className="text-sm text-red-700">
                 You have {overdueInvoices.length} overdue invoice(s). 
-                <Link to="/app/wallet" className="font-medium underline ml-1">Pay now</Link>
+                <Link to="/app/money" className="font-medium underline ml-1">Pay now</Link>
               </p>
             </div>
           </div>
@@ -279,7 +279,7 @@ export default function StudentDashboard() {
               <p className="text-sm text-gray-500 mt-1">Available Credits</p>
             </div>
             <div className="mt-4">
-              <Link to="/app/transactions" className="w-full flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-indigo-700 bg-indigo-100 hover:bg-indigo-200">
+              <Link to="/app/money" className="w-full flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-indigo-700 bg-indigo-100 hover:bg-indigo-200">
                 Top-up Wallet
               </Link>
             </div>

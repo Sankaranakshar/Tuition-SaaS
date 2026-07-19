@@ -7,8 +7,9 @@ import type { ScheduleSession, TutorAvailabilityWindow } from "../lib/schedule";
 // One hook per Schedule data source (REDESIGN §6.1), same shape as
 // usePeople.ts/useMoney.ts: each owns its query, bounding, Realtime
 // subscription, and error state on top of the shared useRealtimeList
-// helper. class_sessions/class_templates/tutor_availability are already in
-// the supabase_realtime publication (HANDOFF §16.2).
+// helper. class_sessions/class_templates/tutor_availability are all in
+// the supabase_realtime publication (HANDOFF §16.2, §25.2 for
+// tutor_availability specifically — see 20260719100000_realtime_tutor_availability.sql).
 
 export interface ScheduleSessionRow extends ScheduleSession {
   studentIds: string[];
