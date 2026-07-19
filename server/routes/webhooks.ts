@@ -4,6 +4,8 @@ import { withTransaction } from "../db.ts";
 import { getGatewayCreds, verifyWebhookSignature } from "../utils/razorpay.ts";
 import { applyPayment, type InvoiceStatus } from "../utils/invoiceStatus.ts";
 import { writeAudit } from "../utils/audit.ts";
+import { supabaseAdmin } from "../supabaseAdmin.ts";
+import { PLAN_CATALOG, isPlanId } from "../../shared/plans.ts";
 
 // Razorpay webhook receiver (DEV_PLAN E6.2). Public but signature-gated: the
 // body is HMAC-verified against the org's stored webhook secret before we
@@ -40,6 +42,88 @@ router.post("/razorpay/:orgId", async (req, res) => {
     return res.status(500).json({ error: { code: "internal", message: "Webhook processing failed" } });
   }
 });
+
+// Platform subscription lifecycle events (Stage 3 SaaS billing, DEV_PLAN §5).
+// One URL, not per-org, since this is the platform's own Razorpay account —
+// the organizationId comes from the subscription's notes, set at creation
+// in subscription.ts's checkout route. Inert until PLATFORM_RAZORPAY_*
+// env vars exist (HANDOFF §17.1); the raw-body mount and signature check are
+// already live so switching this on later needs no code change.
+router.post("/razorpay-platform", async (req, res) => {
+  const secret = process.env.PLATFORM_RAZORPAY_WEBHOOK_SECRET;
+  const signature = req.header("x-razorpay-signature") || "";
+  const rawBody = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
+
+  if (!secret) {
+    // Not configured yet — deliberately inert, not an error, so Razorpay
+    // (once wired) never sees a 5xx for something that isn't a bug.
+    return res.status(503).json({ error: { code: "not_configured", message: "Platform billing not yet wired" } });
+  }
+  if (!verifyWebhookSignature(rawBody, signature, secret)) {
+    return res.status(400).json({ error: { code: "bad_signature", message: "Signature verification failed" } });
+  }
+
+  try {
+    const event = JSON.parse(rawBody);
+    const outcome = await handlePlatformSubscriptionEvent(event);
+    return res.json({ ok: true, ...outcome });
+  } catch (err: any) {
+    req.log?.error?.({ err }, "Platform subscription webhook processing failed");
+    return res.status(500).json({ error: { code: "internal", message: "Webhook processing failed" } });
+  }
+});
+
+async function handlePlatformSubscriptionEvent(event: any) {
+  const type = event?.event as string | undefined;
+  const sub = event?.payload?.subscription?.entity;
+  if (!sub) return { ignored: true, reason: "no_subscription_entity" };
+
+  const orgId = sub?.notes?.organizationId as string | undefined;
+  const targetPlanRaw = sub?.notes?.targetPlan as string | undefined;
+  if (!orgId) return { ignored: true, reason: "no_organization_id_in_notes" };
+
+  if (type === "subscription.activated" || type === "subscription.charged") {
+    const plan = targetPlanRaw && isPlanId(targetPlanRaw) ? targetPlanRaw : "free";
+    const def = PLAN_CATALOG[plan];
+    const currentEnd = sub.current_end ? new Date(sub.current_end * 1000).toISOString() : null;
+    const { error } = await supabaseAdmin
+      .from("subscriptions")
+      .update({
+        plan,
+        status: "active",
+        student_limit: def.studentLimit,
+        price_paise: def.pricePaise,
+        current_period_end: currentEnd,
+        razorpay_subscription_id: sub.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("organization_id", orgId);
+    if (error) throw error;
+    await writeAudit(orgId, "razorpay_webhook", "subscription.plan_changed", "subscriptions", orgId, { plan, event: type });
+    return { plan, status: "active" };
+  }
+
+  if (type === "subscription.cancelled" || type === "subscription.completed" || type === "subscription.halted") {
+    // Reverts to the free tier's enforceable cap immediately — the paid
+    // student_limit shouldn't outlive the subscription that paid for it.
+    const free = PLAN_CATALOG.free;
+    const { error } = await supabaseAdmin
+      .from("subscriptions")
+      .update({
+        plan: "free",
+        status: "cancelled",
+        student_limit: free.studentLimit,
+        price_paise: free.pricePaise,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("organization_id", orgId);
+    if (error) throw error;
+    await writeAudit(orgId, "razorpay_webhook", "subscription.cancelled", "subscriptions", orgId, { event: type });
+    return { status: "cancelled" };
+  }
+
+  return { ignored: true, reason: "unhandled_event_type" };
+}
 
 async function handleEvent(orgId: string, event: any) {
   const type = event?.event as string | undefined;

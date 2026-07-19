@@ -22,6 +22,8 @@ import type {
   UpdateTemplateScopeResponse,
   FindGapsResponse,
 } from "../../shared/schemas/scheduling";
+import type { SubscriptionResponse, CheckoutResponse } from "../../shared/schemas/subscription";
+import type { PlanId } from "../../shared/plans";
 
 // Thin authenticated client for the privileged API (/api/v1).
 // Money and attendance mutations must go through here; they have no
@@ -312,4 +314,12 @@ export async function bootstrapOrganization(
     if (err?.code === "already_member") return { organizationId: null, conflict: true };
     throw err;
   }
+}
+
+export function getSubscription() {
+  return api<SubscriptionResponse>("/subscription");
+}
+
+export function checkoutSubscription(plan: PlanId) {
+  return api<CheckoutResponse>("/subscription/checkout", { method: "POST", body: { plan } });
 }

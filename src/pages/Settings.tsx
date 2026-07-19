@@ -6,8 +6,9 @@ import TutorAvailabilitySettings from "../components/TutorAvailabilitySettings";
 import OrganizationSettings from "../components/OrganizationSettings";
 import BillingInvoiceSettings from "../components/BillingInvoiceSettings";
 import TutorProfileSettings from "../components/TutorProfileSettings";
+import SubscriptionSettings from "../components/SubscriptionSettings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Receipt } from "lucide-react";
+import { Receipt, CreditCard } from "lucide-react";
 
 export default function Settings() {
   const { user, checkAuth } = useAuth();
@@ -157,6 +158,12 @@ export default function Settings() {
             </TabsTrigger>
           )}
           {(user?.role === "admin" || user?.role === "tutor") && (
+            <TabsTrigger value="plan" className="flex items-center">
+              <CreditCard className="w-4 h-4 mr-2" />
+              Plan & Billing
+            </TabsTrigger>
+          )}
+          {(user?.role === "admin" || user?.role === "tutor") && (
             <TabsTrigger value="availability" className="flex items-center">
               <Clock className="w-4 h-4 mr-2" />
               Availability
@@ -275,6 +282,12 @@ export default function Settings() {
         {(user?.role === "admin" || user?.role === "tutor") && (
           <TabsContent value="billing">
             <BillingInvoiceSettings />
+          </TabsContent>
+        )}
+
+        {(user?.role === "admin" || user?.role === "tutor") && (
+          <TabsContent value="plan">
+            <SubscriptionSettings />
           </TabsContent>
         )}
 

@@ -18,6 +18,7 @@ import {
   LEAD_FUNNEL_STAGES, type AttentionReason,
 } from "../lib/people";
 import { uploadDocument, getDocumentUrl, deleteDocument } from "../lib/api";
+import { planLimitErrorMessage } from "../lib/subscription";
 
 type Lens = "students" | "leads" | "parents" | "tutors";
 const LENSES: { key: Lens; labelKey: string; icon: typeof Users }[] = [
@@ -291,7 +292,7 @@ function StudentModal({ student, user, onClose, onSaved }: any) {
       }
       onSaved();
     } catch (err: any) {
-      setError(err.message);
+      setError(planLimitErrorMessage(err.message) || err.message);
     } finally {
       setSaving(false);
     }
@@ -439,7 +440,7 @@ function LeadsLens({ search, user, navigate, t }: any) {
       toast.success(t("people.converted"));
       navigate("/app/people?lens=students");
     } catch (err: any) {
-      toast.error(t("people.convertFailed"), { description: err.message });
+      toast.error(t("people.convertFailed"), { description: planLimitErrorMessage(err.message) || err.message });
     }
   };
 
@@ -552,7 +553,7 @@ function LeadModal({ lead, user, onClose, onSaved }: any) {
       }
       onSaved();
     } catch (err: any) {
-      setError(err.message);
+      setError(planLimitErrorMessage(err.message) || err.message);
     } finally {
       setSaving(false);
     }

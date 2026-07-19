@@ -43,7 +43,7 @@ _Rewritten from scratch on 2026-07-10, after the Firebase → self-hosted Supaba
 ### Not started
 
 - Stage 2 is complete (People, Student Story, Money, Inbox, Onboarding — see §2a). Stage 3 item 1 (Schedule rebuild) is also done — see §2b.
-- Stage 3 remaining (SaaS subscription billing, super-admin, org export, hardening gauntlet): Epics 16 to 17.
+- Stage 3 remaining (super-admin, org export, hardening gauntlet — subscription billing done, see §5): Epics 16 to 17.
 - Stage 4 (mobile polish, growth loop, AI brief): Epics 18 to 20.
 - Legacy pages/components still live inside the new shell, functional but not token-styled (verified list, 2026-07-11 audit): **Settings** (plus its four sub-components `BillingInvoiceSettings`/`OrganizationSettings`/`TutorAvailabilitySettings`/`TutorProfileSettings` — note `BillingInvoiceSettings` was *not* deleted with Money, see Tech Debt #30), **Profile**, **Preferences**, **StudentDashboard** (the student's Today delegate — has two dead links, Tech Debt #28), **ParentPortal**, **Documents**, **Courses**, **RoleSelection**. (Calendar/Bookings/Timetable deleted with Schedule; Invoices/Wallet/Transactions deleted with Money; Messaging/Notifications deleted with Inbox; Students/Leads/Admin deleted with People; StudentProfile/AcademicProgress/StudyMaterial deleted with Student Story.)
 
@@ -163,8 +163,8 @@ Effort in engineer-days (ed).
 ## 5. Phase 3: Growth and Intelligence
 
 - ~~**Schedule workspace rebuild**~~ **DONE (2026-07-11) — see §2b.** Drag-based week calendar, recurring edit scopes, availability overlay, server-authoritative reschedule, real "find a gap".
-- **SaaS subscription billing** (old E16.1): org plans on Razorpay subscriptions, feature gating, free-tier limits.
-- **Super-admin console** (old E16.2): org health, audited impersonation, feature flags (`feature_flags` table already exists).
+- ~~**SaaS subscription billing**~~ (old E16.1) **BUILT (2026-07-19) — see HANDOFF §27.** Plan catalog (`shared/plans.ts`: free/growth/scale, per-active-student pricing), `subscriptions` table now real (auto-created per org via trigger), DB-enforced student-count cap (`students_enforce_plan_limit` trigger — catches the direct-client-insert path, not just the API), `GET/POST /api/v1/subscription`, platform Razorpay webhook skeleton, "Plan & Billing" Settings tab. Gateway-agnostic: checkout/webhook are code-complete but degrade to a manual-contact message until `PLATFORM_RAZORPAY_*` env vars exist (§17.1 deferral). 22 new tests (11 unit + 11 RLS), all four gates green. **Not yet live**: the schema migration hasn't reached the hosted Supabase project — see HANDOFF §26/§27's DB-egress gap.
+- **Super-admin console** (old E16.2): org health, audited impersonation, feature flags (`feature_flags` table already exists). **Next up** — needs a platform-admin concept decoupled from org RBAC first (Tech Debt #25 already found the `admin` role tier is unreachable via any signup flow; don't build super-admin gating on top of that).
 - **Org export/offboarding** (old E16.3): full JSON/XLSX export, deletion honoring 8-year financial retention.
 - **Mobile polish** (old E18): bottom tab bar, swipe attendance, payment bottom sheet.
 - **Growth loop** (old E19): payment-link referral footer, activation funnel analytics (PostHog or self-hosted equivalent).

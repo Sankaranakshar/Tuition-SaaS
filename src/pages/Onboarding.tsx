@@ -16,6 +16,7 @@ import {
   type OrgMode,
   type CsvStudentRow,
 } from "../lib/onboarding";
+import { planLimitErrorMessage } from "../lib/subscription";
 
 // Epic 14.5 (DEV_PLAN §2a Stage 2 item 5, REDESIGN §6.7): the tutor-signup
 // form sequence below is a from-scratch three-beat conversational flow
@@ -372,9 +373,9 @@ export default function Onboarding() {
 
       await checkAuth();
       navigate("/app");
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError(t("onboarding.errorGeneric"));
+      setError(planLimitErrorMessage(err?.message) || t("onboarding.errorGeneric"));
     } finally {
       setLoading(false);
     }

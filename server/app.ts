@@ -15,6 +15,7 @@ import schedulingRoutes from "./routes/scheduling.ts";
 import cronRoutes from "./routes/cron.ts";
 import documentsRoutes from "./routes/documents.ts";
 import inboxRoutes from "./routes/inbox.ts";
+import subscriptionRoutes from "./routes/subscription.ts";
 import type { AuthRequest } from "./middleware/auth.ts";
 
 // Builds the configured Express app WITHOUT starting a listener or serving the
@@ -84,6 +85,7 @@ export function createApp() {
   app.use("/api/v1/scheduling", schedulingRoutes);
   app.use("/api/v1/documents", documentsRoutes);
   app.use("/api/v1/inbox", inboxRoutes);
+  app.use("/api/v1/subscription", subscriptionRoutes);
   app.use("/api/cron", cronRoutes);
 
   app.get("/api/health", (_req, res) => {
