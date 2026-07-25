@@ -15,6 +15,7 @@ import {
   BookOpen,
   ChevronDown,
   ShieldAlert,
+  ClipboardList,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import CommandPalette from "./CommandPalette";
@@ -53,6 +54,11 @@ export default function Layout() {
 
   const isStudent = currentRole === "student";
   const isParent = currentRole === "parent";
+  // Server-side gating (owner/admin/accountant, or the platform-admin
+  // allowlist) is the real boundary — see server/routes/auditLog.ts. This
+  // only decides whether the rail icon renders at all, same caveat as
+  // isPlatformAdmin below.
+  const isStaff = !isStudent && !isParent;
 
   // Five workspaces. Documents is reachable via the palette; the rail stays
   // furniture, not a table of contents. Leads and tutor verification are
@@ -134,6 +140,21 @@ export default function Layout() {
               }
             >
               <ShieldAlert className="h-[18px] w-[18px]" strokeWidth={1.75} />
+            </NavLink>
+          )}
+          {(isStaff || isPlatformAdmin) && (
+            <NavLink
+              to="/app/audit-log"
+              title="Audit log"
+              className={({ isActive }) =>
+                `flex h-10 w-10 items-center justify-center rounded-[6px] transition-colors ${
+                  isActive
+                    ? "bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]"
+                    : "text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]"
+                }`
+              }
+            >
+              <ClipboardList className="h-[18px] w-[18px]" strokeWidth={1.75} />
             </NavLink>
           )}
           <NavLink

@@ -28,6 +28,7 @@ const Settings = lazy(() => import("./pages/Settings"));
 const Inbox = lazy(() => import("./pages/Inbox"));
 const Kit = lazy(() => import("./pages/Kit"));
 const PlatformAdmin = lazy(() => import("./pages/PlatformAdmin"));
+const AuditLog = lazy(() => import("./pages/AuditLog"));
 
 // Lazy load student pages
 const Profile = lazy(() => import("./pages/Profile"));
@@ -120,6 +121,7 @@ export default function App() {
               <Route path="settings" element={<Settings />} />
               <Route path="kit" element={<Kit />} />
               <Route path="platform-admin" element={<PlatformAdmin />} />
+              <Route path="audit-log" element={<AuditLog />} />
 
               {/* Student Routes */}
               <Route path="my-story" element={<StudentStory />} />

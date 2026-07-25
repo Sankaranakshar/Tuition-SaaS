@@ -26,6 +26,7 @@ import type { SubscriptionResponse, CheckoutResponse } from "../../shared/schema
 import type { PlanId } from "../../shared/plans";
 import type { ListOrgsResponse, ImpersonateResponse } from "../../shared/schemas/admin";
 import type { OffboardResponse } from "../../shared/schemas/orgExport";
+import type { ListAuditEventsResponse } from "../../shared/schemas/auditLog";
 
 // Thin authenticated client for the privileged API (/api/v1).
 // Money and attendance mutations must go through here; they have no
@@ -346,6 +347,25 @@ export function listOrgMembersForAdmin(orgId: string) {
 
 export function impersonateUser(userId: string) {
   return api<ImpersonateResponse>("/admin/impersonate", { method: "POST", body: { userId } });
+}
+
+export interface AuditLogFilters {
+  orgId?: string;
+  actorId?: string;
+  entityType?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export function listAuditEvents(filters: AuditLogFilters = {}) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  }
+  const qs = params.toString();
+  return api<ListAuditEventsResponse>(`/audit-log${qs ? `?${qs}` : ""}`);
 }
 
 /** Downloads a blob from a GET /api/v1 route and triggers a file save via a
