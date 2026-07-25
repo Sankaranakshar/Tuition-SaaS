@@ -77,13 +77,13 @@ function MyScheduleView() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-[var(--cs-text)]">{t("schedule.myWeek")}</h1>
         <div className="flex items-center gap-1 rounded-md border border-[var(--cs-border)] bg-white p-1">
-          <button onClick={() => setWeekStart(subWeeks(weekStart, 1))} className="rounded p-1 hover:bg-gray-100">
+          <button onClick={() => setWeekStart(subWeeks(weekStart, 1))} className="rounded p-1 hover:bg-gray-100" aria-label="Previous week">
             <ChevronLeft className="h-4 w-4" />
           </button>
           <span className="w-40 text-center text-sm font-medium text-[var(--cs-text)]">
             {format(weekStart, "MMM d")} – {format(addDays(weekStart, 6), "MMM d, yyyy")}
           </span>
-          <button onClick={() => setWeekStart(addWeeks(weekStart, 1))} className="rounded p-1 hover:bg-gray-100">
+          <button onClick={() => setWeekStart(addWeeks(weekStart, 1))} className="rounded p-1 hover:bg-gray-100" aria-label="Next week">
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
@@ -370,6 +370,7 @@ function StaffSchedule() {
             <button
               onClick={() => (view === "week" ? setWeekStart(subWeeks(weekStart, 1)) : setMonthCursor(addDays(startOfMonth(monthCursor), -1)))}
               className="rounded p-1 hover:bg-gray-100"
+              aria-label={view === "week" ? "Previous week" : "Previous month"}
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -381,6 +382,7 @@ function StaffSchedule() {
             <button
               onClick={() => (view === "week" ? setWeekStart(addWeeks(weekStart, 1)) : setMonthCursor(addDays(endOfMonth(monthCursor), 1)))}
               className="rounded p-1 hover:bg-gray-100"
+              aria-label={view === "week" ? "Next week" : "Next month"}
             >
               <ChevronRight className="h-4 w-4" />
             </button>

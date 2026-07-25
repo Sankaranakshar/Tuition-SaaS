@@ -206,16 +206,16 @@ export default function Settings() {
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Full Name</label>
-                  <input type="text" disabled value={user?.name || ""} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 bg-gray-50 text-gray-500 sm:text-sm" />
+                  <label htmlFor="profile-full-name" className="block text-sm font-medium text-gray-700">Full Name</label>
+                  <input id="profile-full-name" type="text" disabled value={user?.name || ""} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 bg-gray-50 text-gray-500 sm:text-sm" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Email Address</label>
-                  <input type="email" disabled value={user?.email || ""} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 bg-gray-50 text-gray-500 sm:text-sm" />
+                  <label htmlFor="profile-email" className="block text-sm font-medium text-gray-700">Email Address</label>
+                  <input id="profile-email" type="email" disabled value={user?.email || ""} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 bg-gray-50 text-gray-500 sm:text-sm" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Role</label>
-                  <input type="text" disabled value={user?.role || ""} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 bg-gray-50 text-gray-500 sm:text-sm capitalize" />
+                  <label htmlFor="profile-role" className="block text-sm font-medium text-gray-700">Role</label>
+                  <input id="profile-role" type="text" disabled value={user?.role || ""} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 bg-gray-50 text-gray-500 sm:text-sm capitalize" />
                 </div>
               </div>
             </div>

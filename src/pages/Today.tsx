@@ -422,7 +422,10 @@ function StaffToday({ user, currentRole }: { user: any; currentRole: string | nu
         {debt.length > 0 && (
           <a
             href="#queue"
-            className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--cs-warn)]/40 bg-[var(--cs-warn)]/10 px-3 py-2 text-sm font-medium text-[var(--cs-warn)]"
+            // text-[var(--cs-warn)] (#d97706) on this tinted background measured
+            // 2.75:1 contrast (WCAG AA needs 4.5:1 for normal text) — amber-800
+            // keeps the same hue family but passes.
+            className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--cs-warn)]/40 bg-[var(--cs-warn)]/10 px-3 py-2 text-sm font-medium text-amber-800"
           >
             <CalendarClock className="h-4 w-4" strokeWidth={1.75} />
             {debt.length} unmarked session{debt.length === 1 ? "" : "s"}

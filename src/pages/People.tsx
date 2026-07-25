@@ -199,7 +199,13 @@ function StudentsLens({ search, user, navigate, t }: any) {
           <div className="divide-y divide-[var(--cs-border)]">
             {ranked.map(({ student, reason }) => (
               <div key={student.id} className="flex items-center gap-2 pl-3">
-                <input type="checkbox" checked={selected.has(student.id)} onChange={() => toggleSelect(student.id)} className="h-4 w-4" />
+                <input
+                  type="checkbox"
+                  checked={selected.has(student.id)}
+                  onChange={() => toggleSelect(student.id)}
+                  className="h-4 w-4"
+                  aria-label={`Select ${student.name}`}
+                />
                 <div className="min-w-0 flex-1">
                   <PersonRow
                     name={student.name}
