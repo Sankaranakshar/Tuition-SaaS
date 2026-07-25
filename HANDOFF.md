@@ -1,8 +1,8 @@
 # ClassStackr — Engineering Handoff
 
-_Last updated: 2026-07-11._ This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked, and what comes next. It is **append-only**: sections are numbered in the order they were written, so the newest (most current) material has the highest numbers. **Do not read it top to bottom — use the dashboard and section map below.**
+_Last updated: 2026-07-25 (§35)._ This document lets anyone (engineer or agent) pick up the build without re-reading the whole history. It records exactly what is done, what is verified, what is blocked, and what comes next. It is **append-only**: sections are numbered in the order they were written, so the newest (most current) material has the highest numbers. **Do not read it top to bottom — use the dashboard and section map below.**
 
-## Where the project is right now (2026-07-11)
+## Where the project is right now (2026-07-25)
 
 | Stage | Scope | Status |
 |---|---|---|
@@ -25,13 +25,24 @@ _Last updated: 2026-07-11._ This document lets anyone (engineer or agent) pick u
 
 **Audited against the original 24-week plan (2026-07-20, §32):** confirms the hardening gauntlet flag above is accurate, and surfaces two items not tracked anywhere else — **Epic 16.4 (audit log viewer) was never built** (now resolved, same day, §33), and the founder's own week-5 long-lead external tasks (Razorpay KYC, WhatsApp/SMS onboarding, legal docs) were never started, which is the actual reason Epics 7/8 remain blocked.
 
+### Next steps for a new session
+
+Two things left in the hardening gauntlet, neither of which is a blind "continue coding" task — both need a decision or resource from outside this session before real progress is possible:
+
+1. **k6 load test at real scale** (`tests/load/attendance-burst.js`, §35). The script is built and smoke-validated; the `attendance_burst` scenario that actually proves DEV_PLAN's p95<400ms target under load needs (a) a disposable/seeded test org whose invoice/wallet-ledger rows are fine to throw away, and (b) the founder's explicit go-ahead before pointing real write load at any shared environment (there is currently no environment other than the live hosted Supabase project — see HANDOFF §13). If picking this up: ask before creating that test org or running the scenario, don't assume the go-ahead from a general "keep going."
+2. **External pentest.** Not an engineering task — needs a real third-party security firm engagement. If asked to "do the pentest," the correct move is to say so, not to run an automated scanner and call it done.
+
+Everything else that was open (route-contract tests, axe pass, audit log viewer) is now done — see §33–§35. If neither of the two items above is actionable right now, the next real engineering work is **Stage 4** (mobile polish, growth loop, AI morning brief — DEV_PLAN §5, not started) or picking a fresh Technical Debt Backlog item (DEV_PLAN §6).
+
 ## How to read this file (section map)
 
 **Current — read these, in this order:**
 
 | § | What it is |
 |---|---|
-| **§25** | **START HERE.** 2026-07-11 full-repo audit + current-state snapshot: architecture, live environment, env vars, commands, known issues ranked, next steps |
+| **Dashboard above + "Next steps for a new session"** | **START HERE.** The live status table and what to actually pick up next — everything below this table is reference/history, not the current state |
+| **§35** | Most recent work: axe pass, full route-contract coverage, k6 script — the two things still genuinely open |
+| **§25** | 2026-07-11 full-repo audit: architecture, live environment, env vars, commands — still-accurate reference for how the system is put together, but its "next steps" are long since superseded by the dashboard above |
 | **§17** | The standing operating playbook: founder's external-integrations deferral (§17.1), per-workspace engineering rules (§17.3 — its work list is now all done, the rules still bind), go-live checklist (§17.4) |
 | **§8** | Security invariants — non-negotiable, updated for Supabase |
 
