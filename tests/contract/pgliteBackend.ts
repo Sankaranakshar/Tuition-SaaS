@@ -27,11 +27,15 @@ export interface QueryResult {
 export async function query(text: string, params: any[] = []): Promise<QueryResult> {
   if (!current) throw new Error("pgliteBackend: no PGlite instance registered — call setBackend() first");
   const res = await current.query(text, params);
-  // Every `.rowCount` check in the routes under test (grepped, not guessed)
-  // is against a SELECT's row count, where node-postgres's rowCount equals
-  // rows.length — unlike PGlite's own `affectedRows`, which is 0 for a
-  // SELECT (an UPDATE/INSERT/DELETE row count, not a "how many came back"
-  // count) and would make `rowCount === 0` checks wrongly true even when
-  // rows were actually returned.
-  return { rows: res.rows as any[], rowCount: (res.rows as any[]).length };
+  const rows = res.rows as any[];
+  // node-postgres's rowCount means "how many rows this statement touched":
+  // for a SELECT that's rows.length; for an UPDATE/INSERT/DELETE *without*
+  // RETURNING it's the affected-row count even though rows is empty. PGlite
+  // gives us both separately (`rows` and `affectedRows`, the latter 0 for a
+  // bare SELECT) — prefer rows.length when it's non-zero (SELECT, or a
+  // RETURNING clause), otherwise fall back to affectedRows so a rowCount
+  // check on a plain UPDATE/DELETE (e.g. students.ts's redeem claim) sees
+  // the real count instead of always reading 0.
+  const rowCount = rows.length > 0 ? rows.length : (res.affectedRows ?? 0);
+  return { rows, rowCount };
 }

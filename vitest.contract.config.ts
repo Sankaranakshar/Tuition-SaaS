@@ -18,6 +18,7 @@ export default defineConfig({
       SUPABASE_URL: "http://localhost:54321",
       SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
       DATABASE_URL: "postgres://unused-in-contract-tests",
+      ENCRYPTION_KEY: "0".repeat(64), // 32-byte hex key for utils/crypto.ts's encrypt/decrypt (gateway creds, Google tokens)
     },
   },
 });
