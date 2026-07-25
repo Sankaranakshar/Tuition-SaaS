@@ -15,11 +15,11 @@ _Last updated: 2026-07-11._ This document lets anyone (engineer or agent) pick u
 | Stage 3, item 3 | Super-admin console (org health, feature flags, audited impersonation) | ✅ Built + browser-verified (§28, §29) |
 | Stage 3, item 4 | Org export/offboarding (JSON/XLSX export, status-flip offboarding) | ✅ Built + browser-verified (§30) |
 | Stage 3, item 5 | Audit log viewer (old Epic 16.4 / Tech Debt #31) | ✅ Built + browser-verified (§33) |
-| **Stage 3, rest** | **Hardening gauntlet — route-contract tests done (§34); k6/pentest/axe still open** | **⬅ ACTIVE** (DEV_PLAN §5/§9) |
+| **Stage 3, rest** | **Hardening gauntlet — axe pass done, full route-contract coverage done, k6 script built+smoke-validated (§34–§35); real-scale k6 run + external pentest still open** | **⬅ ACTIVE** (DEV_PLAN §5/§9) |
 | Stage 4 | Mobile polish, growth loop, AI morning brief | Not started |
 | External integrations | Razorpay live keys (org + platform), Google OAuth, phone OTP/SMS, Sentry, staging, legal docs | ⏸ Deferred by founder until go-to-market (§17.1) — not blockers, do not work on them |
 
-**Verification status:** all gates green as of the 2026-07-25 route-contract build (§34) — `tsc --noEmit` clean · 158/158 unit · 80/80 RLS · 70/70 route-contract (new, `npm run test:contract`) · build passing · bundle 224.6 KB gzip (260 KB budget). Live at `https://tuition-saas-two.vercel.app` against Supabase Cloud `cwugpiernnwrhcximjwh`; commit `17dc399` pushed to `main` and deployed (`/api/health` confirmed responding), migration `20260719130000` pushed via `supabase db push` — see §30. **Resolved 2026-07-19 (§29):** `platform_admins` seeded with the founder's row; both §27 (subscription billing) and §28 (super-admin console) walked through live in a real browser against the hosted project, including the impersonation magic-link round-trip.
+**Verification status:** all gates green as of the 2026-07-25 hardening-gauntlet pass (§34–§35) — `tsc --noEmit` clean · 158/158 unit · 80/80 RLS · 165/165 route-contract (`npm run test:contract`, 13 files) · build passing · bundle 224.6 KB gzip (260 KB budget). Live at `https://tuition-saas-two.vercel.app` against Supabase Cloud `cwugpiernnwrhcximjwh`; commit `17dc399` pushed to `main` and deployed (`/api/health` confirmed responding), migration `20260719130000` pushed via `supabase db push` — see §30. **Resolved 2026-07-19 (§29):** `platform_admins` seeded with the founder's row; both §27 (subscription billing) and §28 (super-admin console) walked through live in a real browser against the hosted project, including the impersonation magic-link round-trip.
 
 **§25.2's two small bugs are fixed** (§26, commit `3b076fc`) — Stage 3 work is unblocked on that front.
 
@@ -65,6 +65,7 @@ _Last updated: 2026-07-11._ This document lets anyone (engineer or agent) pick u
 | §32 | Audit against the original 24-week plan — confirms Stage 0–2 map cleanly (modulo the Firebase→Supabase pivot), surfaces two net-new gaps: Epic 16.4 audit log viewer never built, founder's week-5 external tasks never started |
 | §33 | Stage 3 item 5 / Tech Debt #31: audit log viewer — dual-gated `GET /api/v1/audit-log` (platform admin sees all orgs, org owner/admin/accountant sees their own, mirroring `audit_events_select`'s RLS policy), `AuditLog.tsx` page, browser-verified live with real historical events |
 | §34 | Hardening gauntlet part 1: supertest route-contract suite (`npm run test:contract`) — PGlite-backed `pool`/`supabaseAdmin` shims driving the real Express app, 70 tests covering billing/scheduling/parents' full auth matrix; k6/pentest/axe and the rest of the route files still open |
+| §35 | Hardening gauntlet parts 2–4: axe accessibility pass (5 real violations found + fixed), route-contract coverage extended to all 11 in-scope route files (165 tests total), k6 script built and smoke-validated (`tests/load/attendance-burst.js`) — full-scale run and external pentest still open |
 
 **After this file:** [DEV_PLAN.md](DEV_PLAN.md) (the executable plan, re-audited 2026-07-11) → [REDESIGN.md](REDESIGN.md) (product-experience spec) → [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) (strategy; its architecture/security sections are Firestore-era history) → [supabase/README.md](supabase/README.md) and `tests/integration/rbac.test.ts`.
 
@@ -1319,3 +1320,53 @@ Old Epic 17's first piece (DEV_PLAN §9): route-contract tests. §9 had flagged 
 **Not yet covered:** every other route file — `settings.ts`, `members.ts`, `gateway.ts`, `students.ts`, `documents.ts`, `inbox.ts`, `subscription.ts`, `admin.ts`, `orgExport.ts`, `auditLog.ts` (§33). The harness (`tests/contract/testApp.ts` + both shims) is reusable as-is; extending coverage is adding a new `tests/contract/<name>.test.ts` file per route module, same pattern as the three built here — no further infrastructure work needed unless a route uses a supabase-js shape the shim doesn't cover yet (extend `supabaseShim.ts`, don't work around it).
 
 **Still open in the hardening gauntlet (old Epic 17):** k6 load test (E17.1), external pentest (E17.2 — genuinely needs a third-party engagement, not something an engineering pass can self-certify), axe accessibility pass (E17.3), and the remaining route-contract coverage above. DEV_PLAN §5/§9's flag stays ACTIVE.
+
+---
+
+## 35. Hardening gauntlet, parts 2–4 — axe pass, full route-contract coverage, k6 script (2026-07-25)
+
+Same session as §34, continuing straight through the rest of old Epic 17's checklist items that don't require a third-party engagement.
+
+### Axe accessibility pass (E17.3)
+
+`axe-core` added as a devDependency and injected into the running dev app (`npm run dev:preview`) via a temporary `public/axe.min.js` (removed after — Vite serves `public/` statically, easiest way to get a 570KB script into the page without wiring it into the real bundle). Logged in as the seeded demo tutor (`scripts/seed.ts`'s `demo.tutor@classstackr.dev`) and ran `axe.run(document, { runOnly: ["wcag2a", "wcag2aa"] })` against every staff-facing workspace: Today, People, Schedule, Money, Inbox, Settings, Courses, Documents, and the new Audit Log page (§33/§34).
+
+Five real violations found and fixed, all re-verified clean with a second axe pass after:
+- **Today** (`src/pages/Today.tsx`): the "N unmarked sessions" queue-jump badge's `text-[var(--cs-warn)]` on `bg-[var(--cs-warn)]/10` measured 2.75:1 contrast (WCAG AA needs 4.5:1) — changed to `text-amber-800`, same hue family, passes.
+- **People** (`src/pages/People.tsx`): the bulk-select row checkboxes had no accessible name (`label` rule, critical) — added `aria-label={`Select ${student.name}`}`.
+- **Schedule** (`src/pages/Schedule.tsx`): four week/month prev/next icon-only buttons across both the student mini-schedule and the main staff view had no discernible text (`button-name` rule, critical) — added `aria-label`.
+- **Settings** (`src/pages/Settings.tsx`): the disabled Full Name/Email/Role profile fields had visible `<label>` text never programmatically associated with their `<input>` (`label` rule, critical) — added matching `id`/`htmlFor` pairs.
+- **Documents** (`src/pages/Documents.tsx`): the table's `overflow-x-auto` wrapper had no keyboard access (`scrollable-region-focusable`, serious) — added `tabIndex={0} role="region" aria-label="Documents table"`.
+
+All five gates (tsc, 158 unit, 80 RLS, contract, build/bundle) re-confirmed green after the fixes; bundle size unaffected (`axe-core` never ships to the client bundle — it was a temporary `public/` file for this pass only, both removed).
+
+### Full route-contract coverage (extends §34)
+
+§34 covered billing/scheduling/parents (70 tests). This pass extended `tests/contract/` to every remaining route file except `cron.ts` (service-token auth model, not user-JWT) and `webhooks.ts` (raw-body HMAC-signature middleware, mounted differently in `server/app.ts`) — both deliberately out of scope, not forgotten. Also skipped: `settings.ts`'s `/google/url` and `/google/callback` (pure Google OAuth plumbing for the founder-deferred Epic 8 — `/google/status` and `/google/disconnect`, which don't touch Google at all, are covered).
+
+New files: `members.test.ts` (13), `students.test.ts` (13), `settings.test.ts` (7), `gateway.test.ts` (10), `documents.test.ts` (14), `inbox.test.ts` (4), `subscription.test.ts` (6), `orgExport.test.ts` (9), `admin.test.ts` (11), `auditLog.test.ts` (8) — 95 new tests, **165 total** in `npm run test:contract` across 13 files (11 route modules + shared harness).
+
+Extending coverage surfaced real gaps in the shim (all in `tests/contract/supabaseShim.ts`/`pgliteBackend.ts`, not in application code):
+- **A second rowCount bug, same root cause as §34's first one.** `students.ts`'s redeem route checks `claim.rowCount === 0` on a bare `UPDATE ... WHERE student_user_id IS NULL` (no `RETURNING`) to detect a lost race. §34's fix (`rowCount = rows.length`) breaks this: an UPDATE without RETURNING always has `rows.length === 0` regardless of how many rows it actually touched, so this check would have been permanently true again — the opposite failure mode from §34's bug, same underlying gap (conflating "how many rows came back" with "how many rows were touched"). Fixed properly this time: `rowCount = rows.length > 0 ? rows.length : (affectedRows ?? 0)`, which is correct for SELECT, INSERT/UPDATE/DELETE with RETURNING, and INSERT/UPDATE/DELETE without RETURNING, all at once — re-verified against all 83 tests that existed at that point, all still green.
+- The shim's query-builder gained `.delete()`, `.in()`, `.upsert()` with no explicit `onConflict` (defaults to a small `DEFAULT_CONFLICT_TARGET` map, currently just `payment_gateways: "organization_id"` — supabase-js itself defaults to the table's PK, which Postgres needs spelled out explicitly for `ON CONFLICT ... DO UPDATE`), and `.select(cols, { count: "exact", head: true })` (subscription.ts's active-student count).
+- Added a minimal in-memory `supabaseAdmin.storage.from(bucket)` stub (`upload`/`createSignedUrl`/`remove`, Map-keyed by path) for `documents.ts` — the only route touching Supabase Storage. Real magic-byte sniffing, filename sanitization, and org/role scoping all get exercised for real against real uploaded bytes; only the actual object storage is faked.
+- Added `supabaseAdmin.auth.admin.generateLink()` (a fake magic-link URL) for `admin.ts`'s impersonate route.
+
+**One genuine, non-shim finding surfaced by the new coverage**, in `orgExport.test.ts`: `orgExport.ts`'s `/offboard` route has an `org.status === "offboarded"` → 409 `already_offboarded` branch that is **dead code** in the real request path. `requireOrg` (`server/middleware/auth.ts`) reads the caller's `organizationStatus` fresh from the DB on every request and 403s (`org_offboarded`) before any route handler runs once an org is offboarded — so re-POSTing `/offboard` as a member of an already-offboarded org always hits `requireOrg`'s 403 first, never the route's own 409 check. Not a bug (403 is arguably the more correct response anyway, and no information leaks either way) — just worth knowing if this route is ever refactored. Test asserts the actual 403 behavior with a comment explaining why, rather than the unreachable 409.
+
+All five gates green together at 165/165 contract tests: `tsc --noEmit` clean, 158/158 unit, 80/80 RLS, build passing, bundle unaffected.
+
+### k6 load test script (E17.1)
+
+`k6` installed locally (`brew install k6`, not a project dependency — same posture as any other external test tool). New `tests/load/attendance-burst.js`, three scenarios selected via `SCENARIO` env var:
+- `smoke` (default): 2 VUs, 10s, read-only (`/api/health` + `GET /api/v1/subscription`) — safe against any environment including production, this is the "does the script still work" check.
+- `read_burst`: ramps to `READ_VUS` (default 25) over `READ_DURATION` (default 2m), still read-only.
+- `attendance_burst`: the actual DEV_PLAN §5 scenario — ramps to `WRITE_VUS` (default 15) real tutors marking real attendance via `POST /api/v1/billing/attendance`, which runs the real money-transaction path (wallet debit or invoice creation). Requires `SESSION_ID`/`STUDENT_ID` env vars pointing at real rows and throws immediately if they're not set — **deliberately not defaulted to anything**, since running this against a real org's data would create real garbage invoices/ledger entries. Needs a disposable/seeded test org and explicit sign-off before running against any shared environment; not run this session.
+
+Threshold matches DEV_PLAN's own target: `http_req_duration p(95)<400ms`. `setup()` does one real GoTrue password-grant login (against `SUPABASE_URL`, defaulting to `scripts/seed.ts`'s seeded demo tutor) and reuses the token across every VU, so the load test measures this app's API, not GoTrue's login latency.
+
+**Validated, not fully run:** `npm run test:load:smoke` executed against `npm run dev:preview` (real hosted Supabase Cloud project, the only environment available) — real login, real requests, all checks passed, `p(95)=357.88ms` under the 400ms threshold. This confirms the script itself works end-to-end; it is *not* a real load-test result (2 VUs / 37 total requests is negligible traffic, nowhere near "5x pilot volume"). The `attendance_burst` scenario — the one that would actually validate DEV_PLAN's p95 target under real load — was not run, both because it writes real data and because generating meaningful load against the founder's live production database needs explicit go-ahead first, not just an engineering pass.
+
+### Net effect
+
+Old Epic 17 (hardening gauntlet) status: axe pass (E17.3) done and fixed; route-contract tests done for every in-scope route (backend engineering half of testing, DEV_PLAN §9); k6 script (E17.1) built and smoke-validated, full-scale run pending sign-off + a disposable test org; external pentest (E17.2) still requires a third-party engagement outside engineering's ability to self-certify. DEV_PLAN §5/§9's ACTIVE flag stays, narrowed to: real-scale k6 run + external pentest.
