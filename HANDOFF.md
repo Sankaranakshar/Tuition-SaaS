@@ -2,9 +2,9 @@
 
 **What this is:** everything you need to pick up this codebase and be productive, in one read. Current state, how the system works, how to run it, and the rules that must not be broken.
 
-**Companion docs:** [DEV_PLAN.md](DEV_PLAN.md) is what is left to build. [REDESIGN.md](REDESIGN.md) is the product-experience spec. [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) is strategy (its architecture and security sections are Firestore-era history). [docs/BUILD_LOG_ARCHIVE.md](docs/BUILD_LOG_ARCHIVE.md) is the old append-only build log, kept for narrative detail only.
+**Companion docs:** [DEV_PLAN.md](DEV_PLAN.md) is what is left to build. [REDESIGN.md](REDESIGN.md) is the product-experience spec. [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) is strategy (its architecture and security sections are Firestore-era history). [docs/BUILD_LOG_ARCHIVE.md](docs/BUILD_LOG_ARCHIVE.md) is the old append-only build log, kept for narrative detail only. [docs/OPTIMIZATION_AUDIT.md](docs/OPTIMIZATION_AUDIT.md) is a 2026-07-26 performance/correctness audit; its fixes are applied (commit `b15f691`), see §8 for the two most consequential findings.
 
-_Last verified 2026-07-25 against commit `ab79d69`, working tree clean. Every number below was re-run, not inherited._
+_Last verified 2026-08-01 against commit `b15f691`, working tree clean. Every number below was re-run, not inherited._
 
 ---
 
@@ -20,24 +20,25 @@ Multi-tenant SaaS for Indian tuition centers: INR, GST invoices, UPI/Razorpay co
 | 1 | Payments, Today workspace, parent portal, live infra, wedge demo | Complete, money loop verified live |
 | 2 | People, Student Story, Money, Inbox, Onboarding | Complete, all 14 legacy pages deleted |
 | 3 | Schedule rebuild, subscription billing, super-admin, org export, audit log | Complete, all five browser-verified |
-| 3 (rest) | Hardening: axe pass and route contracts done; real-scale k6 and pentest open | **Active**, see DEV_PLAN §2 |
+| 3 (rest) | Hardening: axe pass, route contracts, and a full optimization audit (docs/OPTIMIZATION_AUDIT.md) done; real-scale k6 and pentest open | **Active**, see DEV_PLAN §2 |
 | 4 | Mobile polish, growth loop, AI morning brief | Not started |
 | External | Razorpay live keys, Google OAuth, phone OTP, Sentry, staging, legal | Deferred by founder, see §7 |
 
-**Gates, all re-run and green on 2026-07-25:**
+**Gates, all re-run and green on 2026-08-01:**
 
 | Gate | Command | Result |
 |---|---|---|
 | Typecheck | `npm run lint` | clean |
-| Unit | `npm test` | 158/158 (13 files) |
+| Unit | `npm test` | 167/167 (14 files) |
 | RLS / authorization | `npm run test:rls` | 80/80 (4 files) |
-| Route contracts | `npm run test:contract` | 165/165 (13 files) |
-| Build | `npm run build` | passes, server bundle 121.4 KB |
-| Bundle budget | `npm run check:bundle-size` | 224.6 KB gzip, budget 260 KB |
+| Route contracts | `npm run test:contract` | 179/179 (14 files) |
+| Build | `npm run build` | passes, server bundle 127.7 KB |
+| Bundle budget | `npm run check:bundle-size` | 196.8 KB gzip, budget 260 KB |
+| API bundle | `npm run build:api && npm run check:api-bundle` | all 15 route mounts present |
 
-Run all six before every commit. None of them need Docker, Java, or a live database.
+Run all seven before every commit. None of them need Docker, Java, or a live database.
 
-**CI runs only five of the six.** `.github/workflows/ci.yml` covers lint, unit, RLS, build, and bundle-size. The route-contract suite is local-only, so running it by hand before a commit actually matters (DEV_PLAN Tech Debt #10).
+**CI now runs every gate above.** `.github/workflows/ci.yml` covers lint, `npm audit` (report-only, 17 pre-existing advisories need breaking upgrades so it doesn't fail the build), unit, RLS, route-contract, build, bundle-size, and the API-bundle rebuild+verify. The route-contract suite used to be local-only (old Tech Debt #10, now closed); it and the API-bundle check were added in the 2026-07-26 optimization pass alongside the fix for the stale-`api/index.js` bug described below.
 
 ## 3. Architecture
 
@@ -128,6 +129,11 @@ Each of these cost real debugging time. They are distilled here so they cost nob
 **Typecheck, unit, and RLS tests cannot catch interaction bugs.** The Schedule rebuild's four worst bugs (a drag that never changed days, an out-of-order refetch race blanking the grid, a stale effect dependency, a 500 on a missing column) were all invisible to every automated gate and only appeared when someone actually dragged something in a browser. Budget for a real walkthrough on any interactive feature.
 
 **Absolute paths must include the `/app` prefix.** Routes live nested under `/app`, so a `Link to="/students/:id"` resolves outside the router match and renders a blank page. This has caused dead ends on the payment path twice.
+
+**Two more from the 2026-07-26 optimization audit (docs/OPTIMIZATION_AUDIT.md), both fixed:**
+
+- **CI validating a build artifact nobody deploys is worse than not validating one.** `npm run build` bundles `server.ts` to `dist/server.js`; Vercel's `buildCommand` bundles the different entry point `server/vercelHandler.ts` to `api/index.js`. For 15 days the committed `api/index.js` was stale and silently missing 7 of 14 route groups, and every other gate was green the whole time. CI now runs `npm run build:api` (the exact esbuild command Vercel runs) and `npm run check:api-bundle`, which fails if any `server/app.ts` route mount is missing from the built artifact.
+- **A Realtime subscription can refetch through a stale closure.** `useRealtimeList`'s subscribing effect ran once and its callback permanently captured the mount-time `load` closure, so (for example) a `class_sessions` change event while viewing Schedule week 3 could silently overwrite the grid with week 1's data. Fixed via `src/hooks/realtimeMerge.ts`. This class of bug is invisible to typecheck/unit/RLS/contract tests, since none of them mount the hook — only a real interactive walkthrough (or, here, a careful code read) surfaces it.
 
 ## 9. What is verified, and what is not
 
