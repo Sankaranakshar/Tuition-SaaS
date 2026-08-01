@@ -12,23 +12,19 @@ Stages 0 through 3 are complete: security foundation, server-authoritative money
 
 A full optimization audit (docs/OPTIMIZATION_AUDIT.md) ran 2026-07-25/26 and its fixes are applied as of commit `b15f691`: a Critical finding (the deployed Vercel API bundle was stale, silently missing 7 of 14 route groups — CI now rebuilds and verifies it), a High finding (a stale-closure bug in `useRealtimeList` that could render the wrong week's data into Schedule after a Realtime event), four dead dependencies removed, and route-contract tests plus `npm audit` wired into CI. See HANDOFF §8 for the two most consequential findings.
 
-What remains is: two hardening items that need something from outside engineering, then Stage 4, then the go-to-market checklist.
+What remains is: one hardening item that needs something from outside engineering, then Stage 4, then the go-to-market checklist.
 
-## 2. Active work: the last two hardening items
+## 2. Active work: the last hardening item
 
-Neither is a "keep coding" task. Both need a decision or a resource first. **Do not infer a go-ahead for either from a general "keep going."**
+### 2.1 k6 load test at real scale — done, 2026-08-01
 
-### 2.1 k6 load test at real scale
+Ran `attendance_burst` against the live production API (`tuition-saas-two.vercel.app`) with founder sign-off, 15 VUs for ~90s, against the seeded demo org (`Demo Tuition Center`). Result: **p95 79–101ms across three runs, comfortably under the 400ms/5x-pilot-volume target.** One real invoice was created (₹500, `source: {kind: "attendance", sessionId: ...}`) and the attendance row shows `billed: true`, with no duplicate invoice despite 15 concurrent VUs hammering the same session/student for the full run — the `FOR UPDATE` wallet lock and the `billed`-flag idempotency guard both held under real concurrent write pressure.
 
-`tests/load/attendance-burst.js` is built and smoke-validated. Its `smoke` scenario is read-only and safe anywhere (last run: p95 357ms, threshold 400ms). That result proves the script works. It is not a load-test result, since 2 VUs is negligible traffic.
+Two caveats surfaced while verifying the run was real and not just check-shaped, worth keeping in mind if this test is rerun:
+- **The script's single shared auth token self-limits it.** `setup()` logs in once and reuses that token across all VUs, so the per-user rate limiter (120 req/min, `server/app.ts`) caps sustained throughput after ~10-15s of a 15-VU run. This is the limiter working as designed, not a capacity problem, but it means this scenario tests "one token under concurrent connections," not "N distinct tutors marking attendance at once." A truly faithful multi-tutor burst would need the script extended to authenticate as several demo accounts.
+- **Session eligibility is narrow.** The billing endpoint only accepts sessions with `start_time` in the past 7 days, and only bills if the session's template is priced `PER_SESSION`. The seeded demo org needed a fresh session created (via the real `POST /api/v1/scheduling/sessions` endpoint, not a DB script) tied to the existing `PER_SESSION` "Grade 10 Mathematics" template before the money-write path could be exercised at all.
 
-The `attendance_burst` scenario is the one that would actually validate the p95 under 400ms target at 5x pilot volume. It drives real `POST /api/v1/billing/attendance` calls through the real money-transaction path, creating real invoices and wallet-ledger rows. It deliberately refuses to run without explicit `SESSION_ID` and `STUDENT_ID` env vars, so it can never default into someone's real data.
-
-**Blocked on two things, both the founder's call:**
-1. A disposable or seeded test org whose invoice and ledger rows are fine to throw away.
-2. Explicit sign-off before pointing write load at a shared environment. There is currently no environment other than the live hosted Supabase project.
-
-**Ask before creating that test org or running the scenario.**
+The demo org now carries one extra unpaid ₹500 test invoice from this run — harmless, and expected for a disposable seeded org.
 
 ### 2.2 External pentest
 

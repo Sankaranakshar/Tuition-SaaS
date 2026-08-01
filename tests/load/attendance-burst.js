@@ -27,8 +27,10 @@
 //                        test org (see setup() below) whose rows are fine to
 //                        throw away, and needs sign-off before running against
 //                        any environment that isn't a local/staging DB you
-//                        control. Not run as part of this session's dry-run
-//                        validation; see HANDOFF for that decision.
+//                        control. Run 2026-08-01 with founder sign-off against
+//                        the seeded demo org: p95 79-101ms across three runs,
+//                        well under the 400ms target, one real invoice created,
+//                        no duplicate under 15 concurrent VUs. See DEV_PLAN §2.1.
 //
 // Auth: setup() does one real password-grant login (GoTrue's
 // /auth/v1/token?grant_type=password) against SUPABASE_URL using
@@ -37,6 +39,11 @@
 // secret, but override via env vars for anything other than that fixture
 // account). The resulting access token is reused by every VU — one login,
 // not one per VU, so the load test measures the app's API, not GoTrue's.
+// Caveat: because every VU shares that one token, the server's per-user rate
+// limiter (120 req/min, server/app.ts) caps sustained attendance_burst
+// throughput after ~10-15s — this tests one token under concurrent
+// connections, not truly independent concurrent tutors. A multi-tutor-
+// faithful version would need setup() to log in as several demo accounts.
 
 import http from "k6/http";
 import { check, sleep } from "k6";

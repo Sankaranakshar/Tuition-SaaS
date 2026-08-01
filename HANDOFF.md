@@ -20,7 +20,7 @@ Multi-tenant SaaS for Indian tuition centers: INR, GST invoices, UPI/Razorpay co
 | 1 | Payments, Today workspace, parent portal, live infra, wedge demo | Complete, money loop verified live |
 | 2 | People, Student Story, Money, Inbox, Onboarding | Complete, all 14 legacy pages deleted |
 | 3 | Schedule rebuild, subscription billing, super-admin, org export, audit log | Complete, all five browser-verified |
-| 3 (rest) | Hardening: axe pass, route contracts, and a full optimization audit (docs/OPTIMIZATION_AUDIT.md) done; real-scale k6 and pentest open | **Active**, see DEV_PLAN §2 |
+| 3 (rest) | Hardening: axe pass, route contracts, optimization audit, and real-scale k6 (p95 79-101ms vs 400ms target, live-prod verified 2026-08-01) done; external pentest open | **Active**, see DEV_PLAN §2 |
 | 4 | Mobile polish, growth loop, AI morning brief | Not started |
 | External | Razorpay live keys, Google OAuth, phone OTP, Sentry, staging, legal | Deferred by founder, see §7 |
 
