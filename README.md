@@ -2,7 +2,7 @@
 
 Tuition management that collects your fees. Scheduling, attendance, billing, and parent communication for tuition centers and independent tutors.
 
-**Project documents:** [REDESIGN.md](REDESIGN.md) (product experience), [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) (architecture, security, GTM), [DEV_PLAN.md](DEV_PLAN.md) (the executable plan; Stage 0 is implemented).
+**Project documents:** [HANDOFF.md](HANDOFF.md) (start here: current state, architecture, runbook, invariants), [DEV_PLAN.md](DEV_PLAN.md) (what is left to build), [REDESIGN.md](REDESIGN.md) (product experience), [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) (GTM strategy; its architecture and security sections are Firestore-era history).
 
 ## Architecture
 

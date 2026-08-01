@@ -1,7 +1,8 @@
-import { useState, useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { useRealtimeList } from "./useRealtimeList";
+import type { RealtimeMergeConfig } from "./realtimeMerge";
 import type { TodayInvoice, TodayAttendance } from "../lib/today";
 import type { PeopleStudent, PeopleLead } from "../lib/people";
 
@@ -19,29 +20,66 @@ export interface StudentRow extends PeopleStudent {
   tutorId?: string | null;
 }
 
+export function mapStudentRow(row: any): StudentRow {
+  return {
+    id: row.id,
+    name: row.name,
+    phone: row.phone,
+    parentName: row.parent_name,
+    parentPhone: row.parent_phone,
+    grade: row.grade,
+    subject: row.subject,
+    tutorId: row.tutor_id,
+    createdAt: row.created_at,
+  };
+}
+
 export function useStudentsList() {
   const { user } = useAuth();
   const orgId = user?.organizationId;
   const load = useCallback(async (): Promise<StudentRow[]> => {
     if (!orgId) return [];
-    let q = supabase.from("students").select("*").eq("organization_id", orgId).eq("is_deleted", false).limit(200);
+    let q = supabase
+      .from("students")
+      .select("id, name, phone, parent_name, parent_phone, grade, subject, tutor_id, created_at")
+      .eq("organization_id", orgId)
+      .eq("is_deleted", false)
+      .limit(200);
     if (user!.role === "tutor") q = q.eq("tutor_id", user!.id);
     const { data, error } = await q;
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      name: row.name,
-      phone: row.phone,
-      parentName: row.parent_name,
-      parentPhone: row.parent_phone,
-      grade: row.grade,
-      subject: row.subject,
-      tutorId: row.tutor_id,
-      createdAt: row.created_at,
-    }));
+    return (data || []).map(mapStudentRow);
   }, [orgId, user?.role, user?.id]);
-  return useRealtimeList<StudentRow>("people", "students", orgId, load);
+  // is_deleted and (for a tutor) tutor_id both narrow load()'s query beyond
+  // what the Realtime filter (org-scoped only) can express, so a merged row
+  // has to be checked against them explicitly or a soft-deleted/reassigned
+  // student would wrongly stay in (or never leave) another tutor's list.
+  const merge: RealtimeMergeConfig<StudentRow> = useMemo(
+    () => ({
+      mapRow: mapStudentRow,
+      getId: (row) => row.id,
+      belongsToView: (raw: any) => raw.is_deleted !== true && (user?.role !== "tutor" || raw.tutor_id === user?.id),
+    }),
+    [user?.role, user?.id]
+  );
+  return useRealtimeList<StudentRow>("people", "students", orgId, load, undefined, merge);
 }
+
+export function mapStudentInvoiceRow(row: any): TodayInvoice {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    status: row.status,
+    dueDate: row.due_date,
+    totalPaise: row.total_paise,
+    paidPaise: row.paid_paise,
+  };
+}
+
+const studentInvoiceMerge: RealtimeMergeConfig<TodayInvoice> = {
+  mapRow: mapStudentInvoiceRow,
+  getId: (row) => row.id,
+};
 
 export function useStudentInvoices() {
   const { user } = useAuth();
@@ -54,17 +92,27 @@ export function useStudentInvoices() {
       .eq("organization_id", orgId)
       .limit(500);
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      studentId: row.student_id,
-      status: row.status,
-      dueDate: row.due_date,
-      totalPaise: row.total_paise,
-      paidPaise: row.paid_paise,
-    }));
+    return (data || []).map(mapStudentInvoiceRow);
   }, [orgId]);
-  return useRealtimeList<TodayInvoice>("people", "invoices", orgId, load);
+  return useRealtimeList<TodayInvoice>("people", "invoices", orgId, load, undefined, studentInvoiceMerge);
 }
+
+export function mapAttendanceRow(row: any): TodayAttendance {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    status: row.status,
+    sessionStart: row.session_start,
+    sessionId: row.session_id,
+  };
+}
+
+// load() orders newest-session-first; mirror it so a merged INSERT lands up top.
+const attendanceMerge: RealtimeMergeConfig<TodayAttendance> = {
+  mapRow: mapAttendanceRow,
+  getId: (row) => row.id!,
+  compare: (a, b) => String(a.sessionStart ?? "").localeCompare(String(b.sessionStart ?? "")) * -1,
+};
 
 export function useStudentAttendance() {
   const { user } = useAuth();
@@ -73,19 +121,34 @@ export function useStudentAttendance() {
     if (!orgId) return [];
     const { data, error } = await supabase
       .from("attendance_records")
-      .select("student_id, status, session_start")
+      .select("id, student_id, status, session_start, session_id")
       .eq("organization_id", orgId)
       .order("session_start", { ascending: false })
       .limit(1000);
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      studentId: row.student_id,
-      status: row.status,
-      sessionStart: row.session_start,
-    }));
+    return (data || []).map(mapAttendanceRow);
   }, [orgId]);
-  return useRealtimeList<TodayAttendance>("people", "attendance_records", orgId, load);
+  return useRealtimeList<TodayAttendance>("people", "attendance_records", orgId, load, undefined, attendanceMerge);
 }
+
+export function mapLeadRow(row: any): PeopleLead {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    source: row.source,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// load() orders newest-first; a merged INSERT needs the same comparator or a
+// new lead would silently append at the bottom instead of surfacing at top.
+const leadMerge: RealtimeMergeConfig<PeopleLead> = {
+  mapRow: mapLeadRow,
+  getId: (row) => row.id,
+  compare: (a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") * -1,
+};
 
 export function useLeadsList() {
   const { user } = useAuth();
@@ -94,21 +157,14 @@ export function useLeadsList() {
     if (!orgId) return [];
     const { data, error } = await supabase
       .from("leads")
-      .select("*")
+      .select("id, name, status, source, created_at, updated_at")
       .eq("organization_id", orgId)
       .order("created_at", { ascending: false })
       .limit(200);
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      name: row.name,
-      status: row.status,
-      source: row.source,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    return (data || []).map(mapLeadRow);
   }, [orgId]);
-  return useRealtimeList<PeopleLead>("people", "leads", orgId, load);
+  return useRealtimeList<PeopleLead>("people", "leads", orgId, load, undefined, leadMerge);
 }
 
 export interface ParentRow {
@@ -176,7 +232,11 @@ export function useTutorsList() {
   const orgId = user?.organizationId;
   const load = useCallback(async (): Promise<TutorRow[]> => {
     if (!orgId) return [];
-    const { data, error } = await supabase.from("tutor_profiles").select("*").eq("organization_id", orgId).limit(200);
+    const { data, error } = await supabase
+      .from("tutor_profiles")
+      .select("user_id, full_name, location, subjects, grades, is_verified")
+      .eq("organization_id", orgId)
+      .limit(200);
     if (error) throw error;
     return (data || []).map((row: any) => ({
       userId: row.user_id,

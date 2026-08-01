@@ -1,6 +1,6 @@
 import express from "express";
 import { pool } from "../db.ts";
-import { materializeTemplate, type Template } from "./scheduling.ts";
+import { materializeTemplate, TEMPLATE_SELECT, MATERIALIZABLE, type Template } from "./scheduling.ts";
 
 // Machine-to-machine endpoint for Cloud Scheduler. No Supabase user session
 // exists for a scheduler invocation, so this is gated by a shared secret
@@ -20,10 +20,9 @@ router.use((req, res, next) => {
 
 router.post("/materialize-sessions", async (_req, res, next) => {
   try {
-    const templatesRes = await pool.query(
-      `select id, organization_id, type, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes, is_online, room_number
-       from class_templates`
-    );
+    // Skip templates materializeTemplate would drop on entry anyway (one-to-ones,
+    // unscheduled batches) — across every org that is most of the table.
+    const templatesRes = await pool.query(`${TEMPLATE_SELECT} where ${MATERIALIZABLE}`);
 
     const aggregate = { created: [] as string[], conflicts: [] as { templateId: string; date: string }[], templatesProcessed: 0 };
     for (const row of templatesRes.rows as Template[]) {

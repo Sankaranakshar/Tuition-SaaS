@@ -155,7 +155,18 @@ export default function AuditLog() {
                     {isPlatformAdmin && (
                       <td className="px-4 py-3 text-gray-600">{event.organizationName ?? event.organizationId}</td>
                     )}
-                    <td className="px-4 py-3 text-gray-600">{event.actorName || event.actorEmail || "System"}</td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {/* A system actor (payment webhook, scheduler) has no
+                          auth user behind it, so actorName/actorEmail are
+                          always null — show which system acted rather than
+                          falling through to the bare "System" that a deleted
+                          user also lands on. */}
+                      {event.systemActor ? (
+                        <span className="font-mono text-xs text-gray-500">{event.systemActor}</span>
+                      ) : (
+                        event.actorName || event.actorEmail || "System"
+                      )}
+                    </td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-700">{event.action}</td>
                     <td className="px-4 py-3 text-gray-600">
                       {event.entityType ? `${event.entityType}${event.entityId ? ` · ${event.entityId.slice(0, 8)}` : ""}` : "—"}

@@ -1,4 +1,3 @@
-import React from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { GraduationCap, Users, User, Shield } from 'lucide-react';

@@ -20,6 +20,11 @@ router.use(authenticateToken, requirePlatformAdmin);
 
 router.get("/orgs", async (_req: AuthRequest, res, next) => {
   try {
+    // Pre-aggregated joins rather than three correlated subqueries per row.
+    // The old shape re-scanned students, organization_members and (worst)
+    // audit_events once for every organization — 3N index lookups over the
+    // platform's largest table, growing with org count on a console page
+    // that has no pagination.
     const { rows } = await pool.query(`
       select
         o.id,
@@ -28,11 +33,21 @@ router.get("/orgs", async (_req: AuthRequest, res, next) => {
         coalesce(s.plan, 'free') as plan,
         coalesce(s.status, 'active') as subscription_status,
         s.student_limit,
-        (select count(*)::int from students st where st.organization_id = o.id and st.is_deleted = false and st.status = 'active') as active_student_count,
-        (select count(*)::int from organization_members om where om.organization_id = o.id) as member_count,
-        (select max(ae.created_at) from audit_events ae where ae.organization_id = o.id) as last_activity_at
+        coalesce(st.n, 0) as active_student_count,
+        coalesce(om.n, 0) as member_count,
+        ae.last_activity_at
       from organizations o
       left join subscriptions s on s.organization_id = o.id
+      left join (
+        select organization_id, count(*)::int as n from students
+        where is_deleted = false and status = 'active' group by organization_id
+      ) st on st.organization_id = o.id
+      left join (
+        select organization_id, count(*)::int as n from organization_members group by organization_id
+      ) om on om.organization_id = o.id
+      left join (
+        select organization_id, max(created_at) as last_activity_at from audit_events group by organization_id
+      ) ae on ae.organization_id = o.id
       order by o.created_at desc
     `);
 

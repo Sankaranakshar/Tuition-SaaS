@@ -14,6 +14,11 @@ export interface ScheduleSession {
 }
 
 export interface TutorAvailabilityWindow {
+  // Optional: only useSchedule.ts's useTutorAvailability populates this (the
+  // tutor_availability row id), needed to merge single-row Realtime events by
+  // identity instead of refetching on every change — see
+  // docs/OPTIMIZATION_AUDIT.md finding M10.
+  id?: string;
   dayOfWeek: number; // 0 (Sun) - 6 (Sat)
   startTime: string; // "HH:MM" or "HH:MM:SS"
   endTime: string;

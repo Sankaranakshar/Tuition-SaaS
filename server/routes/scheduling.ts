@@ -82,25 +82,62 @@ async function resolveUserIds(
 ): Promise<{ studentUserIds: string[]; parentUserIds: string[] }> {
   if (studentIds.length === 0) return { studentUserIds: [], parentUserIds: [] };
 
-  const studentsRes = await client.query(
-    `select student_user_id from students where id = any($1::uuid[]) and student_user_id is not null`,
-    [studentIds]
-  );
-  const parentsRes = await client.query(
-    `select distinct parent_user_id from parent_links where student_id = any($1::uuid[])`,
+  // One round trip, not two: this runs inside every session insert (and once
+  // per template on the materialize sweep), and a PoolClient can't pipeline
+  // two awaits anyway — they would serialize.
+  const { rows } = await client.query(
+    `select 'student' as kind, student_user_id as user_id
+       from students where id = any($1::uuid[]) and student_user_id is not null
+     union
+     select 'parent', parent_user_id
+       from parent_links where student_id = any($1::uuid[])`,
     [studentIds]
   );
   return {
-    studentUserIds: studentsRes.rows.map((r) => r.student_user_id as string),
-    parentUserIds: parentsRes.rows.map((r) => r.parent_user_id as string),
+    studentUserIds: rows.filter((r) => r.kind === "student").map((r) => r.user_id as string),
+    parentUserIds: rows.filter((r) => r.kind === "parent").map((r) => r.user_id as string),
   };
+}
+
+/** Serializes all session-creation attempts for one (org, tutor) pair.
+ *  pg_advisory_xact_lock auto-releases at COMMIT/ROLLBACK — no manual unlock. */
+async function lockTutorSchedule(client: PoolClient, orgId: string, tutorId: string): Promise<void> {
+  await client.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [`${orgId}:${tutorId}`]);
 }
 
 /**
  * Range-overlap conflict check for a tutor, scoped by an advisory lock on
  * (org, tutor). `excludeSessionId` lets a reschedule of an existing session
  * re-check against every *other* session without tripping over itself.
+ *
+ * The overlap test is a SQL predicate with `limit 1` rather than the previous
+ * "pull every session starting within 12h and compare in JS". That reads one
+ * row instead of a day's worth, and it also closes a real gap: the old
+ * 12-hour lookback silently missed an existing session that started more than
+ * 12h before the new one but ran past its start (a long workshop block), so
+ * two overlapping sessions could both be accepted.
  */
+async function assertNoTutorConflict(
+  client: PoolClient,
+  orgId: string,
+  tutorId: string,
+  startTime: string,
+  endTime: string,
+  excludeSessionId?: string
+): Promise<void> {
+  const conflict = await client.query(
+    `select 1 from class_sessions
+     where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
+       and start_time < $4::timestamptz and end_time > $3::timestamptz
+       and ($5::uuid is null or id <> $5::uuid)
+     limit 1`,
+    [orgId, tutorId, startTime, endTime, excludeSessionId ?? null]
+  );
+  if (conflict.rowCount) {
+    throw Object.assign(new Error("Tutor has a conflicting session at this time."), { status: 409, code: "conflict" });
+  }
+}
+
 async function checkTutorConflictAndInsert(
   client: PoolClient,
   orgId: string,
@@ -110,27 +147,8 @@ async function checkTutorConflictAndInsert(
   insert: () => Promise<string>,
   excludeSessionId?: string
 ): Promise<string> {
-  // pg_advisory_xact_lock serializes all session-creation attempts for this
-  // (org, tutor) pair and auto-releases at COMMIT/ROLLBACK — no manual unlock.
-  await client.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [`${orgId}:${tutorId}`]);
-
-  const windowStart = new Date(new Date(startTime).getTime() - 12 * 3600 * 1000).toISOString();
-  const conflicts = await client.query(
-    `select id, start_time, end_time from class_sessions
-     where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
-       and start_time >= $3 and start_time < $4`,
-    [orgId, tutorId, windowStart, endTime]
-  );
-  const newStart = new Date(startTime).getTime();
-  const newEnd = new Date(endTime).getTime();
-  for (const row of conflicts.rows) {
-    if (excludeSessionId && row.id === excludeSessionId) continue;
-    const exStart = new Date(row.start_time).getTime();
-    const exEnd = new Date(row.end_time).getTime();
-    if (newStart < exEnd && newEnd > exStart) {
-      throw Object.assign(new Error("Tutor has a conflicting session at this time."), { status: 409, code: "conflict" });
-    }
-  }
+  await lockTutorSchedule(client, orgId, tutorId);
+  await assertNoTutorConflict(client, orgId, tutorId, startTime, endTime, excludeSessionId);
   return insert();
 }
 
@@ -217,6 +235,17 @@ router.patch("/sessions/:id", requireRole(...CAN_SCHEDULE), async (req: AuthRequ
 // never swallowed into a console.warn.
 const WEEKS_AHEAD = 8;
 
+/** Column list materializeTemplate needs, shared by the three call sites. */
+const TEMPLATE_SELECT = `select id, organization_id, type, tutor_id, student_ids, days_of_week,
+    start_hour, start_minute, duration_minutes, is_online, room_number
+  from class_templates`;
+
+/** The same guard materializeTemplate applies on entry, pushed into SQL so
+ *  the sweep doesn't ship rows it will immediately discard — on the platform
+ *  cron that is every one-to-one template in every org. */
+const MATERIALIZABLE = `type = 'BATCH' and tutor_id is not null and start_hour is not null
+  and coalesce(array_length(days_of_week, 1), 0) > 0`;
+
 interface Template {
   id: string;
   organization_id: string;
@@ -236,61 +265,129 @@ interface MaterializeResult {
   conflicts: { templateId: string; date: string }[];
 }
 
+/** `YYYY-MM-DD` in local time. Deliberately not toISOString().split("T")[0],
+ *  which shifts the date across the UTC boundary for evening sessions in
+ *  positive-offset zones (IST, this app's primary market). */
+function localDateKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * One transaction per template, not one per candidate day. The previous
+ * shape opened a fresh pool checkout + BEGIN/COMMIT for every date in the
+ * 8-week horizon — roughly 25 transactions and 100 round trips per template,
+ * multiplied by every template in every org on the nightly cron sweep, all
+ * strictly serial against a 3-connection pool. That is what made the sweep
+ * scale with (templates x days) instead of (templates).
+ *
+ * Now: take the advisory lock once, read the already-materialized dates and
+ * the tutor's existing bookings in the window in one query each, decide every
+ * slot in memory, and write the survivors in a single multi-row INSERT.
+ *
+ * Two consequences worth knowing:
+ *   - Slots accepted earlier in this run are appended to `busy`, so a
+ *     template that would double-book itself still self-conflicts exactly as
+ *     it did when each day committed before the next was checked.
+ *   - A template's window is now all-or-nothing rather than partially
+ *     committed on failure. The operation is idempotent, so a retry converges.
+ */
 async function materializeTemplate(template: Template): Promise<MaterializeResult> {
   const result: MaterializeResult = { created: [], conflicts: [] };
   const daysOfWeek = template.days_of_week || [];
   if (template.type !== "BATCH" || daysOfWeek.length === 0 || template.start_hour == null || !template.tutor_id) return result;
 
   const durationMinutes = template.duration_minutes ?? 60;
+  const now = new Date();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const horizon = new Date(today.getTime() + WEEKS_AHEAD * 7 * 24 * 3600 * 1000);
 
+  const candidates: { dateKey: string; start: Date; end: Date }[] = [];
   for (let d = new Date(today); d <= horizon; d.setDate(d.getDate() + 1)) {
     if (!daysOfWeek.includes(d.getDay())) continue;
 
-    const sessionStart = new Date(d);
-    sessionStart.setHours(template.start_hour, template.start_minute ?? 0, 0, 0);
-    if (sessionStart < new Date()) continue; // don't materialize into the past
-    const sessionEnd = new Date(sessionStart.getTime() + durationMinutes * 60 * 1000);
-    const dateKey = sessionStart.toISOString().split("T")[0];
-
-    const outcome = await withTransaction(async (client) => {
-      const existing = await client.query(
-        `select 1 from class_sessions where template_id = $1 and materialized_date = $2`,
-        [template.id, dateKey]
-      );
-      if ((existing.rowCount ?? 0) > 0) return "exists" as const;
-
-      try {
-        await checkTutorConflictAndInsert(
-          client, template.organization_id, template.tutor_id!, sessionStart.toISOString(), sessionEnd.toISOString(),
-          async () => {
-            const studentIds = template.student_ids || [];
-            const { studentUserIds, parentUserIds } = await resolveUserIds(client, studentIds);
-            const insertRes = await client.query(
-              `insert into class_sessions
-                 (organization_id, template_id, tutor_id, student_ids, student_user_ids, parent_user_ids, start_time, end_time, status, is_online, room_number, materialized_date)
-               values ($1, $2, $3, $4, $5, $6, $7, $8, 'scheduled', $9, $10, $11)
-               returning id`,
-              [template.organization_id, template.id, template.tutor_id, studentIds, studentUserIds, parentUserIds,
-                sessionStart.toISOString(), sessionEnd.toISOString(), template.is_online ?? false, template.room_number ?? null, dateKey]
-            );
-            return insertRes.rows[0].id as string;
-          }
-        );
-        return "created" as const;
-      } catch (err: any) {
-        if (err.code === "conflict") return "conflict" as const;
-        throw err;
-      }
+    const start = new Date(d);
+    start.setHours(template.start_hour, template.start_minute ?? 0, 0, 0);
+    if (start < now) continue; // don't materialize into the past
+    candidates.push({
+      dateKey: localDateKey(start),
+      start,
+      end: new Date(start.getTime() + durationMinutes * 60 * 1000),
     });
-
-    if (outcome === "created") result.created.push(dateKey);
-    if (outcome === "conflict") result.conflicts.push({ templateId: template.id, date: dateKey });
   }
+  if (candidates.length === 0) return result;
 
-  return result;
+  const orgId = template.organization_id;
+  const tutorId = template.tutor_id;
+  const windowStart = candidates[0].start.toISOString();
+  const windowEnd = candidates[candidates.length - 1].end.toISOString();
+
+  return withTransaction(async (client) => {
+    await lockTutorSchedule(client, orgId, tutorId);
+
+    // materialized_date is a `date`; format it in SQL so the comparison key
+    // never round-trips through a timezone-sensitive JS Date.
+    const existingRes = await client.query(
+      `select to_char(materialized_date, 'YYYY-MM-DD') as date_key
+       from class_sessions
+       where template_id = $1 and materialized_date = any($2::date[])`,
+      [template.id, candidates.map((c) => c.dateKey)]
+    );
+    const alreadyMaterialized = new Set(existingRes.rows.map((r) => r.date_key as string));
+
+    const busyRes = await client.query(
+      `select start_time, end_time from class_sessions
+       where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
+         and start_time < $4::timestamptz and end_time > $3::timestamptz`,
+      [orgId, tutorId, windowStart, windowEnd]
+    );
+    const busy = busyRes.rows.map((r) => ({
+      start: new Date(r.start_time).getTime(),
+      end: new Date(r.end_time).getTime(),
+    }));
+
+    const toInsert: { dateKey: string; start: Date; end: Date }[] = [];
+    for (const c of candidates) {
+      if (alreadyMaterialized.has(c.dateKey)) continue;
+      const start = c.start.getTime();
+      const end = c.end.getTime();
+      if (busy.some((b) => start < b.end && end > b.start)) {
+        result.conflicts.push({ templateId: template.id, date: c.dateKey });
+        continue;
+      }
+      busy.push({ start, end });
+      toInsert.push(c);
+    }
+    if (toInsert.length === 0) return result;
+
+    const studentIds = template.student_ids || [];
+    const { studentUserIds, parentUserIds } = await resolveUserIds(client, studentIds);
+
+    // `on conflict do nothing` on unique (template_id, materialized_date) is
+    // belt-and-braces: the advisory lock already excludes a concurrent sweep
+    // for this tutor, but the constraint is the real guarantee, and RETURNING
+    // then reports only the rows this call actually created.
+    const insertRes = await client.query(
+      `insert into class_sessions
+         (organization_id, template_id, tutor_id, student_ids, student_user_ids, parent_user_ids,
+          start_time, end_time, status, is_online, room_number, materialized_date)
+       select $1, $2, $3, $4::uuid[], $5::uuid[], $6::uuid[],
+              v.start_time, v.end_time, 'scheduled', $7, $8, v.materialized_date
+       from unnest($9::timestamptz[], $10::timestamptz[], $11::date[])
+            as v(start_time, end_time, materialized_date)
+       on conflict (template_id, materialized_date) do nothing
+       returning to_char(materialized_date, 'YYYY-MM-DD') as date_key`,
+      [
+        orgId, template.id, tutorId, studentIds, studentUserIds, parentUserIds,
+        template.is_online ?? false, template.room_number ?? null,
+        toInsert.map((c) => c.start.toISOString()),
+        toInsert.map((c) => c.end.toISOString()),
+        toInsert.map((c) => c.dateKey),
+      ]
+    );
+    result.created.push(...insertRes.rows.map((r) => r.date_key as string));
+    return result;
+  });
 }
 
 // Staff-triggered: materialize the caller's org only. Useful right after
@@ -299,8 +396,7 @@ router.post("/materialize", requireRole(...CAN_SCHEDULE), async (req: AuthReques
   try {
     const orgId = req.user!.organizationId!;
     const templatesRes = await pool.query(
-      `select id, organization_id, type, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes, is_online, room_number
-       from class_templates where organization_id = $1`,
+      `${TEMPLATE_SELECT} where organization_id = $1 and ${MATERIALIZABLE}`,
       [orgId]
     );
 
@@ -326,11 +422,7 @@ router.patch("/templates/:id", requireRole("owner", "admin"), async (req: AuthRe
     const orgId = req.user!.organizationId!;
     const templateId = req.params.id;
 
-    const templateRes = await pool.query(
-      `select id, organization_id, type, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes, is_online, room_number
-       from class_templates where id = $1`,
-      [templateId]
-    );
+    const templateRes = await pool.query(`${TEMPLATE_SELECT} where id = $1`, [templateId]);
     if (templateRes.rowCount === 0) {
       throw Object.assign(new Error("Class template not found"), { status: 404, code: "not_found" });
     }
@@ -360,7 +452,7 @@ router.patch("/templates/:id", requireRole("owner", "admin"), async (req: AuthRe
     await pool.query(
       `delete from class_sessions
        where template_id = $1 and status = 'scheduled' and materialized_date >= $2`,
-      [templateId, today.toISOString().split("T")[0]]
+      [templateId, localDateKey(today)]
     );
 
     const result = await materializeTemplate(updated);
@@ -433,5 +525,5 @@ router.get("/gaps", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, 
   } catch (err) { next(err); }
 });
 
-export { materializeTemplate, type Template };
+export { materializeTemplate, TEMPLATE_SELECT, MATERIALIZABLE, type Template };
 export default router;

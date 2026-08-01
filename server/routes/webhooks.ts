@@ -3,7 +3,7 @@ import type { PoolClient } from "pg";
 import { withTransaction } from "../db.ts";
 import { getGatewayCreds, verifyWebhookSignature } from "../utils/razorpay.ts";
 import { applyPayment, type InvoiceStatus } from "../utils/invoiceStatus.ts";
-import { writeAudit } from "../utils/audit.ts";
+import { writeAudit, type AuditActor } from "../utils/audit.ts";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { PLAN_CATALOG, isPlanId } from "../../shared/plans.ts";
 
@@ -14,6 +14,13 @@ import { PLAN_CATALOG, isPlanId } from "../../shared/plans.ts";
 // Mounted with a RAW body parser (see server.ts) because signature
 // verification needs the exact bytes.
 const router = express.Router();
+
+// Gateway deliveries have no signed-in user behind them. Previously this was
+// passed as the bare string "razorpay_webhook", which audit_events.actor_id
+// (a uuid FK into auth.users) rejected outright — and since writeAudit
+// swallows write failures by design, every gateway payment and plan change
+// silently produced no audit row at all. See AuditActor in utils/audit.ts.
+const RAZORPAY_WEBHOOK: AuditActor = { system: "razorpay_webhook" };
 
 // One org per webhook URL: Razorpay is configured with .../razorpay/{orgId},
 // which tells us whose secret to verify against before parsing.
@@ -99,7 +106,7 @@ async function handlePlatformSubscriptionEvent(event: any) {
       })
       .eq("organization_id", orgId);
     if (error) throw error;
-    await writeAudit(orgId, "razorpay_webhook", "subscription.plan_changed", "subscriptions", orgId, { plan, event: type });
+    await writeAudit(orgId, RAZORPAY_WEBHOOK, "subscription.plan_changed", "subscriptions", orgId, { plan, event: type });
     return { plan, status: "active" };
   }
 
@@ -118,7 +125,7 @@ async function handlePlatformSubscriptionEvent(event: any) {
       })
       .eq("organization_id", orgId);
     if (error) throw error;
-    await writeAudit(orgId, "razorpay_webhook", "subscription.cancelled", "subscriptions", orgId, { event: type });
+    await writeAudit(orgId, RAZORPAY_WEBHOOK, "subscription.cancelled", "subscriptions", orgId, { event: type });
     return { status: "cancelled" };
   }
 
@@ -194,7 +201,7 @@ async function handleEvent(orgId: string, event: any) {
 
   if (result.orphan) return { ignored: true, reason: "invoice_not_found" };
   if (!result.duplicate) {
-    await writeAudit(orgId, "razorpay_webhook", "payment.gateway_captured", "invoices", invoiceId, {
+    await writeAudit(orgId, RAZORPAY_WEBHOOK, "payment.gateway_captured", "invoices", invoiceId, {
       gatewayPaymentId: paymentId, amountPaise, invoiceStatus: result.status,
     });
   }

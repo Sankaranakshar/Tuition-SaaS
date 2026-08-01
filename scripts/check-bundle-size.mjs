@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import path from "node:path";
 
@@ -12,14 +12,36 @@ import path from "node:path";
 // fails the build instead of silently shipping.
 const BUDGET_BYTES = 260 * 1024; // ~260KB gzip
 
-const distAssets = path.join(process.cwd(), "dist", "assets");
-const entryFile = readdirSync(distAssets).find((f) => /^index-[^.]+\.js$/.test(f));
-if (!entryFile) {
-  console.error(`Could not find the main entry chunk (index-*.js) in ${distAssets}. Did the build run?`);
+const distDir = path.join(process.cwd(), "dist");
+const distAssets = path.join(distDir, "assets");
+
+// The entry chunk must be identified from index.html's own <script> tag, not
+// by pattern-matching "index-*.js" in the assets directory: a dynamically
+// imported module with no explicit chunk name (e.g. the lazy-loaded
+// @sentry/react import added for docs/OPTIMIZATION_AUDIT.md finding H5) can
+// ALSO get an "index-<hash>.js" name from Rollup, and readdirSync's listing
+// order is not guaranteed — this script previously picked whichever
+// "index-*.js" file the filesystem returned first, which silently measured
+// the wrong chunk once a second one existed. index.html always points at
+// the real entry, regardless of how many other chunks share the prefix.
+const indexHtmlPath = path.join(distDir, "index.html");
+if (!existsSync(indexHtmlPath)) {
+  console.error(`Could not find ${indexHtmlPath}. Did the build run?`);
   process.exit(1);
 }
+const indexHtml = readFileSync(indexHtmlPath, "utf8");
+const scriptMatch = indexHtml.match(/<script[^>]+type="module"[^>]+src="\/assets\/([^"]+)"/);
+if (!scriptMatch) {
+  console.error(`Could not find a module <script src="/assets/..."> tag in ${indexHtmlPath}.`);
+  process.exit(1);
+}
+const entryFile = scriptMatch[1];
 
 const filePath = path.join(distAssets, entryFile);
+if (!existsSync(filePath)) {
+  console.error(`index.html references ${entryFile}, but it does not exist in ${distAssets}.`);
+  process.exit(1);
+}
 const gzipSize = gzipSync(readFileSync(filePath)).length;
 const gzipKB = (gzipSize / 1024).toFixed(1);
 const budgetKB = (BUDGET_BYTES / 1024).toFixed(0);

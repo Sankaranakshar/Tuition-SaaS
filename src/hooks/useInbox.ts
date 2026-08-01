@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { useRealtimeList } from "./useRealtimeList";
+import type { RealtimeMergeConfig } from "./realtimeMerge";
 import { ensureClassChannel as ensureClassChannelApi } from "../lib/api";
 import type { InboxConversation, InboxMessage, InboxNotification, InboxTriageState, AnchorContext, AnchorType } from "../lib/inbox";
 
@@ -11,6 +12,18 @@ import type { InboxConversation, InboxMessage, InboxNotification, InboxTriageSta
 // already be in the supabase_realtime publication (20260711120100) or
 // updates will silently no-op (HANDOFF §16.2's bug class).
 
+export function mapConversationRow(row: any): InboxConversation {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    participantIds: row.participant_ids || [],
+    kind: row.kind,
+    anchorType: row.anchor_type,
+    anchorId: row.anchor_id,
+    createdAt: row.created_at,
+  };
+}
+
 export function useConversationsList() {
   const { user } = useAuth();
   const orgId = user?.organizationId;
@@ -18,25 +31,41 @@ export function useConversationsList() {
     if (!orgId || !user) return [];
     const { data, error } = await supabase
       .from("conversations")
-      .select("*")
+      .select("id, organization_id, participant_ids, kind, anchor_type, anchor_id, created_at")
       .eq("organization_id", orgId)
       .contains("participant_ids", [user.id])
       .order("created_at", { ascending: false })
       .limit(300);
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      organizationId: row.organization_id,
-      participantIds: row.participant_ids || [],
-      kind: row.kind,
-      anchorType: row.anchor_type,
-      anchorId: row.anchor_id,
-      createdAt: row.created_at,
-    }));
+    return (data || []).map(mapConversationRow);
   }, [orgId, user]);
   // Broad org-scoped subscription (postgres_changes filters can't express
-  // array-contains); load() does the real participant filtering above.
-  return useRealtimeList<InboxConversation>("inbox", "conversations", orgId, load);
+  // array-contains), so belongsToView re-applies the same participant check
+  // load() does — otherwise every conversation in the org, not just this
+  // user's, would get merged into `data`.
+  const userId = user?.id;
+  const merge: RealtimeMergeConfig<InboxConversation> = useMemo(
+    () => ({
+      mapRow: mapConversationRow,
+      getId: (row) => row.id,
+      belongsToView: (raw: any) => !!userId && (raw.participant_ids ?? []).includes(userId),
+      compare: (a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") * -1,
+    }),
+    [userId]
+  );
+  return useRealtimeList<InboxConversation>("inbox", "conversations", orgId, load, undefined, merge);
+}
+
+export function mapMessageRow(row: any): InboxMessage {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    senderId: row.sender_id,
+    receiverId: row.receiver_id,
+    body: row.body,
+    read: row.read,
+    createdAt: row.created_at,
+  };
 }
 
 export function useMessagesForConversation(conversationId: string | null | undefined) {
@@ -49,24 +78,43 @@ export function useMessagesForConversation(conversationId: string | null | undef
       .order("created_at", { ascending: true })
       .limit(500);
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      conversationId: row.conversation_id,
-      senderId: row.sender_id,
-      receiverId: row.receiver_id,
-      body: row.body,
-      read: row.read,
-      createdAt: row.created_at,
-    }));
+    return (data || []).map(mapMessageRow);
   }, [conversationId]);
+  // The Realtime filter already matches load()'s conversation_id scope
+  // exactly, so no extra belongsToView check is needed here.
+  const merge: RealtimeMergeConfig<InboxMessage> = useMemo(
+    () => ({
+      mapRow: mapMessageRow,
+      getId: (row) => row.id,
+      compare: (a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""),
+    }),
+    []
+  );
   return useRealtimeList<InboxMessage>(
     "inbox",
     "messages",
     conversationId,
     load,
-    conversationId ? `conversation_id=eq.${conversationId}` : undefined
+    conversationId ? `conversation_id=eq.${conversationId}` : undefined,
+    merge
   );
 }
+
+export function mapNotificationRow(row: any): InboxNotification {
+  return {
+    id: row.id,
+    type: row.type,
+    payload: row.payload || {},
+    read: row.read,
+    createdAt: row.created_at,
+  };
+}
+
+const notificationMerge: RealtimeMergeConfig<InboxNotification> = {
+  mapRow: mapNotificationRow,
+  getId: (row) => row.id,
+  compare: (a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") * -1,
+};
 
 export function useNotificationsList() {
   const { user } = useAuth();
@@ -74,40 +122,62 @@ export function useNotificationsList() {
     if (!user) return [];
     const { data, error } = await supabase
       .from("notifications")
-      .select("*")
+      .select("id, type, payload, read, created_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(200);
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      type: row.type,
-      payload: row.payload || {},
-      read: row.read,
-      createdAt: row.created_at,
-    }));
+    return (data || []).map(mapNotificationRow);
   }, [user]);
-  return useRealtimeList<InboxNotification>("inbox", "notifications", user?.id, load, user ? `user_id=eq.${user.id}` : undefined);
+  // The Realtime filter already matches load()'s user_id scope exactly.
+  return useRealtimeList<InboxNotification>(
+    "inbox",
+    "notifications",
+    user?.id,
+    load,
+    user ? `user_id=eq.${user.id}` : undefined,
+    notificationMerge
+  );
 }
+
+type InboxStateRow = InboxTriageState & { conversationId: string };
+
+export function mapInboxStateRow(row: any): InboxStateRow {
+  return {
+    conversationId: row.conversation_id,
+    archivedAt: row.archived_at,
+    snoozedUntil: row.snoozed_until,
+  };
+}
+
+// inbox_state has no surrogate `id` column — its primary key is the
+// composite (conversation_id, user_id) — so this list is keyed by
+// conversationId instead. That composite PK is exactly what a DELETE's `old`
+// row carries under this app's default replica identity (see
+// realtimeMerge.ts's module comment), so getDeleteKey can recover it safely,
+// unlike e.g. wallets where the identity field isn't part of the PK at all.
+const inboxStateMerge: RealtimeMergeConfig<InboxStateRow> = {
+  mapRow: mapInboxStateRow,
+  getId: (row) => row.conversationId,
+  getDeleteKey: (old: any) => old?.conversation_id,
+};
 
 export function useInboxStateMap() {
   const { user } = useAuth();
-  const load = useCallback(async (): Promise<(InboxTriageState & { conversationId: string })[]> => {
+  const load = useCallback(async (): Promise<InboxStateRow[]> => {
     if (!user) return [];
-    const { data, error } = await supabase.from("inbox_state").select("*").eq("user_id", user.id).limit(500);
+    const { data, error } = await supabase.from("inbox_state").select("conversation_id, archived_at, snoozed_until").eq("user_id", user.id).limit(500);
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      conversationId: row.conversation_id,
-      archivedAt: row.archived_at,
-      snoozedUntil: row.snoozed_until,
-    }));
+    return (data || []).map(mapInboxStateRow);
   }, [user]);
-  const { data, loading, error, refetch } = useRealtimeList<InboxTriageState & { conversationId: string }>(
+  // The Realtime filter already matches load()'s user_id scope exactly.
+  const { data, loading, error, refetch } = useRealtimeList<InboxStateRow>(
     "inbox",
     "inbox_state",
     user?.id,
     load,
-    user ? `user_id=eq.${user.id}` : undefined
+    user ? `user_id=eq.${user.id}` : undefined,
+    inboxStateMerge
   );
   const map = new Map(data.map((row) => [row.conversationId, row]));
   return { map, loading, error, refetch };
@@ -309,7 +379,11 @@ export function useAnchorContext(anchorType: AnchorType | null | undefined, anch
             .maybeSingle();
           if (!cancelled) setContext({ session: data ? { id: data.id, startTime: data.start_time, status: data.status } : null });
         } else if (anchorType === "invoice") {
-          const { data } = await supabase.from("invoices").select("*").eq("id", anchorId).maybeSingle();
+          const { data } = await supabase
+            .from("invoices")
+            .select("id, student_id, status, due_date, total_paise, paid_paise")
+            .eq("id", anchorId)
+            .maybeSingle();
           if (!data) {
             if (!cancelled) setContext({ invoice: null });
             return;

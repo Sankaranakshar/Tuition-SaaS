@@ -11,7 +11,7 @@ import {
   startOfMonth, endOfMonth, endOfWeek, eachDayOfInterval, isSameMonth,
 } from "date-fns";
 import { useAuth } from "../context/AuthContext";
-import { ClassManager, ClassType, PricingModel } from "../services/ClassManager";
+import { ClassManager } from "../services/ClassManager";
 import { cancelSession, rescheduleSession, updateTemplateScope, findScheduleGaps } from "../lib/api";
 import {
   useScheduleSessions, useMyScheduleSessions, useClassTemplates, useTutorAvailability,
@@ -22,7 +22,7 @@ import {
   buildClassTemplatePayload, minutesSinceMidnight, snapMinutes,
   type ScheduleClassType, type SchedulePricingModel,
 } from "../lib/schedule";
-import { EmptyState } from "../components/kit";
+import { EmptyState, Modal } from "../components/kit";
 import { supabase } from "../supabase";
 
 // Schedule workspace (DEV_PLAN Stage 3 Epic 15, REDESIGN §6.1) — replaces
@@ -163,6 +163,28 @@ function StaffSchedule() {
   const [outsideHoursConfirm, setOutsideHoursConfirm] = useState<{ resolve: (ok: boolean) => void } | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
+  // handlePointerUp needs the drag state as of the exact moment the pointer
+  // is released, not as of whenever its listener closure was bound — kept in
+  // a ref instead of read from the `drag` closure variable so the
+  // listener-binding effect doesn't need `drag` in its dependency array. This
+  // effect syncs the ref for drag start/end; handlePointerMove below also
+  // writes straight to it for the (far more frequent) in-between frames.
+  const dragRef = useRef<DragState | null>(null);
+  React.useEffect(() => {
+    dragRef.current = drag;
+  }, [drag]);
+  // Per-frame drag geometry (docs/OPTIMIZATION_AUDIT.md finding H3, step 2):
+  // handlePointerMove used to call setDrag on every pointermove, re-rendering
+  // the whole component at pointer-event frequency (~60-120/sec). It now
+  // mutates dragRef.current directly and writes the live position straight to
+  // these DOM nodes, so React only renders twice per drag (start, end).
+  // `dayIndex` on DragState is therefore never mutated after drag-start; the
+  // dragged block stays in its original day column in the DOM and crosses
+  // day boundaries visually via a CSS transform computed against that
+  // original dayIndex, rather than being torn down and reinserted elsewhere.
+  const movingBlockElRef = useRef<HTMLDivElement | null>(null);
+  const movingBlockTimeElRef = useRef<HTMLDivElement | null>(null);
+  const createPreviewElRef = useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
     if (searchParams.get("new") === "1") {
@@ -175,8 +197,18 @@ function StaffSchedule() {
 
   const templateById = useMemo(() => new Map(templates.map((t) => [t.id, t])), [templates]);
 
+  // Bind once per drag (start -> end), not once per pointermove frame. The
+  // effect used to depend on [drag], which changes on every single
+  // handlePointerMove call, so the previous version tore down and re-added
+  // both window listeners at pointer-event frequency (~60-120/sec) for the
+  // entire duration of every drag (docs/OPTIMIZATION_AUDIT.md finding H3).
+  // Safe because handlePointerMove already reads state via setDrag's
+  // functional updater (always current, regardless of when this closure was
+  // bound) and handlePointerUp now reads dragRef.current instead of the
+  // `drag` closure variable — neither needs a fresh closure per frame.
+  const isDragging = drag !== null;
   React.useEffect(() => {
-    if (!drag) return;
+    if (!isDragging) return;
     const onMove = (e: PointerEvent) => handlePointerMove(e);
     const onUp = () => handlePointerUp();
     window.addEventListener("pointermove", onMove);
@@ -186,7 +218,7 @@ function StaffSchedule() {
       window.removeEventListener("pointerup", onUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drag]);
+  }, [isDragging]);
 
   function offsetMinutesFromPointer(e: PointerEvent | React.PointerEvent, dayIndex: number) {
     const grid = gridRef.current;
@@ -233,44 +265,75 @@ function StaffSchedule() {
   }
 
   function handlePointerMove(e: PointerEvent) {
-    setDrag((prev) => {
-      if (!prev) return prev;
-      const { dayIndex: liveDayIndex, offsetMinutes } = offsetMinutesFromPointer(e, prev.dayIndex);
+    const prev = dragRef.current;
+    if (!prev) return;
+    const { dayIndex: liveDayIndex, offsetMinutes } = offsetMinutesFromPointer(e, prev.dayIndex);
 
-      if (prev.mode === "create") {
-        const deltaMinutes = offsetMinutes - prev.startOffsetMinutes;
-        const start = prev.currentStart;
-        const durationMinutes = Math.max(15, deltaMinutes);
-        const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
-        return { ...prev, currentEnd: end };
+    if (prev.mode === "create") {
+      const deltaMinutes = offsetMinutes - prev.startOffsetMinutes;
+      const start = prev.currentStart;
+      const durationMinutes = Math.max(15, deltaMinutes);
+      const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+      const next = { ...prev, currentEnd: end };
+      dragRef.current = next;
+      const el = createPreviewElRef.current;
+      if (el) {
+        el.style.top = `${timeOffsetPx(next.currentStart)}px`;
+        el.style.height = `${Math.max(18, (next.currentEnd.getTime() - next.currentStart.getTime()) / 60000 * PX_PER_MINUTE)}px`;
       }
-      if (prev.mode === "move" && prev.originalStart && prev.originalEnd) {
-        // Use the day column under the pointer right now, not the one the
-        // drag started in — otherwise dragging a session to a different day
-        // silently only changes its time-of-day and leaves it on the
-        // original day (a real bug caught during verification: the server
-        // then sees no conflict because the session never actually moved).
-        const durationMs = prev.originalEnd.getTime() - prev.originalStart.getTime();
-        const day = days[liveDayIndex];
-        const newStart = new Date(day);
-        newStart.setHours(0, 0, 0, 0);
-        newStart.setMinutes(offsetMinutes);
-        const newEnd = new Date(newStart.getTime() + durationMs);
-        return { ...prev, dayIndex: liveDayIndex, currentStart: newStart, currentEnd: newEnd };
+      return;
+    }
+    if (prev.mode === "move" && prev.originalStart && prev.originalEnd) {
+      // Use the day column under the pointer right now, not the one the
+      // drag started in — otherwise dragging a session to a different day
+      // silently only changes its time-of-day and leaves it on the
+      // original day (a real bug caught during verification: the server
+      // then sees no conflict because the session never actually moved).
+      // `prev.dayIndex` stays fixed at the original column (see note above
+      // the refs), so it doubles as the transform baseline here.
+      const durationMs = prev.originalEnd.getTime() - prev.originalStart.getTime();
+      const day = days[liveDayIndex];
+      const newStart = new Date(day);
+      newStart.setHours(0, 0, 0, 0);
+      newStart.setMinutes(offsetMinutes);
+      const newEnd = new Date(newStart.getTime() + durationMs);
+      const next = { ...prev, currentStart: newStart, currentEnd: newEnd };
+      dragRef.current = next;
+      const el = movingBlockElRef.current;
+      const grid = gridRef.current;
+      if (el && grid) {
+        const colWidth = grid.getBoundingClientRect().width / 7;
+        el.style.top = `${timeOffsetPx(newStart)}px`;
+        el.style.transform = `translateX(${(liveDayIndex - prev.dayIndex) * colWidth}px)`;
       }
-      if (prev.mode === "resize" && prev.originalStart) {
-        const newEndMinutes = Math.max(minutesSinceMidnight(prev.originalStart) + 15, offsetMinutes);
-        const newEnd = new Date(prev.originalStart);
-        newEnd.setHours(0, 0, 0, 0);
-        newEnd.setMinutes(newEndMinutes);
-        return { ...prev, currentEnd: newEnd };
+      if (movingBlockTimeElRef.current) {
+        movingBlockTimeElRef.current.textContent = format(newStart, "h:mm a");
       }
-      return prev;
-    });
+      return;
+    }
+    if (prev.mode === "resize" && prev.originalStart) {
+      const newEndMinutes = Math.max(minutesSinceMidnight(prev.originalStart) + 15, offsetMinutes);
+      const newEnd = new Date(prev.originalStart);
+      newEnd.setHours(0, 0, 0, 0);
+      newEnd.setMinutes(newEndMinutes);
+      const next = { ...prev, currentEnd: newEnd };
+      dragRef.current = next;
+      const el = movingBlockElRef.current;
+      if (el) {
+        el.style.height = `${Math.max(18, (next.currentEnd.getTime() - prev.originalStart.getTime()) / 60000 * PX_PER_MINUTE)}px`;
+      }
+      return;
+    }
   }
 
   async function handlePointerUp() {
-    const current = drag;
+    const current = dragRef.current;
+    // React's style reconciliation only clears a CSS property if it was
+    // previously set through the JSX `style` object; transform never is
+    // (only handlePointerMove writes it), so it has to be cleared by hand or
+    // the block stays visually shifted after the state-driven re-render below
+    // resets top/height/left back to the real (pre-drag) session data.
+    if (movingBlockElRef.current) movingBlockElRef.current.style.transform = "";
     setDrag(null);
     if (!current) return;
 
@@ -430,16 +493,12 @@ function StaffSchedule() {
             </div>
             <div ref={gridRef} className="relative col-span-7 grid grid-cols-7">
               {days.map((day, dayIndex) => {
-                // While a session is mid-drag, always pull it out of its
-                // natural (pre-drag) day grouping and instead render it only
-                // in whichever column the pointer is over right now, so the
-                // preview actually follows the drag across day columns.
-                const isDraggingMove = drag?.mode === "move";
-                let daySessions = sessions.filter((s) => isSameDay(new Date(s.startTime), day) && !(isDraggingMove && drag!.sessionId === s.id));
-                if (isDraggingMove && drag!.dayIndex === dayIndex) {
-                  const draggedSession = sessions.find((s) => s.id === drag!.sessionId);
-                  if (draggedSession) daySessions = [...daySessions, draggedSession];
-                }
+                // The dragged session's block stays put in its own original
+                // day column in the DOM throughout the drag — see the note
+                // above dragRef — so no per-day pull-out/reinsert is needed;
+                // crossing into another day's visual space is handled by the
+                // CSS transform handlePointerMove writes onto the block.
+                const daySessions = sessions.filter((s) => isSameDay(new Date(s.startTime), day));
                 const dayAvailability = user?.role === "tutor" ? availability.filter((a) => a.dayOfWeek === day.getDay()) : [];
                 return (
                   <div
@@ -480,23 +539,22 @@ function StaffSchedule() {
                       const height = Math.max(18, (end.getTime() - start.getTime()) / 60000 * PX_PER_MINUTE);
                       const widthPct = 100 / l.columns;
                       const isDraggingThis = drag?.sessionId === session.id;
-                      const displayStart = isDraggingThis ? drag!.currentStart : start;
-                      const displayEnd = isDraggingThis ? drag!.currentEnd : end;
                       return (
                         <div
                           key={session.id}
+                          ref={(el) => { if (isDraggingThis) movingBlockElRef.current = el; }}
                           onPointerDown={(e) => startMoveDrag(e, session, dayIndex)}
                           onClick={(e) => { e.stopPropagation(); if (!drag) setSelectedSession(session); }}
                           className={`absolute cursor-grab select-none overflow-hidden rounded border px-1.5 py-0.5 text-[11px] shadow-sm active:cursor-grabbing ${sessionColor(session)}`}
                           style={{
-                            top: isDraggingThis ? timeOffsetPx(displayStart) : top,
-                            height: isDraggingThis ? Math.max(18, (displayEnd.getTime() - displayStart.getTime()) / 60000 * PX_PER_MINUTE) : height,
+                            top,
+                            height,
                             left: `${l.column * widthPct}%`,
                             width: `calc(${widthPct}% - 2px)`,
                             zIndex: isDraggingThis ? 10 : 1,
                           }}
                         >
-                          <div className="font-medium">{format(displayStart, "h:mm a")}</div>
+                          <div ref={(el) => { if (isDraggingThis) movingBlockTimeElRef.current = el; }} className="font-medium">{format(start, "h:mm a")}</div>
                           <div className="truncate opacity-80">{templateById.get(session.templateId || "")?.name || (session.studentIds.length > 1 ? "Batch" : "1:1")}</div>
                           <div
                             onPointerDown={(e) => startResizeDrag(e, session, dayIndex)}
@@ -508,6 +566,7 @@ function StaffSchedule() {
 
                     {drag && drag.mode === "create" && drag.dayIndex === dayIndex && (
                       <div
+                        ref={createPreviewElRef}
                         className="pointer-events-none absolute inset-x-1 rounded border-2 border-dashed border-[var(--cs-accent)] bg-[var(--cs-accent)]/10"
                         style={{ top: timeOffsetPx(drag.currentStart), height: Math.max(18, (drag.currentEnd.getTime() - drag.currentStart.getTime()) / 60000 * PX_PER_MINUTE) }}
                       />
@@ -554,7 +613,6 @@ function StaffSchedule() {
       {wizardOpen && (
         <ClassWizard
           prefill={wizardPrefill}
-          tutorAvailability={availability}
           onClose={() => setWizardOpen(false)}
           onCreated={() => { setWizardOpen(false); refetch(); }}
         />
@@ -634,9 +692,9 @@ function SessionPopover({
   const { t } = useTranslation();
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="w-80 rounded-lg border border-[var(--cs-border)] bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <Modal onClose={onClose} labelledBy="session-popover-title" className="w-80 rounded-lg border border-[var(--cs-border)] bg-white p-4 shadow-xl">
         <div className="mb-3 flex items-start justify-between">
-          <h3 className="font-semibold text-[var(--cs-text)]">{t("schedule.sessionDetails")}</h3>
+          <h3 id="session-popover-title" className="font-semibold text-[var(--cs-text)]">{t("schedule.sessionDetails")}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
         </div>
         <div className="space-y-2 text-sm text-[var(--cs-text-muted)]">
@@ -654,7 +712,7 @@ function SessionPopover({
             </button>
           </div>
         )}
-      </div>
+      </Modal>
     </div>
   );
 }
@@ -663,8 +721,8 @@ function ScopeDialog({ onClose, onJustThis, onFuture }: { onClose: () => void; o
   const { t } = useTranslation();
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="mb-2 text-lg font-medium text-[var(--cs-text)]">{t("schedule.sessionDetails")}</h3>
+      <Modal onClose={onClose} labelledBy="scope-dialog-title" className="w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl">
+        <h3 id="scope-dialog-title" className="mb-2 text-lg font-medium text-[var(--cs-text)]">{t("schedule.sessionDetails")}</h3>
         <p className="mb-4 text-sm text-[var(--cs-text-muted)]">{t("schedule.scopePrompt")}</p>
         <div className="flex flex-col gap-2">
           <button onClick={onJustThis} className="w-full rounded-md border border-[var(--cs-border)] py-2 text-sm font-medium text-[var(--cs-text)] hover:bg-gray-50">
@@ -674,7 +732,7 @@ function ScopeDialog({ onClose, onJustThis, onFuture }: { onClose: () => void; o
             {t("schedule.thisAndFuture")}
           </button>
         </div>
-      </div>
+      </Modal>
     </div>
   );
 }
@@ -683,8 +741,8 @@ function OutsideHoursDialog({ onCancel, onConfirm }: { onCancel: () => void; onC
   const { t } = useTranslation();
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4" onClick={onCancel}>
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <p className="mb-4 text-sm text-[var(--cs-text)]">{t("schedule.outsideHours")}</p>
+      <Modal onClose={onCancel} labelledBy="outside-hours-title" className="w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl">
+        <p id="outside-hours-title" className="mb-4 text-sm text-[var(--cs-text)]">{t("schedule.outsideHours")}</p>
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="rounded-md border border-[var(--cs-border)] px-4 py-2 text-sm font-medium text-[var(--cs-text)] hover:bg-gray-50">
             {t("schedule.cancel")}
@@ -693,7 +751,7 @@ function OutsideHoursDialog({ onCancel, onConfirm }: { onCancel: () => void; onC
             {t("schedule.bookAnyway")}
           </button>
         </div>
-      </div>
+      </Modal>
     </div>
   );
 }
@@ -701,10 +759,9 @@ function OutsideHoursDialog({ onCancel, onConfirm }: { onCancel: () => void; onC
 // ---- Class creation wizard --------------------------------------------------
 
 function ClassWizard({
-  prefill, tutorAvailability, onClose, onCreated,
+  prefill, onClose, onCreated,
 }: {
   prefill: { startDate?: string; startTime?: string; duration?: number };
-  tutorAvailability: { dayOfWeek: number; startTime: string; endTime: string }[];
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -833,9 +890,9 @@ function ClassWizard({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <Modal onClose={onClose} labelledBy="class-wizard-title" className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-[var(--cs-border)] bg-gray-50 px-6 py-4">
-          <h3 className="text-lg font-semibold text-[var(--cs-text)]">{step === 1 ? t("schedule.selectClassType") : t("schedule.classDetails")}</h3>
+          <h3 id="class-wizard-title" className="text-lg font-semibold text-[var(--cs-text)]">{step === 1 ? t("schedule.selectClassType") : t("schedule.classDetails")}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
         </div>
         <form onSubmit={step === 1 ? (e) => { e.preventDefault(); setStep(2); } : handleSubmit}>
@@ -991,7 +1048,7 @@ function ClassWizard({
             </button>
           </div>
         </form>
-      </div>
+      </Modal>
     </div>
   );
 }

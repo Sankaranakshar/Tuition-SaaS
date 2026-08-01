@@ -1,6 +1,5 @@
 import express from "express";
 import { pool } from "../db.ts";
-import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { authenticateToken, type AuthRequest } from "../middleware/auth.ts";
 import { auditLogQuerySchema, type ListAuditEventsResponse } from "../../shared/schemas/auditLog.ts";
 
@@ -25,15 +24,13 @@ router.get("/", async (req: AuthRequest, res, next) => {
     const query = auditLogQuerySchema.parse(req.query);
     const userId = req.user!.id;
 
-    const { data: platformAdminRow, error: platformAdminErr } = await supabaseAdmin
-      .from("platform_admins")
-      .select("user_id")
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (platformAdminErr) throw platformAdminErr;
+    const { rowCount: isPlatformAdmin } = await pool.query(
+      `select 1 from platform_admins where user_id = $1 limit 1`,
+      [userId]
+    );
 
     let orgId: string | null;
-    if (platformAdminRow) {
+    if (isPlatformAdmin) {
       orgId = query.orgId ?? null;
     } else {
       if (!req.user!.organizationId || !ORG_SCOPED_ROLES.has(req.user!.role ?? "")) {
@@ -70,6 +67,7 @@ router.get("/", async (req: AuthRequest, res, next) => {
           ae.action,
           ae.payload ->> 'entityType' as entity_type,
           ae.payload ->> 'entityId' as entity_id,
+          ae.payload ->> 'systemActor' as system_actor,
           ae.payload,
           ae.created_at
         from audit_events ae
@@ -92,6 +90,7 @@ router.get("/", async (req: AuthRequest, res, next) => {
         actorId: r.actor_id,
         actorName: r.actor_name,
         actorEmail: r.actor_email,
+        systemActor: r.system_actor,
         action: r.action,
         entityType: r.entity_type,
         entityId: r.entity_id,

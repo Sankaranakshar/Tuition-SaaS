@@ -15,13 +15,19 @@
     "moduleDetection": "force",
     "allowJs": true,
     "jsx": "react-jsx",
-    "types": ["vite/client"],
+    "types": [
+      "vite/client"
+    ],
     "paths": {
       "@/*": [
         "./src/*"
       ]
     },
     "allowImportingTsExtensions": true,
-    "noEmit": true
+    "noEmit": true,
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedParameters": true,
+    "noUnusedLocals": true
   }
 }

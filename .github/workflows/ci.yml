@@ -22,14 +22,40 @@ jobs:
       - name: Typecheck
         run: npm run lint
 
+      # Non-blocking by design: 17 pre-existing high/moderate advisories remain
+      # after `npm audit fix` (safe, in-range) already ran (was 22). The rest
+      # need major-version bumps (vite, react-router-dom) or a downgrade
+      # (exceljs, to fix a transitive uuid advisory) — all genuine breaking
+      # changes, not something CI should force or silently accept. This step
+      # keeps the report visible on every run without failing the build until
+      # someone makes the call to take the breaking upgrade.
+      - name: Dependency audit (report only, see comment above)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
       - name: Unit tests
         run: npm test
 
       - name: RLS/RBAC tests
         run: npm run test:rls
 
-      - name: Build
+      - name: Route-contract tests
+        run: npm run test:contract
+
+      - name: Build (SPA + local/traditional-host server bundle)
         run: npm run build
 
       - name: Bundle size check
         run: npm run check:bundle-size
+
+      # Builds the SAME artifact Vercel's buildCommand produces (server/vercelHandler.ts
+      # -> api/index.js), not dist/server.js from the step above — those are two
+      # different bundles from two different entry points. Without this, CI can be
+      # fully green while the actual deployed function is stale or broken (see
+      # docs/OPTIMIZATION_AUDIT.md finding C1: the committed api/index.js was once 15
+      # days stale and silently missing 7 of 14 route groups).
+      - name: Build Vercel API bundle
+        run: npm run build:api
+
+      - name: Verify API bundle has every route mount
+        run: npm run check:api-bundle

@@ -1,7 +1,7 @@
 import express from "express";
 import jwt from "jsonwebtoken";
 import { createRemoteJWKSet, jwtVerify, decodeProtectedHeader } from "jose";
-import { supabaseAdmin } from "../supabaseAdmin.ts";
+import { pool } from "../db.ts";
 
 type Request = express.Request;
 type Response = express.Response;
@@ -59,11 +59,73 @@ async function verifyAccessToken(token: string): Promise<{ sub: string; email?: 
   return { sub: payload.sub, email: payload.email as string | undefined };
 }
 
+interface Membership {
+  organizationId?: string;
+  role?: Role;
+  organizationStatus?: string;
+}
+
+// Optional in-process membership cache. OFF by default (ttl 0), because
+// caching this weakens the guarantee documented on loadMembership below: a
+// removed member would keep access for up to the TTL. Operators who would
+// rather trade that window for one fewer DB hit per request can set
+// AUTH_CACHE_TTL_MS (30_000 is a sane value). Invalidation on membership
+// writes is wired up (see invalidateMembership) but is per-process — on
+// serverless, sibling instances still wait out their own TTL, so keep it short.
+const MEMBERSHIP_TTL_MS = Number(process.env.AUTH_CACHE_TTL_MS) || 0;
+const membershipCache = new Map<string, { value: Membership; expiresAt: number }>();
+
+/** Drop a user's cached membership. Call after any write that changes their
+ *  role, org, or their org's status. No-op when the cache is disabled. */
+export function invalidateMembership(userId: string) {
+  membershipCache.delete(userId);
+}
+
+/** Drop every cached membership. Used for org-wide changes (offboarding
+ *  flips organizations.status, which every member of that org has cached)
+ *  where enumerating the affected users isn't worth a query. */
+export function invalidateAllMemberships() {
+  membershipCache.clear();
+}
+
 // Role/organizationId are read fresh from organization_members on every
 // request instead of being embedded in the JWT (as Firebase custom claims
 // were). That means removing a member or changing their role takes effect
 // immediately on the next API call — no token-revocation step required,
 // unlike the old adminAuth.revokeRefreshTokens() dance.
+//
+// This runs on literally every authenticated request, so it goes over the
+// `pg` pool rather than PostgREST: supabaseAdmin would make an outbound HTTPS
+// call to the Supabase REST API on each hop, which dwarfs the query itself.
+// The join replaces PostgREST's `organizations(status)` embed and is covered
+// by idx_org_members_user.
+async function loadMembership(userId: string): Promise<Membership> {
+  if (MEMBERSHIP_TTL_MS > 0) {
+    const hit = membershipCache.get(userId);
+    if (hit && hit.expiresAt > Date.now()) return hit.value;
+  }
+
+  const { rows } = await pool.query(
+    `select om.organization_id, om.role, o.status as organization_status
+     from organization_members om
+     join organizations o on o.id = om.organization_id
+     where om.user_id = $1
+     limit 1`,
+    [userId]
+  );
+  const row = rows[0];
+  const value: Membership = {
+    organizationId: row?.organization_id ?? undefined,
+    role: (row?.role as Role | undefined) ?? undefined,
+    organizationStatus: row?.organization_status ?? undefined,
+  };
+
+  if (MEMBERSHIP_TTL_MS > 0) {
+    membershipCache.set(userId, { value, expiresAt: Date.now() + MEMBERSHIP_TTL_MS });
+  }
+  return value;
+}
+
 export const authenticateToken = async (
   req: AuthRequest,
   res: Response,
@@ -78,21 +140,14 @@ export const authenticateToken = async (
 
   try {
     const { sub: userId, email } = await verifyAccessToken(token);
-
-    const { data: membership, error } = await supabaseAdmin
-      .from("organization_members")
-      .select("organization_id, role, organizations(status)")
-      .eq("user_id", userId)
-      .limit(1)
-      .maybeSingle();
-    if (error) throw error;
+    const membership = await loadMembership(userId);
 
     req.user = {
       id: userId,
       email,
-      role: membership?.role as Role | undefined,
-      organizationId: membership?.organization_id as string | undefined,
-      organizationStatus: (membership?.organizations as { status?: string } | null)?.status,
+      role: membership.role,
+      organizationId: membership.organizationId,
+      organizationStatus: membership.organizationStatus,
     };
     next();
   } catch (err) {
@@ -141,13 +196,8 @@ export const requirePlatformAdmin = async (req: AuthRequest, res: Response, next
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: { code: "unauthenticated", message: "Missing bearer token" } });
 
-    const { data, error } = await supabaseAdmin
-      .from("platform_admins")
-      .select("user_id")
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (error) throw error;
-    if (!data) return res.status(403).json({ error: { code: "forbidden", message: "Not a platform admin" } });
+    const { rowCount } = await pool.query(`select 1 from platform_admins where user_id = $1 limit 1`, [userId]);
+    if (!rowCount) return res.status(403).json({ error: { code: "forbidden", message: "Not a platform admin" } });
 
     next();
   } catch (err) {

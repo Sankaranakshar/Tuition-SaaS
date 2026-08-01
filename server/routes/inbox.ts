@@ -40,18 +40,19 @@ async function resolveClassParticipantIds(
   const studentIds = rosterRes.rows.map((r) => r.student_id as string);
   if (studentIds.length === 0) return { tutorId, studentUserIds: [], parentUserIds: [] };
 
-  const studentsRes = await client.query(
-    `select student_user_id from students where id = any($1::uuid[]) and student_user_id is not null`,
-    [studentIds]
-  );
-  const parentsRes = await client.query(
-    `select distinct parent_user_id from parent_links where student_id = any($1::uuid[])`,
+  // One round trip for both id spaces, matching scheduling.ts's resolveUserIds.
+  const { rows } = await client.query(
+    `select 'student' as kind, student_user_id as user_id
+       from students where id = any($1::uuid[]) and student_user_id is not null
+     union
+     select 'parent', parent_user_id
+       from parent_links where student_id = any($1::uuid[])`,
     [studentIds]
   );
   return {
     tutorId,
-    studentUserIds: studentsRes.rows.map((r) => r.student_user_id as string),
-    parentUserIds: parentsRes.rows.map((r) => r.parent_user_id as string),
+    studentUserIds: rows.filter((r) => r.kind === "student").map((r) => r.user_id as string),
+    parentUserIds: rows.filter((r) => r.kind === "parent").map((r) => r.user_id as string),
   };
 }
 

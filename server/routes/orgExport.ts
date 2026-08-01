@@ -1,7 +1,7 @@
 import express from "express";
 import ExcelJS from "exceljs";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
-import { authenticateToken, requireRole, requireOrg, type AuthRequest } from "../middleware/auth.ts";
+import { authenticateToken, requireRole, requireOrg, invalidateAllMemberships, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
 import { fetchOrgExportData } from "../utils/orgExport.ts";
 import { offboardRequestSchema, type OffboardResponse } from "../../shared/schemas/orgExport.ts";
@@ -92,6 +92,9 @@ router.post("/offboard", requireRole("owner"), async (req: AuthRequest, res, nex
       .update({ status: "offboarded", offboarded_at: new Date().toISOString(), offboarded_by: req.user!.id })
       .eq("id", orgId);
     if (error) throw error;
+    // Every member of this org has organizationStatus cached; requireOrg
+    // reads it to block offboarded orgs, so the flip must take effect at once.
+    invalidateAllMemberships();
 
     await writeAudit(orgId, req.user!.id, "org.offboarded", "organizations", orgId, {});
     const body: OffboardResponse = { ok: true };

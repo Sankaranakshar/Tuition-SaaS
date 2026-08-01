@@ -1,7 +1,8 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { useRealtimeList } from "./useRealtimeList";
+import type { RealtimeMergeConfig } from "./realtimeMerge";
 import type { MoneyInvoice, MoneyWallet, MoneyPayment } from "../lib/money";
 
 // One hook per Money data need (REDESIGN §6.4), mirroring the usePeople.ts
@@ -18,6 +19,25 @@ export interface MoneyInvoiceRow extends MoneyInvoice {
   tutorId?: string | null;
 }
 
+export function mapMoneyInvoiceRow(row: any): MoneyInvoiceRow {
+  return {
+    id: row.id,
+    studentId: row.student_id,
+    status: row.status,
+    dueDate: row.due_date,
+    totalPaise: row.total_paise,
+    paidPaise: row.paid_paise,
+    items: row.items,
+    invoiceNumber: row.invoice_number,
+    paymentLink: row.payment_link,
+    createdAt: row.created_at,
+    lastPaymentAt: row.last_payment_at,
+    finalizedAt: row.finalized_at,
+    voidedAt: row.voided_at,
+    tutorId: row.tutor_id,
+  };
+}
+
 export function useMoneyInvoices() {
   const { user } = useAuth();
   const orgId = user?.organizationId;
@@ -25,7 +45,9 @@ export function useMoneyInvoices() {
     if (!orgId) return [];
     let q = supabase
       .from("invoices")
-      .select("*")
+      .select(
+        "id, student_id, status, due_date, total_paise, paid_paise, items, invoice_number, payment_link, created_at, last_payment_at, finalized_at, voided_at, tutor_id"
+      )
       .eq("organization_id", orgId)
       .order("created_at", { ascending: false })
       .limit(500);
@@ -37,33 +59,40 @@ export function useMoneyInvoices() {
     if (user!.role === "tutor") q = q.or(`tutor_id.eq.${user!.id},tutor_id.is.null`);
     const { data, error } = await q;
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      studentId: row.student_id,
-      status: row.status,
-      dueDate: row.due_date,
-      totalPaise: row.total_paise,
-      paidPaise: row.paid_paise,
-      items: row.items,
-      invoiceNumber: row.invoice_number,
-      paymentLink: row.payment_link,
-      createdAt: row.created_at,
-      lastPaymentAt: row.last_payment_at,
-      finalizedAt: row.finalized_at,
-      voidedAt: row.voided_at,
-      tutorId: row.tutor_id,
-    }));
+    return (data || []).map(mapMoneyInvoiceRow);
   }, [orgId, user?.role, user?.id]);
-  return useRealtimeList<MoneyInvoiceRow>("money", "invoices", orgId, load);
+  // Mirrors the tutor_id.eq/is.null OR above — a Realtime payload for another
+  // tutor's invoice must not get merged into a tutor-scoped view.
+  const merge: RealtimeMergeConfig<MoneyInvoiceRow> = useMemo(
+    () => ({
+      mapRow: mapMoneyInvoiceRow,
+      getId: (row) => row.id,
+      belongsToView: (raw: any) => user?.role !== "tutor" || raw.tutor_id === user?.id || raw.tutor_id == null,
+      compare: (a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") * -1,
+    }),
+    [user?.role, user?.id]
+  );
+  return useRealtimeList<MoneyInvoiceRow>("money", "invoices", orgId, load, undefined, merge);
 }
 
+// No merge config here, deliberately: MoneyWallet is keyed by student_id and
+// carries studentName, which comes from a join with `students` — a lone
+// wallets-table row (what a Realtime payload gives us) can't supply that
+// name for a wallet that isn't already in `data`, so a merged INSERT would
+// either drop the name or fabricate one. Same class of blocker as
+// useParentsList/useTutorsList below. It's also not just INSERT: wallets'
+// primary key is `id`, not student_id, and this app has no tables with
+// REPLICA IDENTITY FULL set (see realtimeMerge.ts's module comment), so a
+// DELETE's `old` row only ever carries that `id` — never enough to know
+// which student's wallet was removed. Full refetch (already debounced) stays
+// correct here; only over-eager per-event refetching was the actual problem.
 export function useMoneyWallets() {
   const { user } = useAuth();
   const orgId = user?.organizationId;
   const load = useCallback(async (): Promise<MoneyWallet[]> => {
     if (!orgId) return [];
     const [{ data: wallets, error: wErr }, { data: students, error: sErr }] = await Promise.all([
-      supabase.from("wallets").select("*").eq("organization_id", orgId).limit(500),
+      supabase.from("wallets").select("student_id, balance_credits, balance_currency").eq("organization_id", orgId).limit(500),
       supabase.from("students").select("id, name").eq("organization_id", orgId).limit(500),
     ]);
     if (wErr) throw wErr;
@@ -79,10 +108,31 @@ export function useMoneyWallets() {
   return useRealtimeList<MoneyWallet>("money", "wallets", orgId, load);
 }
 
+type MoneyPaymentRow = MoneyPayment & { id: string; invoiceId: string | null; method?: string | null };
+
+export function mapMoneyPaymentRow(row: any): MoneyPaymentRow {
+  return {
+    id: row.id,
+    invoiceId: row.invoice_id,
+    amountPaise: row.amount_paise,
+    at: row.at,
+    method: row.method,
+  };
+}
+
+// Unlike wallets, a payment row is self-contained (no join needed for any
+// field the hook exposes), so — despite the same-shaped risk being worth
+// double-checking here — INSERT/UPDATE/DELETE all merge safely by id.
+const moneyPaymentMerge: RealtimeMergeConfig<MoneyPaymentRow> = {
+  mapRow: mapMoneyPaymentRow,
+  getId: (row) => row.id,
+  compare: (a, b) => (a.at ?? "").localeCompare(b.at ?? "") * -1,
+};
+
 export function useMoneyPayments() {
   const { user } = useAuth();
   const orgId = user?.organizationId;
-  const load = useCallback(async (): Promise<(MoneyPayment & { id: string; invoiceId: string | null })[]> => {
+  const load = useCallback(async (): Promise<MoneyPaymentRow[]> => {
     if (!orgId) return [];
     const { data, error } = await supabase
       .from("payments")
@@ -91,20 +141,9 @@ export function useMoneyPayments() {
       .order("at", { ascending: false })
       .limit(1000);
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      invoiceId: row.invoice_id,
-      amountPaise: row.amount_paise,
-      at: row.at,
-      method: row.method,
-    }));
+    return (data || []).map(mapMoneyPaymentRow);
   }, [orgId]);
-  return useRealtimeList<MoneyPayment & { id: string; invoiceId: string | null; method?: string | null }>(
-    "money",
-    "payments",
-    orgId,
-    load
-  );
+  return useRealtimeList<MoneyPaymentRow>("money", "payments", orgId, load, undefined, moneyPaymentMerge);
 }
 
 /** Average PER_SESSION template fee, in paise — the wallets segment's depletion estimate for currency-only balances. */
@@ -190,9 +229,14 @@ export function useSelfMoney(): SelfMoney {
         setStudentId(student.id);
 
         const [{ data: inv, error: iErr }, { data: w, error: wErr }, { data: led, error: lErr }] = await Promise.all([
-          supabase.from("invoices").select("*").eq("student_id", student.id).order("created_at", { ascending: false }).limit(100),
-          supabase.from("wallets").select("*").eq("student_id", student.id).maybeSingle(),
-          supabase.from("wallet_ledger").select("*").eq("student_id", student.id).order("at", { ascending: false }).limit(100),
+          supabase
+            .from("invoices")
+            .select("id, student_id, status, due_date, total_paise, paid_paise, items, invoice_number, payment_link, created_at, last_payment_at")
+            .eq("student_id", student.id)
+            .order("created_at", { ascending: false })
+            .limit(100),
+          supabase.from("wallets").select("balance_credits, balance_currency").eq("student_id", student.id).maybeSingle(),
+          supabase.from("wallet_ledger").select("id, type, credits, paise, reason, at").eq("student_id", student.id).order("at", { ascending: false }).limit(100),
         ]);
         if (iErr) throw iErr;
         if (wErr) throw wErr;

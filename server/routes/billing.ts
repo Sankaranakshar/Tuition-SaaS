@@ -114,8 +114,14 @@ router.post("/attendance", requireRole(...CAN_MARK), async (req: AuthRequest, re
     const orgId = req.user!.organizationId!;
     const actor = req.user!.id;
 
+    // Session and its template in one round trip — the template was a
+    // strictly dependent second query on the same request path.
     const sessionRes = await pool.query(
-      `select organization_id, tutor_id, template_id, start_time from class_sessions where id = $1`,
+      `select s.organization_id, s.tutor_id, s.template_id, s.start_time,
+              t.pricing_model, t.fee_amount, t.type
+       from class_sessions s
+       left join class_templates t on t.id = s.template_id
+       where s.id = $1`,
       [sessionId]
     );
     if (sessionRes.rowCount === 0) {
@@ -136,78 +142,123 @@ router.post("/attendance", requireRole(...CAN_MARK), async (req: AuthRequest, re
       return res.status(422).json({ error: { code: "too_old", message: "Attendance can only be marked within 7 days of the session" } });
     }
 
-    const templateRes = await pool.query(
-      `select pricing_model, fee_amount, type from class_templates where id = $1`,
-      [session.template_id]
-    );
-    const template = templateRes.rows[0] || null;
+    const template = session.template_id
+      ? { pricing_model: session.pricing_model, fee_amount: session.fee_amount, type: session.type }
+      : null;
     const perSession = template?.pricing_model === "PER_SESSION";
     const BILLABLE = new Set(["present", "late"]);
 
+    // Set-based rather than a per-student loop. Marking a 30-student batch
+    // used to issue ~120 sequential round trips inside one transaction, all
+    // of them holding wallet row locks for the full duration — the shape the
+    // attendance-burst load test hammers. The same work is now a fixed
+    // handful of statements regardless of roster size.
     const result = await withTransaction(async (client: PoolClient) => {
       const billed: string[] = [];
       const invoiced: string[] = [];
 
-      for (const r of records) {
-        const prevRes = await client.query(
-          `select billed from attendance_records where session_id = $1 and student_id = $2`,
-          [sessionId, r.studentId]
+      // Duplicate studentIds in one payload are a client bug. Collapse to the
+      // last status, which is what the upsert left behind before anyway.
+      const statusByStudent = new Map<string, string>();
+      for (const r of records) statusByStudent.set(r.studentId, r.status);
+      const studentIds = [...statusByStudent.keys()];
+
+      const prevRes = await client.query(
+        `select student_id from attendance_records
+         where session_id = $1 and student_id = any($2::uuid[]) and billed = true`,
+        [sessionId, studentIds]
+      );
+      const alreadyBilled = new Set(prevRes.rows.map((r) => r.student_id as string));
+
+      const marks = studentIds.map((studentId) => {
+        const status = statusByStudent.get(studentId)!;
+        const shouldBill = perSession && BILLABLE.has(status) && !alreadyBilled.has(studentId);
+        return { studentId, status, shouldBill, billed: alreadyBilled.has(studentId) || shouldBill };
+      });
+
+      await client.query(
+        `insert into attendance_records
+           (organization_id, session_id, student_id, template_id, tutor_id, session_start, status, billed, marked_by, marked_at)
+         select $1, $2, v.student_id, $3, $4, $5, v.status, v.billed, $6, now()
+         from unnest($7::uuid[], $8::text[], $9::boolean[]) as v(student_id, status, billed)
+         on conflict (session_id, student_id) do update set
+           status = excluded.status, billed = excluded.billed, marked_by = excluded.marked_by, marked_at = now()`,
+        [orgId, sessionId, session.template_id, session.tutor_id, session.start_time, actor,
+          marks.map((m) => m.studentId), marks.map((m) => m.status), marks.map((m) => m.billed)]
+      );
+
+      const toBill = marks.filter((m) => m.shouldBill);
+      if (toBill.length > 0) {
+        const feePaise = Math.round((template!.fee_amount || 0) * 100);
+
+        // Every wallet locked in one statement. `order by student_id` gives
+        // concurrent batches a consistent lock order, so two overlapping
+        // rosters queue instead of deadlocking.
+        const walletRes = await client.query(
+          `select id, student_id, balance_credits, balance_currency from wallets
+           where organization_id = $1 and student_id = any($2::uuid[])
+           order by student_id
+           for update`,
+          [orgId, toBill.map((m) => m.studentId)]
         );
-        const alreadyBilled = prevRes.rows[0]?.billed === true;
-        const nowBillable = perSession && BILLABLE.has(r.status);
-        const shouldBill = nowBillable && !alreadyBilled;
+        const walletByStudent = new Map(walletRes.rows.map((w) => [w.student_id as string, w]));
 
-        await client.query(
-          `insert into attendance_records
-             (organization_id, session_id, student_id, template_id, tutor_id, session_start, status, billed, marked_by, marked_at)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
-           on conflict (session_id, student_id) do update set
-             status = excluded.status, billed = excluded.billed, marked_by = excluded.marked_by, marked_at = now()`,
-          [orgId, sessionId, r.studentId, session.template_id, session.tutor_id, session.start_time, r.status, alreadyBilled || shouldBill, actor]
-        );
+        const creditWalletIds: string[] = [];
+        const currencyWalletIds: string[] = [];
+        const ledger: { studentId: string; type: string; credits: number; paise: number }[] = [];
+        const invoiceStudentIds: string[] = [];
 
-        if (shouldBill) {
-          const feePaise = Math.round((template!.fee_amount || 0) * 100);
-          // Row lock on the wallet serializes concurrent attendance-billing
-          // for the same student within this transaction.
-          const walletRes = await client.query(
-            `select id, balance_credits, balance_currency from wallets where organization_id = $1 and student_id = $2 for update`,
-            [orgId, r.studentId]
-          );
-          const w = walletRes.rows[0] || null;
-
+        for (const m of toBill) {
+          const w = walletByStudent.get(m.studentId);
           if (w && (w.balance_credits || 0) >= 1) {
-            await client.query(`update wallets set balance_credits = balance_credits - 1 where id = $1`, [w.id]);
-            await client.query(
-              `insert into wallet_ledger (organization_id, student_id, type, credits, paise, reason, session_id, by, at)
-               values ($1, $2, 'debit_credit', -1, 0, 'attendance', $3, $4, now())`,
-              [orgId, r.studentId, sessionId, actor]
-            );
-            billed.push(r.studentId);
+            creditWalletIds.push(w.id);
+            ledger.push({ studentId: m.studentId, type: "debit_credit", credits: -1, paise: 0 });
+            billed.push(m.studentId);
           } else if (w && Math.round((w.balance_currency || 0) * 100) >= feePaise) {
-            await client.query(
-              `update wallets set balance_currency = balance_currency - $1 where id = $2`,
-              [feePaise / 100, w.id]
-            );
-            await client.query(
-              `insert into wallet_ledger (organization_id, student_id, type, credits, paise, reason, session_id, by, at)
-               values ($1, $2, 'debit_currency', 0, $3, 'attendance', $4, $5, now())`,
-              [orgId, r.studentId, -feePaise, sessionId, actor]
-            );
-            billed.push(r.studentId);
+            currencyWalletIds.push(w.id);
+            ledger.push({ studentId: m.studentId, type: "debit_currency", credits: 0, paise: -feePaise });
+            billed.push(m.studentId);
           } else {
             // Insufficient balance: accrue an unpaid invoice, exactly once
             // (guarded by the `billed` flag on the attendance record).
-            const due = new Date(Date.now() + 7 * 24 * 3600 * 1000);
-            const items = [{ description: `${template!.type} session on ${start.toISOString().split("T")[0]}`, amountPaise: feePaise, quantity: 1 }];
-            await client.query(
-              `insert into invoices
-                 (organization_id, tutor_id, student_id, subtotal_paise, total_paise, tax_paise, discount_paise, total_amount, subtotal, status, due_date, items, source)
-               values ($1, $2, $3, $4, $4, 0, 0, $5, $5, 'unpaid', $6, $7, $8)`,
-              [orgId, session.tutor_id, r.studentId, feePaise, feePaise / 100, due.toISOString().split("T")[0], JSON.stringify(items), JSON.stringify({ kind: "attendance", sessionId })]
-            );
-            invoiced.push(r.studentId);
+            invoiceStudentIds.push(m.studentId);
+            invoiced.push(m.studentId);
           }
+        }
+
+        if (creditWalletIds.length > 0) {
+          await client.query(
+            `update wallets set balance_credits = balance_credits - 1 where id = any($1::uuid[])`,
+            [creditWalletIds]
+          );
+        }
+        if (currencyWalletIds.length > 0) {
+          await client.query(
+            `update wallets set balance_currency = balance_currency - $1 where id = any($2::uuid[])`,
+            [feePaise / 100, currencyWalletIds]
+          );
+        }
+        if (ledger.length > 0) {
+          await client.query(
+            `insert into wallet_ledger (organization_id, student_id, type, credits, paise, reason, session_id, by, at)
+             select $1, v.student_id, v.type, v.credits, v.paise, 'attendance', $2, $3, now()
+             from unnest($4::uuid[], $5::text[], $6::int[], $7::int[]) as v(student_id, type, credits, paise)`,
+            [orgId, sessionId, actor,
+              ledger.map((l) => l.studentId), ledger.map((l) => l.type),
+              ledger.map((l) => l.credits), ledger.map((l) => l.paise)]
+          );
+        }
+        if (invoiceStudentIds.length > 0) {
+          const due = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+          const items = [{ description: `${template!.type} session on ${start.toISOString().split("T")[0]}`, amountPaise: feePaise, quantity: 1 }];
+          await client.query(
+            `insert into invoices
+               (organization_id, tutor_id, student_id, subtotal_paise, total_paise, tax_paise, discount_paise, total_amount, subtotal, status, due_date, items, source)
+             select $1, $2, v.student_id, $3, $3, 0, 0, $4, $4, 'unpaid', $5, $6::jsonb, $7::jsonb
+             from unnest($8::uuid[]) as v(student_id)`,
+            [orgId, session.tutor_id, feePaise, feePaise / 100, due.toISOString().split("T")[0],
+              JSON.stringify(items), JSON.stringify({ kind: "attendance", sessionId }), invoiceStudentIds]
+          );
         }
       }
 
@@ -616,20 +667,42 @@ router.post("/reconcile", requireRole("owner", "admin"), async (req: AuthRequest
     const creds = await getGatewayCreds(orgId);
     if (!creds) return res.status(422).json({ error: { code: "gateway_not_connected", message: "Connect Razorpay first" } });
 
+    // Only invoices that actually carry a link are worth scanning — the old
+    // `limit 100` could fill its whole budget with linkless invoices and skip
+    // real candidates behind them.
     const openRes = await pool.query(
-      `select id, payment_link from invoices where organization_id = $1 and status in ('sent','unpaid','partially_paid') limit 100`,
+      `select id, payment_link from invoices
+       where organization_id = $1 and status in ('sent','unpaid','partially_paid')
+         and payment_link ->> 'id' is not null
+       limit 100`,
       [orgId]
     );
 
-    let reconciled = 0;
-    for (const row of openRes.rows) {
-      const linkId = row.payment_link?.id;
-      if (!linkId) continue;
-      const link = await fetchPaymentLink(creds, linkId).catch(() => null);
-      if (!link || link.status !== "paid") continue;
+    // The Razorpay lookups are pure network waits with nothing shared between
+    // them, so they run in bounded parallel — 100 serial API calls at ~200ms
+    // each was several seconds of wall clock, most of it idle. Settlement
+    // stays sequential below: those are transactions competing for a
+    // 3-connection pool, where parallelism buys nothing.
+    const RECONCILE_FETCH_CONCURRENCY = 6;
+    const candidates: { id: string; linkId: string; amountPaid: number }[] = [];
+    const queue = [...openRes.rows];
+    await Promise.all(
+      Array.from({ length: Math.min(RECONCILE_FETCH_CONCURRENCY, queue.length) }, async () => {
+        for (let row = queue.shift(); row; row = queue.shift()) {
+          const linkId = row.payment_link?.id;
+          if (!linkId) continue;
+          const link = await fetchPaymentLink(creds, linkId).catch(() => null);
+          if (!link || link.status !== "paid") continue;
+          const amountPaid = Number(link.amount_paid || 0);
+          if (amountPaid <= 0) continue;
+          candidates.push({ id: row.id, linkId, amountPaid });
+        }
+      })
+    );
 
-      const amountPaid = Number(link.amount_paid || 0);
-      if (amountPaid <= 0) continue;
+    let reconciled = 0;
+    for (const row of candidates) {
+      const { linkId, amountPaid } = row;
       const idempotencyKey = `rzp_link_${linkId}`;
 
       const settled = await withTransaction(async (client) => {

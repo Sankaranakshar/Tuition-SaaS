@@ -255,6 +255,201 @@ describe("PATCH /api/v1/scheduling/templates/:id", () => {
   });
 });
 
+describe("POST /api/v1/scheduling/materialize", () => {
+  // WEEKS_AHEAD in server/routes/scheduling.ts.
+  const WEEKS_AHEAD = 8;
+  const DOW = 1; // Monday
+  const START_HOUR = 14;
+
+  let matTutorId: string;
+  let matStudentId: string;
+  let matStudentUserId: string;
+  let matParentUserId: string;
+  let matTemplateId: string;
+
+  /** Local-time YYYY-MM-DD, matching the route's own key format. Using
+   *  toISOString() here would drift a day for evening slots in IST. */
+  function localKey(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
+  /** Mirrors the route's slot arithmetic, so this asserts the real rolling
+   *  window rather than a hardcoded count that would rot on a given weekday. */
+  function expectedDateKeys(): string[] {
+    const now = new Date();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const horizon = new Date(today.getTime() + WEEKS_AHEAD * 7 * 24 * 3600 * 1000);
+    const keys: string[] = [];
+    for (const d = new Date(today); d <= horizon; d.setDate(d.getDate() + 1)) {
+      if (d.getDay() !== DOW) continue;
+      const start = new Date(d);
+      start.setHours(START_HOUR, 0, 0, 0);
+      if (start < now) continue;
+      keys.push(localKey(start));
+    }
+    return keys;
+  }
+
+  async function materializedDates(templateId: string): Promise<string[]> {
+    const res = await db.query(
+      `select to_char(materialized_date, 'YYYY-MM-DD') as k from class_sessions
+       where template_id = $1 order by materialized_date`,
+      [templateId]
+    );
+    return (res.rows as any[]).map((r) => r.k as string);
+  }
+
+  beforeAll(async () => {
+    // A tutor of its own, so no other describe's sessions land in this
+    // template's conflict window.
+    matTutorId = crypto.randomUUID();
+    matStudentUserId = crypto.randomUUID();
+    matParentUserId = crypto.randomUUID();
+    for (const uid of [matTutorId, matStudentUserId, matParentUserId]) {
+      await db.query(`insert into auth.users (id) values ($1)`, [uid]);
+    }
+    await db.query(
+      `insert into organization_members (organization_id, user_id, role) values ($1, $2, 'tutor')`,
+      [ORG, matTutorId]
+    );
+
+    matStudentId = crypto.randomUUID();
+    await db.query(
+      `insert into students (id, organization_id, name, student_user_id) values ($1, $2, 'Materialize Student', $3)`,
+      [matStudentId, ORG, matStudentUserId]
+    );
+    await db.query(
+      `insert into parent_links (parent_user_id, student_id, organization_id) values ($1, $2, $3)`,
+      [matParentUserId, matStudentId, ORG]
+    );
+
+    matTemplateId = crypto.randomUUID();
+    await db.query(
+      `insert into class_templates
+         (id, organization_id, name, type, capacity, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes)
+       values ($1, $2, 'Materialize Batch', 'BATCH', 10, $3, $4, $5, $6, 0, 60)`,
+      [matTemplateId, ORG, matTutorId, [matStudentId], [DOW], START_HOUR]
+    );
+  });
+
+  it("403s for a role outside CAN_SCHEDULE (parent)", async () => {
+    const res = await request(app)
+      .post("/api/v1/scheduling/materialize")
+      .set(...authHeader(uids.parent));
+    expectStatus(res, 403);
+  });
+
+  it("lays down one session per matching day across the rolling window", async () => {
+    const res = await request(app)
+      .post("/api/v1/scheduling/materialize")
+      .set(...authHeader(uids.admin));
+    expectStatus(res, 200);
+
+    const expected = expectedDateKeys();
+    expect(expected.length).toBeGreaterThan(0);
+    expect(await materializedDates(matTemplateId)).toEqual(expected);
+  });
+
+  it("stamps each session at the template's local start hour", async () => {
+    const { rows } = await db.query(
+      `select start_time, end_time from class_sessions where template_id = $1 order by start_time limit 1`,
+      [matTemplateId]
+    );
+    const start = new Date((rows[0] as any).start_time);
+    const end = new Date((rows[0] as any).end_time);
+    expect(start.getDay()).toBe(DOW);
+    expect(start.getHours()).toBe(START_HOUR);
+    expect(end.getTime() - start.getTime()).toBe(60 * 60 * 1000);
+  });
+
+  it("resolves the roster into both auth-uid arrays", async () => {
+    const { rows } = await db.query(
+      `select student_ids, student_user_ids, parent_user_ids from class_sessions
+       where template_id = $1 limit 1`,
+      [matTemplateId]
+    );
+    const row = rows[0] as any;
+    expect(row.student_ids).toEqual([matStudentId]);
+    expect(row.student_user_ids).toEqual([matStudentUserId]);
+    expect(row.parent_user_ids).toEqual([matParentUserId]);
+  });
+
+  it("is idempotent — a second sweep creates nothing new", async () => {
+    const before = await materializedDates(matTemplateId);
+    const res = await request(app)
+      .post("/api/v1/scheduling/materialize")
+      .set(...authHeader(uids.admin));
+    expectStatus(res, 200);
+    expect(res.body.created).not.toContain(before[0]);
+    expect(await materializedDates(matTemplateId)).toEqual(before);
+  });
+
+  it("reports a slot already taken by that tutor as a conflict instead of double-booking", async () => {
+    // Fresh template on the same tutor, one week out on a day the first
+    // template doesn't use, then block that exact slot by hand first.
+    const dow = (DOW + 1) % 7;
+    const now = new Date();
+    const blocked = new Date();
+    blocked.setHours(0, 0, 0, 0);
+    while (blocked.getDay() !== dow || blocked <= now) blocked.setDate(blocked.getDate() + 1);
+    blocked.setHours(START_HOUR, 0, 0, 0);
+    const blockedEnd = new Date(blocked.getTime() + 60 * 60 * 1000);
+
+    await db.query(
+      `insert into class_sessions (organization_id, tutor_id, start_time, end_time, status)
+       values ($1, $2, $3, $4, 'scheduled')`,
+      [ORG, matTutorId, blocked.toISOString(), blockedEnd.toISOString()]
+    );
+
+    const conflictTemplateId = crypto.randomUUID();
+    await db.query(
+      `insert into class_templates
+         (id, organization_id, name, type, capacity, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes)
+       values ($1, $2, 'Conflicting Batch', 'BATCH', 10, $3, $4, $5, $6, 0, 60)`,
+      [conflictTemplateId, ORG, matTutorId, [matStudentId], [dow], START_HOUR]
+    );
+
+    const res = await request(app)
+      .post("/api/v1/scheduling/materialize")
+      .set(...authHeader(uids.admin));
+    expectStatus(res, 200);
+
+    const key = localKey(blocked);
+    expect(res.body.conflicts).toContainEqual({ templateId: conflictTemplateId, date: key });
+    // Every other matching day still got laid down — one blocked slot must
+    // not abort the template's whole window.
+    const created = await materializedDates(conflictTemplateId);
+    expect(created).not.toContain(key);
+    expect(created.length).toBeGreaterThan(0);
+  });
+
+  it("skips templates that aren't schedulable batches", async () => {
+    const oneToOneId = crypto.randomUUID();
+    await db.query(
+      `insert into class_templates
+         (id, organization_id, name, type, capacity, tutor_id, days_of_week, start_hour, start_minute, duration_minutes)
+       values ($1, $2, 'One To One', 'ONE_TO_ONE', 1, $3, $4, $5, 0, 60)`,
+      [oneToOneId, ORG, matTutorId, [DOW], START_HOUR + 3]
+    );
+    const noTutorId = crypto.randomUUID();
+    await db.query(
+      `insert into class_templates
+         (id, organization_id, name, type, capacity, days_of_week, start_hour, start_minute, duration_minutes)
+       values ($1, $2, 'Unstaffed Batch', 'BATCH', 10, $3, $4, 0, 60)`,
+      [noTutorId, ORG, [DOW], START_HOUR + 4]
+    );
+
+    const res = await request(app)
+      .post("/api/v1/scheduling/materialize")
+      .set(...authHeader(uids.admin));
+    expectStatus(res, 200);
+
+    expect(await materializedDates(oneToOneId)).toEqual([]);
+    expect(await materializedDates(noTutorId)).toEqual([]);
+  });
+});
+
 describe("GET /api/v1/scheduling/gaps", () => {
   it("422s a missing required query param", async () => {
     const res = await request(app)

@@ -1,7 +1,7 @@
 import express from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
-import { authenticateToken, requireRole, requireOrg, type AuthRequest, type Role } from "../middleware/auth.ts";
+import { authenticateToken, requireRole, requireOrg, invalidateMembership, type AuthRequest, type Role } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
 
 const router = express.Router();
@@ -22,6 +22,7 @@ export async function setMembership(orgId: string, userId: string, role: Role, _
     .from("organization_members")
     .upsert({ organization_id: orgId, user_id: userId, role }, { onConflict: "organization_id,user_id" });
   if (error) throw error;
+  invalidateMembership(userId);
 }
 
 // Bootstrap: a user with no org creates one and becomes its owner.
@@ -79,6 +80,7 @@ router.delete("/:userId", authenticateToken, requireOrg, requireRole("owner", "a
       .eq("organization_id", orgId)
       .eq("user_id", userId);
     if (error) throw error;
+    invalidateMembership(userId);
 
     await writeAudit(orgId, req.user!.id, "member.remove", "organization_members", `${orgId}_${userId}`, {});
     res.json({ ok: true });

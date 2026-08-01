@@ -3,7 +3,7 @@ import request from "supertest";
 import crypto from "node:crypto";
 import type { PGlite } from "@electric-sql/pglite";
 import { createTestApp, authHeader } from "./testApp.ts";
-import { ORG, OTHER_ORG, uids } from "../integration/fixtures.ts";
+import { ORG, uids } from "../integration/fixtures.ts";
 
 let app: any;
 let db: PGlite;

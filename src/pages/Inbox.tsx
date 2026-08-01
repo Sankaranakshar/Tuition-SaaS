@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Send, Archive, Clock, Radio, MessageSquare, Inbox as InboxIcon, Plus, X } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
-import { EmptyState, SkeletonRow, ContextCard, Popover } from "../components/kit";
+import { EmptyState, SkeletonRow, ContextCard, Popover, Modal } from "../components/kit";
 import { formatTime, formatDate } from "../lib/format";
 import { recordManualPayment } from "../lib/api";
 import {
@@ -233,7 +233,6 @@ export default function Inbox() {
                     key={item.conversation.id}
                     item={item}
                     active={item.conversation.id === selectedId}
-                    currentUserId={user.id}
                     onClick={() => setSelectedId(item.conversation.id)}
                   />
                 ) : (
@@ -274,12 +273,10 @@ export default function Inbox() {
 function ThreadRow({
   item,
   active,
-  currentUserId,
   onClick,
 }: {
   item: Extract<InboxItem, { kind: "thread" }>;
   active: boolean;
-  currentUserId: string;
   onClick: () => void;
 }) {
   const { t } = useTranslation();
@@ -462,11 +459,8 @@ function RecordPaymentAction({ invoiceId, outstandingPaise }: { invoiceId: strin
   return (
     <Popover
       align="right"
-      trigger={
-        <span className="cursor-pointer rounded-[6px] border border-[var(--cs-border)] px-2 py-1 text-xs font-medium hover:bg-[var(--cs-bg)]">
-          {t("inbox.recordPayment")}
-        </span>
-      }
+      trigger={t("inbox.recordPayment")}
+      triggerClassName="cursor-pointer rounded-[6px] border border-[var(--cs-border)] px-2 py-1 text-xs font-medium hover:bg-[var(--cs-bg)]"
     >
       {(close) => <RecordPaymentForm invoiceId={invoiceId} outstandingPaise={outstandingPaise} onDone={close} />}
     </Popover>
@@ -540,11 +534,9 @@ function SnoozeButton({ conversationId, currentUserId }: { conversationId: strin
   return (
     <Popover
       align="right"
-      trigger={
-        <span title={t("inbox.snooze")} className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[6px] text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]">
-          <Clock className="h-4 w-4" />
-        </span>
-      }
+      trigger={<Clock className="h-4 w-4" />}
+      triggerClassName="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[6px] text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]"
+      triggerTitle={t("inbox.snooze")}
     >
       {(close) => (
         <div className="flex w-40 flex-col gap-1">
@@ -628,12 +620,13 @@ function NewMessageDialog({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
+      <Modal
+        onClose={onClose}
+        labelledBy="new-message-title"
         className="flex max-h-[70vh] w-full max-w-md flex-col rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4"
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-[var(--cs-text)]">{t("inbox.newMessage")}</h2>
+          <h2 id="new-message-title" className="text-sm font-semibold text-[var(--cs-text)]">{t("inbox.newMessage")}</h2>
           <button onClick={onClose} className="text-[var(--cs-text-muted)] hover:text-[var(--cs-text)]">
             <X className="h-4 w-4" />
           </button>
@@ -673,7 +666,7 @@ function NewMessageDialog({
             ))
           )}
         </div>
-      </div>
+      </Modal>
     </div>
   );
 }

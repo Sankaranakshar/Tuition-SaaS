@@ -1,6 +1,5 @@
-import React from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, Video, CreditCard, Users, FileText, MessageSquare, ArrowRight, CheckCircle, Shield, Zap, BarChart } from 'lucide-react';
+import { Calendar, Video, CreditCard, Users, FileText, ArrowRight, CheckCircle, Shield, Zap, BarChart } from 'lucide-react';
 
 export default function Features() {
   return (

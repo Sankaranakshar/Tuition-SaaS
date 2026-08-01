@@ -1,7 +1,8 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { useRealtimeList } from "./useRealtimeList";
+import type { RealtimeMergeConfig } from "./realtimeMerge";
 import type { ScheduleSession, TutorAvailabilityWindow } from "../lib/schedule";
 
 // One hook per Schedule data source (REDESIGN §6.1), same shape as
@@ -15,6 +16,20 @@ export interface ScheduleSessionRow extends ScheduleSession {
   studentIds: string[];
   isOnline: boolean;
   roomNumber?: string | null;
+}
+
+export function mapScheduleSessionRow(row: any): ScheduleSessionRow {
+  return {
+    id: row.id,
+    tutorId: row.tutor_id,
+    templateId: row.template_id,
+    studentIds: row.student_ids || [],
+    startTime: row.start_time,
+    endTime: row.end_time,
+    status: row.status,
+    isOnline: row.is_online,
+    roomNumber: row.room_number,
+  };
 }
 
 /** Sessions visible in the current week view, bounded to [weekStart, weekEnd). */
@@ -37,22 +52,28 @@ export function useScheduleSessions(weekStart: Date, weekEnd: Date) {
     if (user!.role === "tutor") q = q.eq("tutor_id", user!.id);
     const { data, error } = await q;
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      tutorId: row.tutor_id,
-      templateId: row.template_id,
-      studentIds: row.student_ids || [],
-      startTime: row.start_time,
-      endTime: row.end_time,
-      status: row.status,
-      isOnline: row.is_online,
-      roomNumber: row.room_number,
-    }));
+    return (data || []).map(mapScheduleSessionRow);
   }, [orgId, user?.role, user?.id, weekStartIso, weekEndIso]);
 
   // Realtime filter stays org-scoped (postgres_changes filters can't express
-  // a date range); the week bound is re-applied by `load` on every refetch.
-  const result = useRealtimeList<ScheduleSessionRow>("schedule", "class_sessions", orgId, load);
+  // a date range or the tutor_id.eq load() applies); belongsToView mirrors
+  // both. A session dragged outside [weekStart, weekEnd) — the exact
+  // reschedule-out-of-view case this optimization has to get right — drops
+  // out of `data` immediately and triggers a refetch rather than guessing
+  // whether some other session should now page into view.
+  const merge: RealtimeMergeConfig<ScheduleSessionRow> = useMemo(
+    () => ({
+      mapRow: mapScheduleSessionRow,
+      getId: (row) => row.id,
+      belongsToView: (raw: any) =>
+        raw.start_time >= weekStartIso &&
+        raw.start_time < weekEndIso &&
+        (user?.role !== "tutor" || raw.tutor_id === user?.id),
+      compare: (a, b) => a.startTime.localeCompare(b.startTime),
+    }),
+    [user?.role, user?.id, weekStartIso, weekEndIso]
+  );
+  const result = useRealtimeList<ScheduleSessionRow>("schedule", "class_sessions", orgId, load, undefined, merge);
   // useRealtimeList's own mount effect only reruns on [orgId, table], not on
   // `load` — so paging weekStart/weekEnd would otherwise leave the page
   // showing stale (or the initial, possibly empty) week forever. Re-fetch
@@ -78,6 +99,27 @@ export interface ScheduleTemplate {
   studentIds: string[];
 }
 
+export function mapClassTemplateRow(row: any): ScheduleTemplate {
+  return {
+    id: row.id,
+    courseId: row.course_id,
+    tutorId: row.tutor_id,
+    name: row.name,
+    type: row.type,
+    capacity: row.capacity,
+    daysOfWeek: row.days_of_week || [],
+    startHour: row.start_hour,
+    startMinute: row.start_minute,
+    durationMinutes: row.duration_minutes,
+    studentIds: row.student_ids || [],
+  };
+}
+
+const classTemplateMerge: RealtimeMergeConfig<ScheduleTemplate> = {
+  mapRow: mapClassTemplateRow,
+  getId: (row) => row.id,
+};
+
 export function useClassTemplates() {
   const { user } = useAuth();
   const orgId = user?.organizationId;
@@ -89,21 +131,9 @@ export function useClassTemplates() {
       .eq("organization_id", orgId)
       .limit(200);
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      courseId: row.course_id,
-      tutorId: row.tutor_id,
-      name: row.name,
-      type: row.type,
-      capacity: row.capacity,
-      daysOfWeek: row.days_of_week || [],
-      startHour: row.start_hour,
-      startMinute: row.start_minute,
-      durationMinutes: row.duration_minutes,
-      studentIds: row.student_ids || [],
-    }));
+    return (data || []).map(mapClassTemplateRow);
   }, [orgId]);
-  return useRealtimeList<ScheduleTemplate>("schedule", "class_templates", orgId, load);
+  return useRealtimeList<ScheduleTemplate>("schedule", "class_templates", orgId, load, undefined, classTemplateMerge);
 }
 
 /**
@@ -129,17 +159,7 @@ export function useMyScheduleSessions(weekStart: Date, weekEnd: Date) {
       .order("start_time", { ascending: true })
       .limit(200);
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      tutorId: row.tutor_id,
-      templateId: row.template_id,
-      studentIds: row.student_ids || [],
-      startTime: row.start_time,
-      endTime: row.end_time,
-      status: row.status,
-      isOnline: row.is_online,
-      roomNumber: row.room_number,
-    }));
+    return (data || []).map(mapScheduleSessionRow);
   }, [user?.id, weekStartIso, weekEndIso]);
 
   // Realtime's postgres_changes filter only supports simple column
@@ -147,13 +167,31 @@ export function useMyScheduleSessions(weekStart: Date, weekEnd: Date) {
   // subscribes to every class_sessions change (same refetch-on-any-change
   // tradeoff Timetable.tsx already shipped with, tracked as DEV_PLAN Tech
   // Debt #5) rather than useRealtimeList's org-scoped default, which would
-  // be flatly wrong here (there's no orgId in scope, only a user id).
+  // be flatly wrong here (there's no orgId in scope, only a user id). RLS is
+  // what actually keeps this feed to rows this user is authorized to see;
+  // belongsToView re-checks the same array-contains + week bound as `load`
+  // as defense in depth and to catch the reschedule-out-of-week case.
+  const userId = user?.id;
+  const merge: RealtimeMergeConfig<ScheduleSessionRow> = useMemo(
+    () => ({
+      mapRow: mapScheduleSessionRow,
+      getId: (row) => row.id,
+      belongsToView: (raw: any) =>
+        raw.start_time >= weekStartIso &&
+        raw.start_time < weekEndIso &&
+        !!userId &&
+        ((raw.student_user_ids ?? []).includes(userId) || (raw.parent_user_ids ?? []).includes(userId)),
+      compare: (a, b) => a.startTime.localeCompare(b.startTime),
+    }),
+    [userId, weekStartIso, weekEndIso]
+  );
   const result = useRealtimeList<ScheduleSessionRow>(
     "schedule",
     "class_sessions",
     user?.id,
     load,
-    "organization_id=neq.00000000-0000-0000-0000-000000000000"
+    "organization_id=neq.00000000-0000-0000-0000-000000000000",
+    merge
   );
   // Same fix as useScheduleSessions: force a refetch on week navigation,
   // since useRealtimeList's mount effect doesn't rerun when `load` changes.
@@ -164,6 +202,15 @@ export function useMyScheduleSessions(weekStart: Date, weekEnd: Date) {
   return result;
 }
 
+export function mapTutorAvailabilityRow(row: any): TutorAvailabilityWindow {
+  return {
+    id: row.id,
+    dayOfWeek: row.day_of_week,
+    startTime: row.start_time,
+    endTime: row.end_time,
+  };
+}
+
 export function useTutorAvailability(tutorId: string | undefined | null) {
   const { user } = useAuth();
   const orgId = user?.organizationId;
@@ -171,22 +218,33 @@ export function useTutorAvailability(tutorId: string | undefined | null) {
     if (!orgId || !tutorId) return [];
     const { data, error } = await supabase
       .from("tutor_availability")
-      .select("day_of_week, start_time, end_time")
+      .select("id, day_of_week, start_time, end_time")
       .eq("organization_id", orgId)
       .eq("tutor_id", tutorId)
       .limit(50);
     if (error) throw error;
-    return (data || []).map((row: any) => ({
-      dayOfWeek: row.day_of_week,
-      startTime: row.start_time,
-      endTime: row.end_time,
-    }));
+    return (data || []).map(mapTutorAvailabilityRow);
   }, [orgId, tutorId]);
+  // The Realtime filter below (tutor_id=eq...) REPLACES the default org
+  // filter rather than adding to it (useRealtimeList only applies its
+  // org-scoped default when no filter is passed), so belongsToView re-checks
+  // organization_id itself — otherwise a same-tutor_id row from a different
+  // org (tutor_id is a bare user id, not organization-scoped) could get
+  // merged into a view load() would never have returned it in.
+  const merge: RealtimeMergeConfig<TutorAvailabilityWindow> = useMemo(
+    () => ({
+      mapRow: mapTutorAvailabilityRow,
+      getId: (row) => row.id!,
+      belongsToView: (raw: any) => !!tutorId && !!orgId && raw.tutor_id === tutorId && raw.organization_id === orgId,
+    }),
+    [orgId, tutorId]
+  );
   return useRealtimeList<TutorAvailabilityWindow>(
     "schedule",
     "tutor_availability",
     orgId,
     load,
-    tutorId ? `tutor_id=eq.${tutorId}` : undefined
+    tutorId ? `tutor_id=eq.${tutorId}` : undefined,
+    merge
   );
 }

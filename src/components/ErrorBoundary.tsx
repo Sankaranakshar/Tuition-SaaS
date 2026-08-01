@@ -1,6 +1,5 @@
 import { Component, ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
-import * as Sentry from "@sentry/react";
 
 interface Props {
   children: ReactNode;
@@ -22,7 +21,15 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: { componentStack: string }) {
     console.error("ErrorBoundary caught:", error, info.componentStack);
-    Sentry.captureException(error, { extra: { componentStack: info.componentStack } });
+    // Same lazy-load reasoning as main.tsx: don't ship or fetch @sentry/react
+    // when there's no DSN to report to (HANDOFF §7, docs/OPTIMIZATION_AUDIT.md
+    // finding H5). An error boundary firing is already an exceptional path,
+    // so the dynamic import here costs nothing in the normal case.
+    if (import.meta.env.VITE_SENTRY_DSN) {
+      import("@sentry/react").then((Sentry) => {
+        Sentry.captureException(error, { extra: { componentStack: info.componentStack } });
+      });
+    }
   }
 
   render() {

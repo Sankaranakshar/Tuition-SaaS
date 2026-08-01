@@ -12,14 +12,14 @@ import {
   createInvoice, recordManualPayment, downloadInvoicePdf, createInvoicePaymentLink,
   topUpWallet, voidInvoice,
 } from "../lib/api";
-import { useStudentsList } from "../hooks/usePeople";
+import { useStudentsList, type StudentRow } from "../hooks/usePeople";
 import {
   useMoneyInvoices, useMoneyWallets, useMoneyPayments, useAvgSessionFeePaise, useSelfMoney,
   type MoneyInvoiceRow,
 } from "../hooks/useMoney";
 import {
   groupOutstandingByPayer, selectionTotal, rankWalletsByDepletion,
-  revenueTrend, collectionRate, revenueByLineItem, agingBucket,
+  revenueTrend, collectionRate, revenueByLineItem,
 } from "../lib/money";
 import { formatPaise, formatDate } from "../lib/format";
 import { EmptyState, SkeletonRow, AgedBadge, StatChip, Popover, StatusChip, type ChipTone } from "../components/kit";
@@ -49,7 +49,6 @@ function statusTone(status: string): ChipTone {
 }
 
 export default function Money() {
-  const { t } = useTranslation();
   const { user } = useAuth();
   const isStaff = user?.role !== "parent" && user?.role !== "student";
 
@@ -154,7 +153,19 @@ function StaffMoneyView() {
 
 // --------------------------------------------------------------- Outstanding
 
-function OutstandingSegment({ invoices, students, loading, onViewInvoice, onNewInvoice }: any) {
+function OutstandingSegment({
+  invoices,
+  students,
+  loading,
+  onViewInvoice,
+  onNewInvoice,
+}: {
+  invoices: MoneyInvoiceRow[];
+  students: StudentRow[];
+  loading: boolean;
+  onViewInvoice: (invoiceId: string) => void;
+  onNewInvoice: (studentId: string) => void;
+}) {
   const { t } = useTranslation();
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -302,11 +313,9 @@ function RecordPaymentPopover({ invoiceId, outstandingPaise }: { invoiceId: stri
   return (
     <Popover
       align="right"
-      trigger={
-        <button title={t("money.recordPayment")} className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
-          <IndianRupee className="h-4 w-4" />
-        </button>
-      }
+      trigger={<IndianRupee className="h-4 w-4" />}
+      triggerClassName="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]"
+      triggerTitle={t("money.recordPayment")}
     >
       {(close) => <RecordPaymentForm invoiceId={invoiceId} outstandingPaise={outstandingPaise} onDone={close} />}
     </Popover>
@@ -419,11 +428,8 @@ function TopUpPopover({ studentId }: { studentId: string }) {
   return (
     <Popover
       align="right"
-      trigger={
-        <button className="rounded-[6px] border border-[var(--cs-border)] px-2.5 py-1.5 text-xs font-medium hover:bg-[var(--cs-bg)]">
-          {t("money.topUp")}
-        </button>
-      }
+      trigger={t("money.topUp")}
+      triggerClassName="rounded-[6px] border border-[var(--cs-border)] px-2.5 py-1.5 text-xs font-medium hover:bg-[var(--cs-bg)]"
     >
       {(close) => <TopUpForm studentId={studentId} onDone={close} />}
     </Popover>
@@ -862,7 +868,7 @@ function SelfMoneyView() {
                   <div className="text-xs text-[var(--cs-text-muted)]">{t("money.due")} {formatDate(inv.dueDate || inv.createdAt || "")}</div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <StatusChip label={inv.status} tone={statusTone(inv.status)} />
+                  <StatusChip label={inv.status || ""} tone={statusTone(inv.status || "")} />
                   <span className="text-sm font-medium tabular-nums">{formatPaise(inv.totalPaise)}</span>
                   <button onClick={() => download(inv.id)} title={t("money.downloadPdf")} className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
                     <Download className="h-4 w-4" />

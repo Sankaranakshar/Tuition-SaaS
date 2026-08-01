@@ -51,6 +51,12 @@ export interface TodayStudent {
 }
 
 export interface TodayAttendance {
+  // Optional: only usePeople.ts's useStudentAttendance populates this (the
+  // attendance_records row id), so it can merge single-row Realtime events by
+  // identity — see docs/OPTIMIZATION_AUDIT.md finding M10. Other constructors
+  // of TodayAttendance (Today.tsx's own listener, this file's tests) have no
+  // need for it.
+  id?: string;
   studentId: string;
   status: "present" | "absent" | "late" | "excused";
   sessionStart?: string | { toDate?: () => Date };

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabase";
-import { Save, AlertCircle, CheckCircle, Plus, Trash2 } from "lucide-react";
+import { Save, AlertCircle, CheckCircle } from "lucide-react";
 
 export default function OrganizationSettings() {
   const { user } = useAuth();

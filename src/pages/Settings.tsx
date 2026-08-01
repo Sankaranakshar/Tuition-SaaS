@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 import { Receipt, CreditCard, Database } from "lucide-react";
 
 export default function Settings() {
-  const { user, checkAuth } = useAuth();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -77,7 +77,7 @@ export default function Settings() {
       const left = window.screenX + (window.outerWidth - width) / 2;
       const top = window.screenY + (window.outerHeight - height) / 2;
       
-      const popup = window.open(
+      window.open(
         data.url,
         'Google OAuth',
         `width=${width},height=${height},left=${left},top=${top}`

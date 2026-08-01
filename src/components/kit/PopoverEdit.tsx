@@ -28,16 +28,11 @@ export function PopoverEdit({
 }: PopoverEditProps) {
   return (
     <Popover
-      trigger={
-        <button
-          className={cn(
-            "rounded-[6px] px-1.5 py-0.5 text-sm text-[var(--cs-text)] underline decoration-dotted decoration-[var(--cs-text-muted)] underline-offset-4 transition-colors hover:bg-[var(--cs-bg)]",
-            className
-          )}
-        >
-          {value || placeholder || "—"}
-        </button>
-      }
+      trigger={value || placeholder || "—"}
+      triggerClassName={cn(
+        "rounded-[6px] px-1.5 py-0.5 text-sm text-[var(--cs-text)] underline decoration-dotted decoration-[var(--cs-text-muted)] underline-offset-4 transition-colors hover:bg-[var(--cs-bg)]",
+        className
+      )}
     >
       {(close) => (
         <Editor

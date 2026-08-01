@@ -1,5 +1,5 @@
 // server/app.ts
-import express10 from "express";
+import express16 from "express";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
@@ -25,6 +25,51 @@ var supabaseAdmin = createClient(supabaseUrl || "http://localhost:54321", servic
 // server/middleware/auth.ts
 import jwt from "jsonwebtoken";
 import { createRemoteJWKSet, jwtVerify, decodeProtectedHeader } from "jose";
+
+// server/db.ts
+import { Pool } from "pg";
+var connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  console.warn("DATABASE_URL not set \u2014 transactional Postgres routes will fail.");
+}
+var pool = new Pool({
+  connectionString,
+  max: Number(process.env.PG_POOL_MAX) || 3,
+  // Return idle connections to the Supabase pooler rather than pinning them
+  // for the life of a serverless instance that may handle one request a minute.
+  idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS) || 1e4,
+  // Fail fast when the pooler is saturated instead of queueing a request
+  // behind a checkout that will never come.
+  connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS) || 5e3,
+  keepAlive: true,
+  application_name: "classstackr-api",
+  // Ceiling on any single statement. Generous enough for the org export and
+  // the cron materialize sweep, low enough that a pathological query can't
+  // hold a pool slot indefinitely.
+  statement_timeout: Number(process.env.PG_STATEMENT_TIMEOUT_MS) || 3e4,
+  // Backstop for a transaction whose caller died mid-flight.
+  idle_in_transaction_session_timeout: Number(process.env.PG_IDLE_TX_TIMEOUT_MS) || 3e4
+});
+pool.on("error", (err) => {
+  console.error("Idle Postgres client error (connection evicted):", err);
+});
+async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {
+    });
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// server/middleware/auth.ts
 var SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
 var SUPABASE_URL = process.env.SUPABASE_URL;
 var jwks = SUPABASE_URL ? createRemoteJWKSet(new URL(`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`)) : null;
@@ -45,6 +90,38 @@ async function verifyAccessToken(token) {
   if (!payload.sub) throw new Error("Missing sub claim");
   return { sub: payload.sub, email: payload.email };
 }
+var MEMBERSHIP_TTL_MS = Number(process.env.AUTH_CACHE_TTL_MS) || 0;
+var membershipCache = /* @__PURE__ */ new Map();
+function invalidateMembership(userId) {
+  membershipCache.delete(userId);
+}
+function invalidateAllMemberships() {
+  membershipCache.clear();
+}
+async function loadMembership(userId) {
+  if (MEMBERSHIP_TTL_MS > 0) {
+    const hit = membershipCache.get(userId);
+    if (hit && hit.expiresAt > Date.now()) return hit.value;
+  }
+  const { rows } = await pool.query(
+    `select om.organization_id, om.role, o.status as organization_status
+     from organization_members om
+     join organizations o on o.id = om.organization_id
+     where om.user_id = $1
+     limit 1`,
+    [userId]
+  );
+  const row = rows[0];
+  const value = {
+    organizationId: row?.organization_id ?? void 0,
+    role: row?.role ?? void 0,
+    organizationStatus: row?.organization_status ?? void 0
+  };
+  if (MEMBERSHIP_TTL_MS > 0) {
+    membershipCache.set(userId, { value, expiresAt: Date.now() + MEMBERSHIP_TTL_MS });
+  }
+  return value;
+}
 var authenticateToken = async (req, res, next) => {
   const authHeader2 = req.headers["authorization"];
   const token = authHeader2?.startsWith("Bearer ") ? authHeader2.slice(7) : void 0;
@@ -53,16 +130,17 @@ var authenticateToken = async (req, res, next) => {
   }
   try {
     const { sub: userId, email } = await verifyAccessToken(token);
-    const { data: membership, error } = await supabaseAdmin.from("organization_members").select("organization_id, role").eq("user_id", userId).limit(1).maybeSingle();
-    if (error) throw error;
+    const membership = await loadMembership(userId);
     req.user = {
       id: userId,
       email,
-      role: membership?.role,
-      organizationId: membership?.organization_id
+      role: membership.role,
+      organizationId: membership.organizationId,
+      organizationStatus: membership.organizationStatus
     };
     next();
   } catch (err) {
+    console.error("authenticateToken failed:", err);
     return res.status(401).json({ error: { code: "unauthenticated", message: "Invalid or expired token" } });
   }
 };
@@ -79,7 +157,22 @@ var requireOrg = (req, res, next) => {
   if (!req.user?.organizationId) {
     return res.status(403).json({ error: { code: "no_organization", message: "User does not belong to an organization" } });
   }
+  if (req.user.organizationStatus === "offboarded") {
+    return res.status(403).json({ error: { code: "org_offboarded", message: "This organization has been offboarded" } });
+  }
   next();
+};
+var requirePlatformAdmin = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: { code: "unauthenticated", message: "Missing bearer token" } });
+    const { rowCount } = await pool.query(`select 1 from platform_admins where user_id = $1 limit 1`, [userId]);
+    if (!rowCount) return res.status(403).json({ error: { code: "forbidden", message: "Not a platform admin" } });
+    next();
+  } catch (err) {
+    console.error("requirePlatformAdmin failed:", err);
+    return res.status(500).json({ error: { code: "internal", message: "Failed to verify platform-admin access" } });
+  }
 };
 
 // server/utils/crypto.ts
@@ -239,14 +332,24 @@ import express2 from "express";
 import { z } from "zod";
 
 // server/utils/audit.ts
-async function writeAudit(organizationId, actorUserId, action, entityType, entityId, summary) {
-  const { error } = await supabaseAdmin.from("audit_events").insert({
-    organization_id: organizationId,
-    actor_id: actorUserId,
-    action,
-    payload: { entityType, entityId, ...summary }
-  });
-  if (error) console.error("Failed to write audit event", error);
+async function writeAudit(organizationId, actor, action, entityType, entityId, summary) {
+  const systemActor = typeof actor === "object" ? actor.system : null;
+  try {
+    await pool.query(
+      `insert into audit_events (organization_id, actor_id, action, payload)
+       values ($1, $2, $3, $4::jsonb)`,
+      [
+        organizationId,
+        systemActor ? null : actor,
+        action,
+        // systemActor goes after ...summary so a caller's summary key can
+        // never shadow it — the audit viewer reads it to label the row.
+        JSON.stringify({ entityType, entityId, ...summary, ...systemActor ? { systemActor } : {} })
+      ]
+    );
+  } catch (error) {
+    console.error("Failed to write audit event", error);
+  }
 }
 
 // server/routes/members.ts
@@ -260,6 +363,7 @@ var memberSchema = z.object({
 async function setMembership(orgId, userId, role, _actorId) {
   const { error } = await supabaseAdmin.from("organization_members").upsert({ organization_id: orgId, user_id: userId, role }, { onConflict: "organization_id,user_id" });
   if (error) throw error;
+  invalidateMembership(userId);
 }
 router2.post("/bootstrap", authenticateToken, async (req, res, next) => {
   try {
@@ -299,6 +403,7 @@ router2.delete("/:userId", authenticateToken, requireOrg, requireRole("owner", "
     }
     const { error } = await supabaseAdmin.from("organization_members").delete().eq("organization_id", orgId).eq("user_id", userId);
     if (error) throw error;
+    invalidateMembership(userId);
     await writeAudit(orgId, req.user.id, "member.remove", "organization_members", `${orgId}_${userId}`, {});
     res.json({ ok: true });
   } catch (err) {
@@ -309,33 +414,6 @@ var members_default = router2;
 
 // server/routes/billing.ts
 import express3 from "express";
-import { z as z2 } from "zod";
-
-// server/db.ts
-import { Pool } from "pg";
-var connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  console.warn("DATABASE_URL not set \u2014 transactional Postgres routes will fail.");
-}
-var pool = new Pool({
-  connectionString,
-  max: Number(process.env.PG_POOL_MAX) || 3
-});
-async function withTransaction(fn) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const result = await fn(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (err) {
-    await client.query("ROLLBACK").catch(() => {
-    });
-    throw err;
-  } finally {
-    client.release();
-  }
-}
 
 // server/utils/invoiceStatus.ts
 var PAYABLE = /* @__PURE__ */ new Set(["draft", "sent", "unpaid", "partially_paid"]);
@@ -585,12 +663,10 @@ function renderInvoicePdf(input) {
   return Buffer.from(doc.output("arraybuffer"));
 }
 
-// server/routes/billing.ts
-var router3 = express3.Router();
-router3.use(authenticateToken, requireOrg);
-var CAN_MARK = ["owner", "admin", "tutor", "frontdesk"];
-var CAN_MONEY = ["owner", "admin", "frontdesk"];
-var createInvoiceSchema = z2.object({
+// shared/schemas/billing.ts
+import { z as z2 } from "zod";
+var paymentMethodSchema = z2.enum(["cash", "upi", "bank_transfer", "cheque", "other"]);
+var createInvoiceRequestSchema = z2.object({
   studentId: z2.string().uuid(),
   items: z2.array(z2.object({
     description: z2.string().min(1),
@@ -601,9 +677,65 @@ var createInvoiceSchema = z2.object({
   taxPercentage: z2.number().min(0).max(100).optional().default(0),
   dueDate: z2.string().optional()
 });
+var createInvoiceResponseSchema = z2.object({ ok: z2.literal(true), invoiceId: z2.string().uuid() });
+var topupRequestSchema = z2.object({
+  studentId: z2.string().uuid(),
+  amountPaise: z2.number().int().positive(),
+  method: paymentMethodSchema,
+  idempotencyKey: z2.string().min(8).max(128),
+  note: z2.string().max(500).optional()
+});
+var topupResponseSchema = z2.object({ ok: z2.literal(true), duplicate: z2.boolean() });
+var attendanceStatusSchema = z2.enum(["present", "absent", "late", "excused"]);
+var markAttendanceRequestSchema = z2.object({
+  sessionId: z2.string().uuid(),
+  records: z2.array(z2.object({
+    studentId: z2.string().uuid(),
+    status: attendanceStatusSchema
+  })).min(1)
+});
+var markAttendanceResponseSchema = z2.object({
+  ok: z2.literal(true),
+  billed: z2.array(z2.string()),
+  invoiced: z2.array(z2.string())
+});
+var cancelSessionRequestSchema = z2.object({ sessionId: z2.string().uuid() });
+var cancelSessionResponseSchema = z2.object({ ok: z2.literal(true) });
+var recordManualPaymentRequestSchema = z2.object({
+  invoiceId: z2.string().uuid(),
+  amountPaise: z2.number().int().positive(),
+  method: paymentMethodSchema,
+  idempotencyKey: z2.string().min(8).max(128),
+  note: z2.string().max(500).optional()
+});
+var recordManualPaymentResponseSchema = z2.object({
+  ok: z2.literal(true),
+  invoiceStatus: z2.string(),
+  duplicate: z2.boolean()
+});
+var refundRequestSchema = z2.object({
+  invoiceId: z2.string().uuid(),
+  amountPaise: z2.number().int().positive(),
+  reason: z2.string().max(500).optional(),
+  idempotencyKey: z2.string().min(8).max(128)
+});
+var refundResponseSchema = z2.object({
+  ok: z2.literal(true),
+  invoiceStatus: z2.string(),
+  duplicate: z2.boolean()
+});
+var voidInvoiceResponseSchema = z2.object({ ok: z2.literal(true) });
+var finalizeInvoiceResponseSchema = z2.object({ ok: z2.literal(true), invoiceNumber: z2.string() });
+var paymentLinkResponseSchema = z2.object({ ok: z2.literal(true), shortUrl: z2.string(), reused: z2.boolean() });
+
+// server/routes/billing.ts
+var router3 = express3.Router();
+router3.use(authenticateToken, requireOrg);
+var CAN_MARK = ["owner", "admin", "tutor", "frontdesk"];
+var CAN_MONEY = ["owner", "admin", "frontdesk"];
 router3.post("/invoices", requireRole(...CAN_MARK), async (req, res, next) => {
   try {
-    const body = createInvoiceSchema.parse(req.body);
+    const body = createInvoiceRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
     const subtotalPaise = body.items.reduce((sum, it) => sum + Math.round(it.amount * it.quantity * 100), 0);
     const taxPaise = Math.round(subtotalPaise * body.taxPercentage / 100);
@@ -634,16 +766,9 @@ router3.post("/invoices", requireRole(...CAN_MARK), async (req, res, next) => {
     next(err);
   }
 });
-var topupSchema = z2.object({
-  studentId: z2.string().uuid(),
-  amountPaise: z2.number().int().positive(),
-  method: z2.enum(["cash", "upi", "bank_transfer", "cheque", "other"]),
-  idempotencyKey: z2.string().min(8).max(128),
-  note: z2.string().max(500).optional()
-});
 router3.post("/wallets/topup", requireRole(...CAN_MONEY), async (req, res, next) => {
   try {
-    const body = topupSchema.parse(req.body);
+    const body = topupRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
     const outcome = await withTransaction(async (client) => {
       const existing = await client.query(
@@ -676,20 +801,17 @@ router3.post("/wallets/topup", requireRole(...CAN_MONEY), async (req, res, next)
     next(err);
   }
 });
-var attendanceSchema = z2.object({
-  sessionId: z2.string().uuid(),
-  records: z2.array(z2.object({
-    studentId: z2.string().uuid(),
-    status: z2.enum(["present", "absent", "late", "excused"])
-  })).min(1)
-});
 router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => {
   try {
-    const { sessionId, records } = attendanceSchema.parse(req.body);
+    const { sessionId, records } = markAttendanceRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
     const actor = req.user.id;
     const sessionRes = await pool.query(
-      `select organization_id, tutor_id, template_id, start_time from class_sessions where id = $1`,
+      `select s.organization_id, s.tutor_id, s.template_id, s.start_time,
+              t.pricing_model, t.fee_amount, t.type
+       from class_sessions s
+       left join class_templates t on t.id = s.template_id
+       where s.id = $1`,
       [sessionId]
     );
     if (sessionRes.rowCount === 0) {
@@ -709,69 +831,122 @@ router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => 
     if (Date.now() - start.getTime() > 7 * 24 * 3600 * 1e3) {
       return res.status(422).json({ error: { code: "too_old", message: "Attendance can only be marked within 7 days of the session" } });
     }
-    const templateRes = await pool.query(
-      `select pricing_model, fee_amount, type from class_templates where id = $1`,
-      [session.template_id]
-    );
-    const template = templateRes.rows[0] || null;
+    const template = session.template_id ? { pricing_model: session.pricing_model, fee_amount: session.fee_amount, type: session.type } : null;
     const perSession = template?.pricing_model === "PER_SESSION";
     const BILLABLE = /* @__PURE__ */ new Set(["present", "late"]);
     const result = await withTransaction(async (client) => {
       const billed = [];
       const invoiced = [];
-      for (const r of records) {
-        const prevRes = await client.query(
-          `select billed from attendance_records where session_id = $1 and student_id = $2`,
-          [sessionId, r.studentId]
+      const statusByStudent = /* @__PURE__ */ new Map();
+      for (const r of records) statusByStudent.set(r.studentId, r.status);
+      const studentIds = [...statusByStudent.keys()];
+      const prevRes = await client.query(
+        `select student_id from attendance_records
+         where session_id = $1 and student_id = any($2::uuid[]) and billed = true`,
+        [sessionId, studentIds]
+      );
+      const alreadyBilled = new Set(prevRes.rows.map((r) => r.student_id));
+      const marks = studentIds.map((studentId) => {
+        const status = statusByStudent.get(studentId);
+        const shouldBill = perSession && BILLABLE.has(status) && !alreadyBilled.has(studentId);
+        return { studentId, status, shouldBill, billed: alreadyBilled.has(studentId) || shouldBill };
+      });
+      await client.query(
+        `insert into attendance_records
+           (organization_id, session_id, student_id, template_id, tutor_id, session_start, status, billed, marked_by, marked_at)
+         select $1, $2, v.student_id, $3, $4, $5, v.status, v.billed, $6, now()
+         from unnest($7::uuid[], $8::text[], $9::boolean[]) as v(student_id, status, billed)
+         on conflict (session_id, student_id) do update set
+           status = excluded.status, billed = excluded.billed, marked_by = excluded.marked_by, marked_at = now()`,
+        [
+          orgId,
+          sessionId,
+          session.template_id,
+          session.tutor_id,
+          session.start_time,
+          actor,
+          marks.map((m) => m.studentId),
+          marks.map((m) => m.status),
+          marks.map((m) => m.billed)
+        ]
+      );
+      const toBill = marks.filter((m) => m.shouldBill);
+      if (toBill.length > 0) {
+        const feePaise = Math.round((template.fee_amount || 0) * 100);
+        const walletRes = await client.query(
+          `select id, student_id, balance_credits, balance_currency from wallets
+           where organization_id = $1 and student_id = any($2::uuid[])
+           order by student_id
+           for update`,
+          [orgId, toBill.map((m) => m.studentId)]
         );
-        const alreadyBilled = prevRes.rows[0]?.billed === true;
-        const nowBillable = perSession && BILLABLE.has(r.status);
-        const shouldBill = nowBillable && !alreadyBilled;
-        await client.query(
-          `insert into attendance_records
-             (organization_id, session_id, student_id, template_id, tutor_id, session_start, status, billed, marked_by, marked_at)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
-           on conflict (session_id, student_id) do update set
-             status = excluded.status, billed = excluded.billed, marked_by = excluded.marked_by, marked_at = now()`,
-          [orgId, sessionId, r.studentId, session.template_id, session.tutor_id, session.start_time, r.status, alreadyBilled || shouldBill, actor]
-        );
-        if (shouldBill) {
-          const feePaise = Math.round((template.fee_amount || 0) * 100);
-          const walletRes = await client.query(
-            `select id, balance_credits, balance_currency from wallets where organization_id = $1 and student_id = $2 for update`,
-            [orgId, r.studentId]
-          );
-          const w = walletRes.rows[0] || null;
+        const walletByStudent = new Map(walletRes.rows.map((w) => [w.student_id, w]));
+        const creditWalletIds = [];
+        const currencyWalletIds = [];
+        const ledger = [];
+        const invoiceStudentIds = [];
+        for (const m of toBill) {
+          const w = walletByStudent.get(m.studentId);
           if (w && (w.balance_credits || 0) >= 1) {
-            await client.query(`update wallets set balance_credits = balance_credits - 1 where id = $1`, [w.id]);
-            await client.query(
-              `insert into wallet_ledger (organization_id, student_id, type, credits, paise, reason, session_id, by, at)
-               values ($1, $2, 'debit_credit', -1, 0, 'attendance', $3, $4, now())`,
-              [orgId, r.studentId, sessionId, actor]
-            );
-            billed.push(r.studentId);
+            creditWalletIds.push(w.id);
+            ledger.push({ studentId: m.studentId, type: "debit_credit", credits: -1, paise: 0 });
+            billed.push(m.studentId);
           } else if (w && Math.round((w.balance_currency || 0) * 100) >= feePaise) {
-            await client.query(
-              `update wallets set balance_currency = balance_currency - $1 where id = $2`,
-              [feePaise / 100, w.id]
-            );
-            await client.query(
-              `insert into wallet_ledger (organization_id, student_id, type, credits, paise, reason, session_id, by, at)
-               values ($1, $2, 'debit_currency', 0, $3, 'attendance', $4, $5, now())`,
-              [orgId, r.studentId, -feePaise, sessionId, actor]
-            );
-            billed.push(r.studentId);
+            currencyWalletIds.push(w.id);
+            ledger.push({ studentId: m.studentId, type: "debit_currency", credits: 0, paise: -feePaise });
+            billed.push(m.studentId);
           } else {
-            const due = new Date(Date.now() + 7 * 24 * 3600 * 1e3);
-            const items = [{ description: `${template.type} session on ${start.toISOString().split("T")[0]}`, amountPaise: feePaise, quantity: 1 }];
-            await client.query(
-              `insert into invoices
-                 (organization_id, tutor_id, student_id, subtotal_paise, total_paise, tax_paise, discount_paise, total_amount, subtotal, status, due_date, items, source)
-               values ($1, $2, $3, $4, $4, 0, 0, $5, $5, 'unpaid', $6, $7, $8)`,
-              [orgId, session.tutor_id, r.studentId, feePaise, feePaise / 100, due.toISOString().split("T")[0], JSON.stringify(items), JSON.stringify({ kind: "attendance", sessionId })]
-            );
-            invoiced.push(r.studentId);
+            invoiceStudentIds.push(m.studentId);
+            invoiced.push(m.studentId);
           }
+        }
+        if (creditWalletIds.length > 0) {
+          await client.query(
+            `update wallets set balance_credits = balance_credits - 1 where id = any($1::uuid[])`,
+            [creditWalletIds]
+          );
+        }
+        if (currencyWalletIds.length > 0) {
+          await client.query(
+            `update wallets set balance_currency = balance_currency - $1 where id = any($2::uuid[])`,
+            [feePaise / 100, currencyWalletIds]
+          );
+        }
+        if (ledger.length > 0) {
+          await client.query(
+            `insert into wallet_ledger (organization_id, student_id, type, credits, paise, reason, session_id, by, at)
+             select $1, v.student_id, v.type, v.credits, v.paise, 'attendance', $2, $3, now()
+             from unnest($4::uuid[], $5::text[], $6::int[], $7::int[]) as v(student_id, type, credits, paise)`,
+            [
+              orgId,
+              sessionId,
+              actor,
+              ledger.map((l) => l.studentId),
+              ledger.map((l) => l.type),
+              ledger.map((l) => l.credits),
+              ledger.map((l) => l.paise)
+            ]
+          );
+        }
+        if (invoiceStudentIds.length > 0) {
+          const due = new Date(Date.now() + 7 * 24 * 3600 * 1e3);
+          const items = [{ description: `${template.type} session on ${start.toISOString().split("T")[0]}`, amountPaise: feePaise, quantity: 1 }];
+          await client.query(
+            `insert into invoices
+               (organization_id, tutor_id, student_id, subtotal_paise, total_paise, tax_paise, discount_paise, total_amount, subtotal, status, due_date, items, source)
+             select $1, $2, v.student_id, $3, $3, 0, 0, $4, $4, 'unpaid', $5, $6::jsonb, $7::jsonb
+             from unnest($8::uuid[]) as v(student_id)`,
+            [
+              orgId,
+              session.tutor_id,
+              feePaise,
+              feePaise / 100,
+              due.toISOString().split("T")[0],
+              JSON.stringify(items),
+              JSON.stringify({ kind: "attendance", sessionId }),
+              invoiceStudentIds
+            ]
+          );
         }
       }
       await client.query(
@@ -789,10 +964,9 @@ router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => 
     next(err);
   }
 });
-var cancelSchema = z2.object({ sessionId: z2.string().uuid() });
 router3.post("/sessions/cancel", requireRole(...CAN_MARK), async (req, res, next) => {
   try {
-    const { sessionId } = cancelSchema.parse(req.body);
+    const { sessionId } = cancelSessionRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
     const { data: session, error } = await supabaseAdmin.from("class_sessions").select("organization_id, tutor_id").eq("id", sessionId).maybeSingle();
     if (error) throw error;
@@ -810,16 +984,9 @@ router3.post("/sessions/cancel", requireRole(...CAN_MARK), async (req, res, next
     next(err);
   }
 });
-var paymentSchema = z2.object({
-  invoiceId: z2.string().uuid(),
-  amountPaise: z2.number().int().positive(),
-  method: z2.enum(["cash", "upi", "bank_transfer", "cheque", "other"]),
-  idempotencyKey: z2.string().min(8).max(128),
-  note: z2.string().max(500).optional()
-});
 router3.post("/payments/manual", requireRole(...CAN_MONEY), async (req, res, next) => {
   try {
-    const body = paymentSchema.parse(req.body);
+    const body = recordManualPaymentRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
     const outcome = await withTransaction(async (client) => {
       const existing = await client.query(
@@ -1086,15 +1253,9 @@ router3.get("/invoices/:invoiceId/pdf", async (req, res, next) => {
     next(err);
   }
 });
-var refundSchema = z2.object({
-  invoiceId: z2.string().uuid(),
-  amountPaise: z2.number().int().positive(),
-  reason: z2.string().max(500).optional(),
-  idempotencyKey: z2.string().min(8).max(128)
-});
 router3.post("/refunds", requireRole("owner", "admin"), async (req, res, next) => {
   try {
-    const body = refundSchema.parse(req.body);
+    const body = refundRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
     const outcome = await withTransaction(async (client) => {
       const existing = await client.query(
@@ -1143,17 +1304,31 @@ router3.post("/reconcile", requireRole("owner", "admin"), async (req, res, next)
     const creds = await getGatewayCreds(orgId);
     if (!creds) return res.status(422).json({ error: { code: "gateway_not_connected", message: "Connect Razorpay first" } });
     const openRes = await pool.query(
-      `select id, payment_link from invoices where organization_id = $1 and status in ('sent','unpaid','partially_paid') limit 100`,
+      `select id, payment_link from invoices
+       where organization_id = $1 and status in ('sent','unpaid','partially_paid')
+         and payment_link ->> 'id' is not null
+       limit 100`,
       [orgId]
     );
+    const RECONCILE_FETCH_CONCURRENCY = 6;
+    const candidates = [];
+    const queue = [...openRes.rows];
+    await Promise.all(
+      Array.from({ length: Math.min(RECONCILE_FETCH_CONCURRENCY, queue.length) }, async () => {
+        for (let row = queue.shift(); row; row = queue.shift()) {
+          const linkId = row.payment_link?.id;
+          if (!linkId) continue;
+          const link = await fetchPaymentLink(creds, linkId).catch(() => null);
+          if (!link || link.status !== "paid") continue;
+          const amountPaid = Number(link.amount_paid || 0);
+          if (amountPaid <= 0) continue;
+          candidates.push({ id: row.id, linkId, amountPaid });
+        }
+      })
+    );
     let reconciled = 0;
-    for (const row of openRes.rows) {
-      const linkId = row.payment_link?.id;
-      if (!linkId) continue;
-      const link = await fetchPaymentLink(creds, linkId).catch(() => null);
-      if (!link || link.status !== "paid") continue;
-      const amountPaid = Number(link.amount_paid || 0);
-      if (amountPaid <= 0) continue;
+    for (const row of candidates) {
+      const { linkId, amountPaid } = row;
       const idempotencyKey = `rzp_link_${linkId}`;
       const settled = await withTransaction(async (client) => {
         const existing = await client.query(
@@ -1373,6 +1548,12 @@ router5.post("/redeem", async (req, res, next) => {
         `update parent_invites set used_at = now(), used_by = $1 where token = $2`,
         [uid, body.token]
       );
+      await client.query(
+        `update class_sessions
+         set parent_user_ids = array_append(parent_user_ids, $1)
+         where organization_id = $2 and $3 = any(student_ids) and not ($1 = any(parent_user_ids))`,
+        [uid, invite.organization_id, invite.student_id]
+      );
     });
     await setMembership(invite.organization_id, uid, "parent", uid);
     await writeAudit(invite.organization_id, uid, "parent_invite.redeem", "parent_links", `${uid}_${invite.student_id}`, {
@@ -1385,10 +1566,156 @@ router5.post("/redeem", async (req, res, next) => {
 });
 var parents_default = router5;
 
-// server/routes/webhooks.ts
+// server/routes/students.ts
 import express6 from "express";
+import crypto4 from "node:crypto";
+import { z as z5 } from "zod";
 var router6 = express6.Router();
-router6.post("/razorpay/:orgId", async (req, res) => {
+router6.use(authenticateToken);
+var STAFF_WHO_CAN_INVITE2 = ["owner", "admin", "frontdesk"];
+var INVITE_TTL_MS2 = 7 * 24 * 3600 * 1e3;
+router6.post("/invites", async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    if (!orgId) {
+      return res.status(403).json({ error: { code: "no_organization", message: "User does not belong to an organization" } });
+    }
+    if (!req.user.role || !STAFF_WHO_CAN_INVITE2.includes(req.user.role)) {
+      return res.status(403).json({ error: { code: "forbidden", message: "Insufficient role" } });
+    }
+    const { studentId } = z5.object({ studentId: z5.string().uuid() }).parse(req.body);
+    const { data: student, error: studentErr } = await supabaseAdmin.from("students").select("name, organization_id, student_user_id").eq("id", studentId).maybeSingle();
+    if (studentErr) throw studentErr;
+    if (!student || student.organization_id !== orgId) {
+      return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
+    }
+    if (student.student_user_id) {
+      return res.status(409).json({ error: { code: "already_linked", message: "This student already has a portal account linked" } });
+    }
+    const token = crypto4.randomBytes(24).toString("base64url");
+    const expiresAt = new Date(Date.now() + INVITE_TTL_MS2);
+    const { error: inviteErr } = await supabaseAdmin.from("student_invites").insert({
+      token,
+      organization_id: orgId,
+      student_id: studentId,
+      expires_at: expiresAt.toISOString()
+    });
+    if (inviteErr) throw inviteErr;
+    await writeAudit(orgId, req.user.id, "student_invite.create", "students", studentId, { token: token.slice(0, 8) + "\u2026" });
+    res.status(201).json({ ok: true, token, expiresAt: expiresAt.toISOString(), studentName: student.name || null });
+  } catch (err) {
+    next(err);
+  }
+});
+async function loadInvite2(token) {
+  const { data: invite, error } = await supabaseAdmin.from("student_invites").select("*").eq("token", token).maybeSingle();
+  if (error) throw error;
+  if (!invite) {
+    throw Object.assign(new Error("Invite not found"), { status: 404, code: "not_found" });
+  }
+  if (invite.used_at) {
+    throw Object.assign(new Error("Invite already used"), { status: 410, code: "invite_used" });
+  }
+  if (new Date(invite.expires_at).getTime() < Date.now()) {
+    throw Object.assign(new Error("Invite expired"), { status: 410, code: "invite_expired" });
+  }
+  return invite;
+}
+router6.get("/invites/:token/preview", async (req, res, next) => {
+  try {
+    const invite = await loadInvite2(req.params.token);
+    const [{ data: student }, { data: org }] = await Promise.all([
+      supabaseAdmin.from("students").select("name").eq("id", invite.student_id).maybeSingle(),
+      supabaseAdmin.from("organizations").select("name").eq("id", invite.organization_id).maybeSingle()
+    ]);
+    res.json({
+      ok: true,
+      studentName: student?.name || null,
+      organizationName: org?.name || null
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+var redeemSchema2 = z5.object({ token: z5.string().min(10) });
+router6.post("/redeem", async (req, res, next) => {
+  try {
+    const body = redeemSchema2.parse(req.body);
+    const uid = req.user.id;
+    const invite = await loadInvite2(body.token);
+    if (req.user.organizationId && req.user.organizationId !== invite.organization_id) {
+      return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to a different organization" } });
+    }
+    await withTransaction(async (client) => {
+      const freshInvite = await client.query(`select used_at from student_invites where token = $1 for update`, [body.token]);
+      if (freshInvite.rows[0]?.used_at) {
+        throw Object.assign(new Error("Invite already used"), { status: 410, code: "invite_used" });
+      }
+      const claim = await client.query(
+        `update students set student_user_id = $1 where id = $2 and student_user_id is null`,
+        [uid, invite.student_id]
+      );
+      if (claim.rowCount === 0) {
+        throw Object.assign(new Error("This student already has a portal account linked"), { status: 409, code: "already_linked" });
+      }
+      await client.query(
+        `update student_invites set used_at = now(), used_by = $1 where token = $2`,
+        [uid, body.token]
+      );
+      await client.query(
+        `update class_sessions
+         set student_user_ids = array_append(student_user_ids, $1)
+         where organization_id = $2 and $3 = any(student_ids) and not ($1 = any(student_user_ids))`,
+        [uid, invite.organization_id, invite.student_id]
+      );
+    });
+    await setMembership(invite.organization_id, uid, "student", uid);
+    await writeAudit(invite.organization_id, uid, "student_invite.redeem", "students", invite.student_id, {});
+    res.json({ ok: true, organizationId: invite.organization_id, studentId: invite.student_id });
+  } catch (err) {
+    next(err);
+  }
+});
+var students_default = router6;
+
+// server/routes/webhooks.ts
+import express7 from "express";
+
+// shared/plans.ts
+var PLAN_IDS = ["free", "growth", "scale"];
+var PLAN_CATALOG = {
+  free: {
+    id: "free",
+    name: "Free",
+    studentLimit: 15,
+    pricePaise: 0,
+    tagline: "Up to 15 active students"
+  },
+  growth: {
+    id: "growth",
+    name: "Growth",
+    studentLimit: 60,
+    pricePaise: 149900,
+    // ₹1,499/mo
+    tagline: "Up to 60 active students"
+  },
+  scale: {
+    id: "scale",
+    name: "Scale",
+    studentLimit: null,
+    pricePaise: 399900,
+    // ₹3,999/mo
+    tagline: "Unlimited students"
+  }
+};
+function isPlanId(value) {
+  return PLAN_IDS.includes(value);
+}
+
+// server/routes/webhooks.ts
+var router7 = express7.Router();
+var RAZORPAY_WEBHOOK = { system: "razorpay_webhook" };
+router7.post("/razorpay/:orgId", async (req, res) => {
   const orgId = req.params.orgId;
   const signature = req.header("x-razorpay-signature") || "";
   const rawBody = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
@@ -1406,6 +1733,64 @@ router6.post("/razorpay/:orgId", async (req, res) => {
     return res.status(500).json({ error: { code: "internal", message: "Webhook processing failed" } });
   }
 });
+router7.post("/razorpay-platform", async (req, res) => {
+  const secret = process.env.PLATFORM_RAZORPAY_WEBHOOK_SECRET;
+  const signature = req.header("x-razorpay-signature") || "";
+  const rawBody = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
+  if (!secret) {
+    return res.status(503).json({ error: { code: "not_configured", message: "Platform billing not yet wired" } });
+  }
+  if (!verifyWebhookSignature(rawBody, signature, secret)) {
+    return res.status(400).json({ error: { code: "bad_signature", message: "Signature verification failed" } });
+  }
+  try {
+    const event = JSON.parse(rawBody);
+    const outcome = await handlePlatformSubscriptionEvent(event);
+    return res.json({ ok: true, ...outcome });
+  } catch (err) {
+    req.log?.error?.({ err }, "Platform subscription webhook processing failed");
+    return res.status(500).json({ error: { code: "internal", message: "Webhook processing failed" } });
+  }
+});
+async function handlePlatformSubscriptionEvent(event) {
+  const type = event?.event;
+  const sub = event?.payload?.subscription?.entity;
+  if (!sub) return { ignored: true, reason: "no_subscription_entity" };
+  const orgId = sub?.notes?.organizationId;
+  const targetPlanRaw = sub?.notes?.targetPlan;
+  if (!orgId) return { ignored: true, reason: "no_organization_id_in_notes" };
+  if (type === "subscription.activated" || type === "subscription.charged") {
+    const plan = targetPlanRaw && isPlanId(targetPlanRaw) ? targetPlanRaw : "free";
+    const def = PLAN_CATALOG[plan];
+    const currentEnd = sub.current_end ? new Date(sub.current_end * 1e3).toISOString() : null;
+    const { error } = await supabaseAdmin.from("subscriptions").update({
+      plan,
+      status: "active",
+      student_limit: def.studentLimit,
+      price_paise: def.pricePaise,
+      current_period_end: currentEnd,
+      razorpay_subscription_id: sub.id,
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    }).eq("organization_id", orgId);
+    if (error) throw error;
+    await writeAudit(orgId, RAZORPAY_WEBHOOK, "subscription.plan_changed", "subscriptions", orgId, { plan, event: type });
+    return { plan, status: "active" };
+  }
+  if (type === "subscription.cancelled" || type === "subscription.completed" || type === "subscription.halted") {
+    const free = PLAN_CATALOG.free;
+    const { error } = await supabaseAdmin.from("subscriptions").update({
+      plan: "free",
+      status: "cancelled",
+      student_limit: free.studentLimit,
+      price_paise: free.pricePaise,
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    }).eq("organization_id", orgId);
+    if (error) throw error;
+    await writeAudit(orgId, RAZORPAY_WEBHOOK, "subscription.cancelled", "subscriptions", orgId, { event: type });
+    return { status: "cancelled" };
+  }
+  return { ignored: true, reason: "unhandled_event_type" };
+}
 async function handleEvent(orgId, event) {
   const type = event?.event;
   const linkEntity = event?.payload?.payment_link?.entity;
@@ -1460,7 +1845,7 @@ async function handleEvent(orgId, event) {
   });
   if (result.orphan) return { ignored: true, reason: "invoice_not_found" };
   if (!result.duplicate) {
-    await writeAudit(orgId, "razorpay_webhook", "payment.gateway_captured", "invoices", invoiceId, {
+    await writeAudit(orgId, RAZORPAY_WEBHOOK, "payment.gateway_captured", "invoices", invoiceId, {
       gatewayPaymentId: paymentId,
       amountPaise,
       invoiceStatus: result.status
@@ -1468,21 +1853,67 @@ async function handleEvent(orgId, event) {
   }
   return result;
 }
-var webhooks_default = router6;
+var webhooks_default = router7;
 
 // server/routes/scheduling.ts
-import express7 from "express";
-import { z as z5 } from "zod";
-var router7 = express7.Router();
-router7.use(authenticateToken, requireOrg);
-var CAN_SCHEDULE = ["owner", "admin", "tutor", "frontdesk"];
-var enrollSchema = z5.object({
-  studentId: z5.string().uuid(),
-  templateId: z5.string().uuid()
+import express8 from "express";
+
+// shared/schemas/scheduling.ts
+import { z as z6 } from "zod";
+var enrollRequestSchema = z6.object({
+  studentId: z6.string().uuid(),
+  templateId: z6.string().uuid()
 });
-router7.post("/enrollments", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
+var enrollResponseSchema = z6.object({ ok: z6.literal(true), enrollmentId: z6.string().uuid() });
+var createSessionRequestSchema = z6.object({
+  templateId: z6.string().uuid(),
+  tutorId: z6.string().uuid(),
+  studentIds: z6.array(z6.string().uuid()).optional(),
+  startTime: z6.string().min(1),
+  endTime: z6.string().min(1),
+  isOnline: z6.boolean().optional(),
+  roomNumber: z6.string().optional()
+});
+var createSessionResponseSchema = z6.object({ ok: z6.literal(true), sessionId: z6.string().uuid() });
+var materializeResponseSchema = z6.object({
+  ok: z6.literal(true),
+  created: z6.array(z6.string()),
+  conflicts: z6.array(z6.object({ templateId: z6.string().uuid(), date: z6.string() }))
+});
+var rescheduleSessionRequestSchema = z6.object({
+  startTime: z6.string().min(1),
+  endTime: z6.string().min(1)
+});
+var rescheduleSessionResponseSchema = z6.object({ ok: z6.literal(true), sessionId: z6.string().uuid() });
+var updateTemplateScopeSchema = z6.object({
+  scope: z6.enum(["future", "all"]),
+  daysOfWeek: z6.array(z6.number().int().min(0).max(6)).optional(),
+  startHour: z6.number().int().min(0).max(23).optional(),
+  startMinute: z6.number().int().min(0).max(59).optional(),
+  durationMinutes: z6.number().int().positive().optional()
+});
+var updateTemplateScopeResponseSchema = z6.object({
+  ok: z6.literal(true),
+  created: z6.array(z6.string()),
+  conflicts: z6.array(z6.object({ templateId: z6.string().uuid(), date: z6.string() }))
+});
+var findGapsQuerySchema = z6.object({
+  tutorId: z6.string().uuid(),
+  durationMinutes: z6.coerce.number().int().positive(),
+  templateId: z6.string().uuid().optional()
+});
+var findGapsResponseSchema = z6.object({
+  ok: z6.literal(true),
+  slots: z6.array(z6.object({ start: z6.string(), end: z6.string() }))
+});
+
+// server/routes/scheduling.ts
+var router8 = express8.Router();
+router8.use(authenticateToken, requireOrg);
+var CAN_SCHEDULE = ["owner", "admin", "tutor", "frontdesk"];
+router8.post("/enrollments", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
   try {
-    const { studentId, templateId } = enrollSchema.parse(req.body);
+    const { studentId, templateId } = enrollRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
     const enrollmentId = await withTransaction(async (client) => {
       const templateRes = await client.query(
@@ -1521,53 +1952,45 @@ router7.post("/enrollments", requireRole(...CAN_SCHEDULE), async (req, res, next
     next(err);
   }
 });
-var sessionSchema = z5.object({
-  templateId: z5.string().uuid(),
-  tutorId: z5.string().uuid(),
-  studentIds: z5.array(z5.string().uuid()).optional(),
-  startTime: z5.string().min(1),
-  endTime: z5.string().min(1),
-  isOnline: z5.boolean().optional(),
-  roomNumber: z5.string().optional()
-});
 async function resolveUserIds(client, studentIds) {
   if (studentIds.length === 0) return { studentUserIds: [], parentUserIds: [] };
-  const studentsRes = await client.query(
-    `select student_user_id from students where id = any($1::uuid[]) and student_user_id is not null`,
-    [studentIds]
-  );
-  const parentsRes = await client.query(
-    `select distinct parent_user_id from parent_links where student_id = any($1::uuid[])`,
+  const { rows } = await client.query(
+    `select 'student' as kind, student_user_id as user_id
+       from students where id = any($1::uuid[]) and student_user_id is not null
+     union
+     select 'parent', parent_user_id
+       from parent_links where student_id = any($1::uuid[])`,
     [studentIds]
   );
   return {
-    studentUserIds: studentsRes.rows.map((r) => r.student_user_id),
-    parentUserIds: parentsRes.rows.map((r) => r.parent_user_id)
+    studentUserIds: rows.filter((r) => r.kind === "student").map((r) => r.user_id),
+    parentUserIds: rows.filter((r) => r.kind === "parent").map((r) => r.user_id)
   };
 }
-async function checkTutorConflictAndInsert(client, orgId, tutorId, startTime, endTime, insert) {
+async function lockTutorSchedule(client, orgId, tutorId) {
   await client.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [`${orgId}:${tutorId}`]);
-  const windowStart = new Date(new Date(startTime).getTime() - 12 * 3600 * 1e3).toISOString();
-  const conflicts = await client.query(
-    `select start_time, end_time from class_sessions
+}
+async function assertNoTutorConflict(client, orgId, tutorId, startTime, endTime, excludeSessionId) {
+  const conflict = await client.query(
+    `select 1 from class_sessions
      where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
-       and start_time >= $3 and start_time < $4`,
-    [orgId, tutorId, windowStart, endTime]
+       and start_time < $4::timestamptz and end_time > $3::timestamptz
+       and ($5::uuid is null or id <> $5::uuid)
+     limit 1`,
+    [orgId, tutorId, startTime, endTime, excludeSessionId ?? null]
   );
-  const newStart = new Date(startTime).getTime();
-  const newEnd = new Date(endTime).getTime();
-  for (const row of conflicts.rows) {
-    const exStart = new Date(row.start_time).getTime();
-    const exEnd = new Date(row.end_time).getTime();
-    if (newStart < exEnd && newEnd > exStart) {
-      throw Object.assign(new Error("Tutor has a conflicting session at this time."), { status: 409, code: "conflict" });
-    }
+  if (conflict.rowCount) {
+    throw Object.assign(new Error("Tutor has a conflicting session at this time."), { status: 409, code: "conflict" });
   }
+}
+async function checkTutorConflictAndInsert(client, orgId, tutorId, startTime, endTime, insert, excludeSessionId) {
+  await lockTutorSchedule(client, orgId, tutorId);
+  await assertNoTutorConflict(client, orgId, tutorId, startTime, endTime, excludeSessionId);
   return insert();
 }
-router7.post("/sessions", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
+router8.post("/sessions", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
   try {
-    const body = sessionSchema.parse(req.body);
+    const body = createSessionRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
     const sessionId = await withTransaction(
       (client) => checkTutorConflictAndInsert(client, orgId, body.tutorId, body.startTime, body.endTime, async () => {
@@ -1588,77 +2011,150 @@ router7.post("/sessions", requireRole(...CAN_SCHEDULE), async (req, res, next) =
     next(err);
   }
 });
+router8.patch("/sessions/:id", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
+  try {
+    const body = rescheduleSessionRequestSchema.parse(req.body);
+    const orgId = req.user.organizationId;
+    const sessionId = req.params.id;
+    await withTransaction(async (client) => {
+      const existing = await client.query(
+        `select organization_id, tutor_id, status from class_sessions where id = $1`,
+        [sessionId]
+      );
+      if (existing.rowCount === 0) {
+        throw Object.assign(new Error("Session not found"), { status: 404, code: "not_found" });
+      }
+      const row = existing.rows[0];
+      if (row.organization_id !== orgId) {
+        throw Object.assign(new Error("Session belongs to another organization"), { status: 403, code: "forbidden" });
+      }
+      if (row.status === "completed") {
+        throw Object.assign(new Error("Cannot reschedule a completed session"), { status: 409, code: "already_completed" });
+      }
+      await checkTutorConflictAndInsert(
+        client,
+        orgId,
+        row.tutor_id,
+        body.startTime,
+        body.endTime,
+        async () => {
+          await client.query(
+            `update class_sessions set start_time = $1, end_time = $2, updated_at = now() where id = $3`,
+            [body.startTime, body.endTime, sessionId]
+          );
+          return sessionId;
+        },
+        sessionId
+      );
+    });
+    await writeAudit(orgId, req.user.id, "session.reschedule", "class_sessions", sessionId, { startTime: body.startTime, endTime: body.endTime });
+    res.json({ ok: true, sessionId });
+  } catch (err) {
+    next(err);
+  }
+});
 var WEEKS_AHEAD = 8;
+var TEMPLATE_SELECT = `select id, organization_id, type, tutor_id, student_ids, days_of_week,
+    start_hour, start_minute, duration_minutes, is_online, room_number
+  from class_templates`;
+var MATERIALIZABLE = `type = 'BATCH' and tutor_id is not null and start_hour is not null
+  and coalesce(array_length(days_of_week, 1), 0) > 0`;
+function localDateKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 async function materializeTemplate(template) {
   const result = { created: [], conflicts: [] };
   const daysOfWeek = template.days_of_week || [];
   if (template.type !== "BATCH" || daysOfWeek.length === 0 || template.start_hour == null || !template.tutor_id) return result;
   const durationMinutes = template.duration_minutes ?? 60;
+  const now = /* @__PURE__ */ new Date();
   const today = /* @__PURE__ */ new Date();
   today.setHours(0, 0, 0, 0);
   const horizon = new Date(today.getTime() + WEEKS_AHEAD * 7 * 24 * 3600 * 1e3);
+  const candidates = [];
   for (let d = new Date(today); d <= horizon; d.setDate(d.getDate() + 1)) {
     if (!daysOfWeek.includes(d.getDay())) continue;
-    const sessionStart = new Date(d);
-    sessionStart.setHours(template.start_hour, template.start_minute ?? 0, 0, 0);
-    if (sessionStart < /* @__PURE__ */ new Date()) continue;
-    const sessionEnd = new Date(sessionStart.getTime() + durationMinutes * 60 * 1e3);
-    const dateKey = sessionStart.toISOString().split("T")[0];
-    const outcome = await withTransaction(async (client) => {
-      const existing = await client.query(
-        `select 1 from class_sessions where template_id = $1 and materialized_date = $2`,
-        [template.id, dateKey]
-      );
-      if ((existing.rowCount ?? 0) > 0) return "exists";
-      try {
-        await checkTutorConflictAndInsert(
-          client,
-          template.organization_id,
-          template.tutor_id,
-          sessionStart.toISOString(),
-          sessionEnd.toISOString(),
-          async () => {
-            const studentIds = template.student_ids || [];
-            const { studentUserIds, parentUserIds } = await resolveUserIds(client, studentIds);
-            const insertRes = await client.query(
-              `insert into class_sessions
-                 (organization_id, template_id, tutor_id, student_ids, student_user_ids, parent_user_ids, start_time, end_time, status, is_online, room_number, materialized_date)
-               values ($1, $2, $3, $4, $5, $6, $7, $8, 'scheduled', $9, $10, $11)
-               returning id`,
-              [
-                template.organization_id,
-                template.id,
-                template.tutor_id,
-                studentIds,
-                studentUserIds,
-                parentUserIds,
-                sessionStart.toISOString(),
-                sessionEnd.toISOString(),
-                template.is_online ?? false,
-                template.room_number ?? null,
-                dateKey
-              ]
-            );
-            return insertRes.rows[0].id;
-          }
-        );
-        return "created";
-      } catch (err) {
-        if (err.code === "conflict") return "conflict";
-        throw err;
-      }
+    const start = new Date(d);
+    start.setHours(template.start_hour, template.start_minute ?? 0, 0, 0);
+    if (start < now) continue;
+    candidates.push({
+      dateKey: localDateKey(start),
+      start,
+      end: new Date(start.getTime() + durationMinutes * 60 * 1e3)
     });
-    if (outcome === "created") result.created.push(dateKey);
-    if (outcome === "conflict") result.conflicts.push({ templateId: template.id, date: dateKey });
   }
-  return result;
+  if (candidates.length === 0) return result;
+  const orgId = template.organization_id;
+  const tutorId = template.tutor_id;
+  const windowStart = candidates[0].start.toISOString();
+  const windowEnd = candidates[candidates.length - 1].end.toISOString();
+  return withTransaction(async (client) => {
+    await lockTutorSchedule(client, orgId, tutorId);
+    const existingRes = await client.query(
+      `select to_char(materialized_date, 'YYYY-MM-DD') as date_key
+       from class_sessions
+       where template_id = $1 and materialized_date = any($2::date[])`,
+      [template.id, candidates.map((c) => c.dateKey)]
+    );
+    const alreadyMaterialized = new Set(existingRes.rows.map((r) => r.date_key));
+    const busyRes = await client.query(
+      `select start_time, end_time from class_sessions
+       where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
+         and start_time < $4::timestamptz and end_time > $3::timestamptz`,
+      [orgId, tutorId, windowStart, windowEnd]
+    );
+    const busy = busyRes.rows.map((r) => ({
+      start: new Date(r.start_time).getTime(),
+      end: new Date(r.end_time).getTime()
+    }));
+    const toInsert = [];
+    for (const c of candidates) {
+      if (alreadyMaterialized.has(c.dateKey)) continue;
+      const start = c.start.getTime();
+      const end = c.end.getTime();
+      if (busy.some((b) => start < b.end && end > b.start)) {
+        result.conflicts.push({ templateId: template.id, date: c.dateKey });
+        continue;
+      }
+      busy.push({ start, end });
+      toInsert.push(c);
+    }
+    if (toInsert.length === 0) return result;
+    const studentIds = template.student_ids || [];
+    const { studentUserIds, parentUserIds } = await resolveUserIds(client, studentIds);
+    const insertRes = await client.query(
+      `insert into class_sessions
+         (organization_id, template_id, tutor_id, student_ids, student_user_ids, parent_user_ids,
+          start_time, end_time, status, is_online, room_number, materialized_date)
+       select $1, $2, $3, $4::uuid[], $5::uuid[], $6::uuid[],
+              v.start_time, v.end_time, 'scheduled', $7, $8, v.materialized_date
+       from unnest($9::timestamptz[], $10::timestamptz[], $11::date[])
+            as v(start_time, end_time, materialized_date)
+       on conflict (template_id, materialized_date) do nothing
+       returning to_char(materialized_date, 'YYYY-MM-DD') as date_key`,
+      [
+        orgId,
+        template.id,
+        tutorId,
+        studentIds,
+        studentUserIds,
+        parentUserIds,
+        template.is_online ?? false,
+        template.room_number ?? null,
+        toInsert.map((c) => c.start.toISOString()),
+        toInsert.map((c) => c.end.toISOString()),
+        toInsert.map((c) => c.dateKey)
+      ]
+    );
+    result.created.push(...insertRes.rows.map((r) => r.date_key));
+    return result;
+  });
 }
-router7.post("/materialize", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
+router8.post("/materialize", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
   try {
     const orgId = req.user.organizationId;
     const templatesRes = await pool.query(
-      `select id, organization_id, type, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes, is_online, room_number
-       from class_templates where organization_id = $1`,
+      `${TEMPLATE_SELECT} where organization_id = $1 and ${MATERIALIZABLE}`,
       [orgId]
     );
     const aggregate = { created: [], conflicts: [] };
@@ -1672,24 +2168,112 @@ router7.post("/materialize", requireRole(...CAN_SCHEDULE), async (req, res, next
     next(err);
   }
 });
-var scheduling_default = router7;
+router8.patch("/templates/:id", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const body = updateTemplateScopeSchema.parse(req.body);
+    const orgId = req.user.organizationId;
+    const templateId = req.params.id;
+    const templateRes = await pool.query(`${TEMPLATE_SELECT} where id = $1`, [templateId]);
+    if (templateRes.rowCount === 0) {
+      throw Object.assign(new Error("Class template not found"), { status: 404, code: "not_found" });
+    }
+    const existing = templateRes.rows[0];
+    if (existing.organization_id !== orgId) {
+      throw Object.assign(new Error("Template belongs to another organization"), { status: 403, code: "forbidden" });
+    }
+    const updateRes = await pool.query(
+      `update class_templates set
+         days_of_week = coalesce($1, days_of_week),
+         start_hour = coalesce($2, start_hour),
+         start_minute = coalesce($3, start_minute),
+         duration_minutes = coalesce($4, duration_minutes)
+       where id = $5
+       returning id, organization_id, type, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes, is_online, room_number`,
+      [body.daysOfWeek ?? null, body.startHour ?? null, body.startMinute ?? null, body.durationMinutes ?? null, templateId]
+    );
+    const updated = updateRes.rows[0];
+    const today = /* @__PURE__ */ new Date();
+    today.setHours(0, 0, 0, 0);
+    await pool.query(
+      `delete from class_sessions
+       where template_id = $1 and status = 'scheduled' and materialized_date >= $2`,
+      [templateId, localDateKey(today)]
+    );
+    const result = await materializeTemplate(updated);
+    await writeAudit(orgId, req.user.id, "template.update_scope", "class_templates", templateId, { scope: body.scope, ...result });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+});
+router8.get("/gaps", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
+  try {
+    const query = findGapsQuerySchema.parse(req.query);
+    const orgId = req.user.organizationId;
+    const LOOKAHEAD_DAYS = 14;
+    const MAX_SLOTS = 10;
+    const availabilityRes = await pool.query(
+      `select day_of_week, start_time, end_time from tutor_availability
+       where organization_id = $1 and tutor_id = $2`,
+      [orgId, query.tutorId]
+    );
+    if (availabilityRes.rowCount === 0) {
+      return res.json({ ok: true, slots: [] });
+    }
+    const today = /* @__PURE__ */ new Date();
+    today.setHours(0, 0, 0, 0);
+    const horizon = new Date(today.getTime() + LOOKAHEAD_DAYS * 24 * 3600 * 1e3);
+    const sessionsRes = await pool.query(
+      `select start_time, end_time from class_sessions
+       where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
+         and start_time >= $3 and start_time < $4`,
+      [orgId, query.tutorId, today.toISOString(), horizon.toISOString()]
+    );
+    const busy = sessionsRes.rows.map((r) => ({ start: new Date(r.start_time).getTime(), end: new Date(r.end_time).getTime() }));
+    const durationMs = query.durationMinutes * 60 * 1e3;
+    const slots = [];
+    const now = Date.now();
+    for (let d = new Date(today); d <= horizon && slots.length < MAX_SLOTS; d.setDate(d.getDate() + 1)) {
+      const dayAvailability = availabilityRes.rows.filter((a) => a.day_of_week === d.getDay());
+      for (const window of dayAvailability) {
+        if (slots.length >= MAX_SLOTS) break;
+        const [startH, startM] = String(window.start_time).split(":").map(Number);
+        const [endH, endM] = String(window.end_time).split(":").map(Number);
+        const windowStart = new Date(d);
+        windowStart.setHours(startH, startM, 0, 0);
+        const windowEnd = new Date(d);
+        windowEnd.setHours(endH, endM, 0, 0);
+        for (let cursor = windowStart.getTime(); cursor + durationMs <= windowEnd.getTime(); cursor += 15 * 60 * 1e3) {
+          if (cursor < now) continue;
+          const slotEnd = cursor + durationMs;
+          const overlaps = busy.some((b) => cursor < b.end && slotEnd > b.start);
+          if (!overlaps) {
+            slots.push({ start: new Date(cursor).toISOString(), end: new Date(slotEnd).toISOString() });
+            if (slots.length >= MAX_SLOTS) break;
+          }
+        }
+      }
+    }
+    res.json({ ok: true, slots });
+  } catch (err) {
+    next(err);
+  }
+});
+var scheduling_default = router8;
 
 // server/routes/cron.ts
-import express8 from "express";
-var router8 = express8.Router();
-router8.use((req, res, next) => {
+import express9 from "express";
+var router9 = express9.Router();
+router9.use((req, res, next) => {
   const secret = process.env.CRON_SECRET;
   if (!secret || req.header("x-cron-secret") !== secret) {
     return res.status(404).json({ error: { code: "not_found", message: "Not found" } });
   }
   next();
 });
-router8.post("/materialize-sessions", async (_req, res, next) => {
+router9.post("/materialize-sessions", async (_req, res, next) => {
   try {
-    const templatesRes = await pool.query(
-      `select id, organization_id, type, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes, is_online, room_number
-       from class_templates`
-    );
+    const templatesRes = await pool.query(`${TEMPLATE_SELECT} where ${MATERIALIZABLE}`);
     const aggregate = { created: [], conflicts: [], templatesProcessed: 0 };
     for (const row of templatesRes.rows) {
       const r = await materializeTemplate(row);
@@ -1702,15 +2286,15 @@ router8.post("/materialize-sessions", async (_req, res, next) => {
     next(err);
   }
 });
-var cron_default = router8;
+var cron_default = router9;
 
 // server/routes/documents.ts
-import express9 from "express";
+import express10 from "express";
 import multer from "multer";
 import { randomUUID } from "crypto";
-import { z as z6 } from "zod";
-var router9 = express9.Router();
-router9.use(authenticateToken, requireOrg);
+import { z as z7 } from "zod";
+var router10 = express10.Router();
+router10.use(authenticateToken, requireOrg);
 var BUCKET = "documents";
 var CAN_UPLOAD = ["owner", "admin", "tutor", "frontdesk"];
 var upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -1738,12 +2322,12 @@ function sanitizeFilename(name) {
   const cleaned = base.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-150);
   return cleaned || "file";
 }
-var metaSchema = z6.object({
-  studentId: z6.string().uuid(),
-  category: z6.string().min(1),
-  notes: z6.string().optional().default("")
+var metaSchema = z7.object({
+  studentId: z7.string().uuid(),
+  category: z7.string().min(1),
+  notes: z7.string().optional().default("")
 });
-router9.post("/", requireRole(...CAN_UPLOAD), upload.single("file"), async (req, res, next) => {
+router10.post("/", requireRole(...CAN_UPLOAD), upload.single("file"), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: { code: "no_file", message: "No file uploaded" } });
     const body = metaSchema.parse(req.body);
@@ -1777,7 +2361,7 @@ router9.post("/", requireRole(...CAN_UPLOAD), upload.single("file"), async (req,
     next(err);
   }
 });
-router9.get("/:documentId/url", async (req, res, next) => {
+router10.get("/:documentId/url", async (req, res, next) => {
   try {
     const orgId = req.user.organizationId;
     const { data: doc, error } = await supabaseAdmin.from("documents").select("organization_id, storage_path, uploaded_by_user_id").eq("id", req.params.documentId).maybeSingle();
@@ -1796,7 +2380,7 @@ router9.get("/:documentId/url", async (req, res, next) => {
     next(err);
   }
 });
-router9.delete("/:documentId", requireRole("owner", "admin"), async (req, res, next) => {
+router10.delete("/:documentId", requireRole("owner", "admin"), async (req, res, next) => {
   try {
     const orgId = req.user.organizationId;
     const { data: doc, error } = await supabaseAdmin.from("documents").select("organization_id, storage_path").eq("id", req.params.documentId).maybeSingle();
@@ -1814,7 +2398,555 @@ router9.delete("/:documentId", requireRole("owner", "admin"), async (req, res, n
     next(err);
   }
 });
-var documents_default = router9;
+var documents_default = router10;
+
+// server/routes/inbox.ts
+import express11 from "express";
+import { z as z9 } from "zod";
+
+// shared/schemas/inbox.ts
+import { z as z8 } from "zod";
+var ensureClassChannelResponseSchema = z8.object({
+  ok: z8.literal(true),
+  conversationId: z8.string().uuid(),
+  participantCount: z8.number().int().nonnegative()
+});
+
+// server/routes/inbox.ts
+var router11 = express11.Router();
+router11.use(authenticateToken, requireOrg);
+var templateIdParamSchema = z9.object({ templateId: z9.string().uuid() });
+async function resolveClassParticipantIds(client, orgId, templateId) {
+  const templateRes = await client.query(
+    `select tutor_id from class_templates where id = $1 and organization_id = $2`,
+    [templateId, orgId]
+  );
+  if (templateRes.rowCount === 0) {
+    throw Object.assign(new Error("Class not found"), { status: 404, code: "not_found" });
+  }
+  const tutorId = templateRes.rows[0].tutor_id;
+  const rosterRes = await client.query(
+    `select student_id from enrollments where template_id = $1 and status = 'active'`,
+    [templateId]
+  );
+  const studentIds = rosterRes.rows.map((r) => r.student_id);
+  if (studentIds.length === 0) return { tutorId, studentUserIds: [], parentUserIds: [] };
+  const { rows } = await client.query(
+    `select 'student' as kind, student_user_id as user_id
+       from students where id = any($1::uuid[]) and student_user_id is not null
+     union
+     select 'parent', parent_user_id
+       from parent_links where student_id = any($1::uuid[])`,
+    [studentIds]
+  );
+  return {
+    tutorId,
+    studentUserIds: rows.filter((r) => r.kind === "student").map((r) => r.user_id),
+    parentUserIds: rows.filter((r) => r.kind === "parent").map((r) => r.user_id)
+  };
+}
+router11.post("/class-channels/:templateId/ensure", async (req, res, next) => {
+  try {
+    const { templateId } = templateIdParamSchema.parse(req.params);
+    const orgId = req.user.organizationId;
+    const result = await withTransaction(async (client) => {
+      const { tutorId, studentUserIds, parentUserIds } = await resolveClassParticipantIds(client, orgId, templateId);
+      const participantIds = Array.from(/* @__PURE__ */ new Set([...tutorId ? [tutorId] : [], ...studentUserIds, ...parentUserIds]));
+      const upsertRes = await client.query(
+        `insert into conversations (organization_id, participant_ids, kind, anchor_type, anchor_id)
+         values ($1, $2, 'class_channel', 'class', $3)
+         on conflict (organization_id, anchor_id) where kind = 'class_channel'
+         do update set participant_ids = excluded.participant_ids
+         returning id`,
+        [orgId, participantIds, templateId]
+      );
+      return { conversationId: upsertRes.rows[0].id, participantCount: participantIds.length };
+    });
+    res.json(ensureClassChannelResponseSchema.parse({ ok: true, ...result }));
+  } catch (err) {
+    next(err);
+  }
+});
+var inbox_default = router11;
+
+// server/routes/subscription.ts
+import express12 from "express";
+
+// shared/schemas/subscription.ts
+import { z as z10 } from "zod";
+var subscriptionResponseSchema = z10.object({
+  plan: z10.enum(PLAN_IDS),
+  status: z10.string(),
+  studentLimit: z10.number().int().nullable(),
+  activeStudentCount: z10.number().int(),
+  pricePaise: z10.number().int(),
+  trialEndsAt: z10.string().nullable(),
+  currentPeriodEnd: z10.string().nullable(),
+  razorpayConnected: z10.boolean()
+});
+var checkoutRequestSchema = z10.object({
+  plan: z10.enum(PLAN_IDS)
+});
+var checkoutResponseSchema = z10.union([
+  z10.object({ degraded: z10.literal(true), message: z10.string() }),
+  z10.object({ degraded: z10.literal(false), shortUrl: z10.string() })
+]);
+
+// server/routes/subscription.ts
+var router12 = express12.Router();
+router12.use(authenticateToken, requireOrg);
+router12.get("/", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const { data: sub, error } = await supabaseAdmin.from("subscriptions").select("plan, status, student_limit, price_paise, trial_ends_at, current_period_end").eq("organization_id", orgId).maybeSingle();
+    if (error) throw error;
+    const { count, error: countErr } = await supabaseAdmin.from("students").select("id", { count: "exact", head: true }).eq("organization_id", orgId).eq("is_deleted", false).eq("status", "active");
+    if (countErr) throw countErr;
+    const plan = sub?.plan && isPlanId(sub.plan) ? sub.plan : "free";
+    const body = {
+      plan,
+      status: sub?.status || "active",
+      studentLimit: sub?.student_limit ?? PLAN_CATALOG[plan].studentLimit,
+      activeStudentCount: count || 0,
+      pricePaise: sub?.price_paise ?? PLAN_CATALOG[plan].pricePaise,
+      trialEndsAt: sub?.trial_ends_at ?? null,
+      currentPeriodEnd: sub?.current_period_end ?? null,
+      razorpayConnected: Boolean(process.env.PLATFORM_RAZORPAY_KEY_ID)
+    };
+    res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+router12.post("/checkout", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const { plan } = checkoutRequestSchema.parse(req.body);
+    const orgId = req.user.organizationId;
+    const target = PLAN_CATALOG[plan];
+    if (!process.env.PLATFORM_RAZORPAY_KEY_ID || !process.env.PLATFORM_RAZORPAY_PLAN_IDS) {
+      await writeAudit(orgId, req.user.id, "subscription.checkout_requested_degraded", "subscriptions", orgId, { plan });
+      return res.json({
+        degraded: true,
+        message: `Upgrading to ${target.name} isn't self-serve yet. Email us and we'll switch your plan by hand.`
+      });
+    }
+    const planIds = JSON.parse(process.env.PLATFORM_RAZORPAY_PLAN_IDS);
+    const razorpayPlanId = planIds[plan];
+    if (!razorpayPlanId) {
+      return res.status(500).json({ error: { code: "plan_not_configured", message: `No Razorpay plan id configured for ${plan}` } });
+    }
+    const authHeader2 = "Basic " + Buffer.from(`${process.env.PLATFORM_RAZORPAY_KEY_ID}:${process.env.PLATFORM_RAZORPAY_KEY_SECRET}`).toString("base64");
+    const rzpRes = await fetch("https://api.razorpay.com/v1/subscriptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: authHeader2 },
+      body: JSON.stringify({
+        plan_id: razorpayPlanId,
+        total_count: 120,
+        // 10 years of monthly cycles; cancel/change anytime
+        notes: { organizationId: orgId, targetPlan: plan }
+      })
+    });
+    const json = await rzpRes.json().catch(() => ({}));
+    if (!rzpRes.ok) {
+      const message = json?.error?.description || `Razorpay error ${rzpRes.status}`;
+      throw Object.assign(new Error(message), { status: 502, code: "gateway_error" });
+    }
+    await supabaseAdmin.from("subscriptions").update({ razorpay_subscription_id: json.id, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("organization_id", orgId);
+    await writeAudit(orgId, req.user.id, "subscription.checkout_created", "subscriptions", orgId, { plan, razorpaySubscriptionId: json.id });
+    res.json({ degraded: false, shortUrl: json.short_url });
+  } catch (err) {
+    next(err);
+  }
+});
+var subscription_default = router12;
+
+// server/routes/admin.ts
+import express13 from "express";
+
+// server/utils/platformAudit.ts
+async function writePlatformAudit(actorId, action, opts = {}) {
+  const { error } = await supabaseAdmin.from("platform_admin_actions").insert({
+    actor_id: actorId,
+    action,
+    target_organization_id: opts.targetOrganizationId ?? null,
+    target_user_id: opts.targetUserId ?? null,
+    payload: opts.payload ?? {}
+  });
+  if (error) console.error("Failed to write platform admin audit event", error);
+}
+
+// shared/schemas/admin.ts
+import { z as z11 } from "zod";
+var orgHealthSchema = z11.object({
+  id: z11.string().uuid(),
+  name: z11.string(),
+  createdAt: z11.string(),
+  plan: z11.string(),
+  subscriptionStatus: z11.string(),
+  studentLimit: z11.number().int().nullable(),
+  activeStudentCount: z11.number().int(),
+  memberCount: z11.number().int(),
+  lastActivityAt: z11.string().nullable()
+});
+var listOrgsResponseSchema = z11.object({ orgs: z11.array(orgHealthSchema) });
+var setFeatureFlagRequestSchema = z11.object({
+  key: z11.string().min(1).max(60),
+  enabled: z11.boolean()
+});
+var impersonateRequestSchema = z11.object({
+  userId: z11.string().uuid()
+});
+var impersonateResponseSchema = z11.object({ actionLink: z11.string() });
+
+// server/routes/admin.ts
+var router13 = express13.Router();
+router13.use(authenticateToken, requirePlatformAdmin);
+router13.get("/orgs", async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(`
+      select
+        o.id,
+        o.name,
+        o.created_at,
+        coalesce(s.plan, 'free') as plan,
+        coalesce(s.status, 'active') as subscription_status,
+        s.student_limit,
+        coalesce(st.n, 0) as active_student_count,
+        coalesce(om.n, 0) as member_count,
+        ae.last_activity_at
+      from organizations o
+      left join subscriptions s on s.organization_id = o.id
+      left join (
+        select organization_id, count(*)::int as n from students
+        where is_deleted = false and status = 'active' group by organization_id
+      ) st on st.organization_id = o.id
+      left join (
+        select organization_id, count(*)::int as n from organization_members group by organization_id
+      ) om on om.organization_id = o.id
+      left join (
+        select organization_id, max(created_at) as last_activity_at from audit_events group by organization_id
+      ) ae on ae.organization_id = o.id
+      order by o.created_at desc
+    `);
+    const body = {
+      orgs: rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        createdAt: new Date(r.created_at).toISOString(),
+        plan: r.plan,
+        subscriptionStatus: r.subscription_status,
+        studentLimit: r.student_limit,
+        activeStudentCount: r.active_student_count,
+        memberCount: r.member_count,
+        lastActivityAt: r.last_activity_at ? new Date(r.last_activity_at).toISOString() : null
+      }))
+    };
+    res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+router13.get("/orgs/:orgId/members", async (req, res, next) => {
+  try {
+    const { orgId } = req.params;
+    const { data: members, error } = await supabaseAdmin.from("organization_members").select("user_id, role").eq("organization_id", orgId);
+    if (error) throw error;
+    const userIds = (members || []).map((m) => m.user_id);
+    const { data: profiles, error: profileErr } = userIds.length ? await supabaseAdmin.from("profiles").select("id, name, email").in("id", userIds) : { data: [], error: null };
+    if (profileErr) throw profileErr;
+    const profileById = new Map((profiles || []).map((p) => [p.id, p]));
+    res.json({
+      members: (members || []).map((m) => ({
+        user_id: m.user_id,
+        role: m.role,
+        profiles: profileById.get(m.user_id) ?? null
+      }))
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+router13.put("/orgs/:orgId/feature-flags", async (req, res, next) => {
+  try {
+    const { orgId } = req.params;
+    const { key, enabled } = setFeatureFlagRequestSchema.parse(req.body);
+    const { error } = await supabaseAdmin.from("feature_flags").upsert({ organization_id: orgId, key, enabled }, { onConflict: "organization_id,key" });
+    if (error) throw error;
+    await writePlatformAudit(req.user.id, "feature_flag.set", { targetOrganizationId: orgId, payload: { key, enabled } });
+    await writeAudit(orgId, req.user.id, "platform_admin.feature_flag_set", "feature_flags", `${orgId}_${key}`, { key, enabled });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+router13.post("/impersonate", async (req, res, next) => {
+  try {
+    const { userId } = impersonateRequestSchema.parse(req.body);
+    const { data: profile, error: profileErr } = await supabaseAdmin.from("profiles").select("email, organization_id").eq("id", userId).maybeSingle();
+    if (profileErr) throw profileErr;
+    if (!profile?.email) {
+      return res.status(404).json({ error: { code: "not_found", message: "User has no profile/email on record" } });
+    }
+    const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
+      type: "magiclink",
+      email: profile.email
+    });
+    if (linkErr) throw linkErr;
+    await writePlatformAudit(req.user.id, "impersonate", {
+      targetUserId: userId,
+      targetOrganizationId: profile.organization_id ?? void 0,
+      payload: { email: profile.email }
+    });
+    if (profile.organization_id) {
+      await writeAudit(profile.organization_id, req.user.id, "platform_admin.impersonate", "profiles", userId, {
+        note: "A ClassStackr platform admin generated a login link for this account for support purposes."
+      });
+    }
+    const body = { actionLink: linkData.properties.action_link };
+    res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+var admin_default = router13;
+
+// server/routes/orgExport.ts
+import express14 from "express";
+import ExcelJS from "exceljs";
+
+// server/utils/orgExport.ts
+var EXPORT_TABLES = [
+  { key: "organization", query: "select id, name, address, phone, email, created_at from organizations where id = $1" },
+  {
+    key: "members",
+    query: `select om.user_id, om.role, om.created_at, p.name, p.email
+            from organization_members om left join profiles p on p.id = om.user_id
+            where om.organization_id = $1`
+  },
+  { key: "students", query: "select * from students where organization_id = $1 order by created_at" },
+  { key: "courses", query: "select * from courses where organization_id = $1 order by created_at" },
+  { key: "class_sessions", query: "select * from class_sessions where organization_id = $1 order by start_time" },
+  { key: "enrollments", query: "select * from enrollments where organization_id = $1 order by created_at" },
+  { key: "attendance_records", query: "select * from attendance_records where organization_id = $1 order by session_start" },
+  { key: "invoices", query: "select * from invoices where organization_id = $1 order by created_at" },
+  { key: "payments", query: "select * from payments where organization_id = $1 order by at" },
+  { key: "refunds", query: "select * from refunds where organization_id = $1 order by at" },
+  { key: "wallets", query: "select * from wallets where organization_id = $1" },
+  { key: "wallet_ledger", query: "select * from wallet_ledger where organization_id = $1 order by at" },
+  { key: "parent_links", query: "select * from parent_links where organization_id = $1" },
+  { key: "leads", query: "select * from leads where organization_id = $1 order by created_at" },
+  { key: "subscriptions", query: "select plan, status, student_limit, price_paise, trial_ends_at, current_period_end, updated_at from subscriptions where organization_id = $1" }
+];
+async function fetchOrgExportData(orgId) {
+  return Promise.all(
+    EXPORT_TABLES.map(async (table) => {
+      const { rows } = await pool.query(table.query, [orgId]);
+      return { key: table.key, rows };
+    })
+  );
+}
+
+// shared/schemas/orgExport.ts
+import { z as z12 } from "zod";
+var offboardRequestSchema = z12.object({
+  // The caller must type the org's exact current name to confirm — same
+  // "type to confirm" pattern as other irreversible-ish SaaS actions.
+  confirmOrgName: z12.string().min(1)
+});
+var offboardResponseSchema = z12.object({ ok: z12.literal(true) });
+
+// server/routes/orgExport.ts
+var router14 = express14.Router();
+router14.use(authenticateToken, requireOrg);
+router14.get("/json", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const tables = await fetchOrgExportData(orgId);
+    const payload = { exportedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    for (const t of tables) payload[t.key] = t.rows;
+    await writeAudit(orgId, req.user.id, "org.export_json", "organizations", orgId, {});
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", `attachment; filename="org-export-${orgId}.json"`);
+    res.send(JSON.stringify(payload, null, 2));
+  } catch (err) {
+    next(err);
+  }
+});
+router14.get("/xlsx", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const tables = await fetchOrgExportData(orgId);
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "ClassStackr";
+    workbook.created = /* @__PURE__ */ new Date();
+    for (const t of tables) {
+      const sheet = workbook.addWorksheet(t.key.slice(0, 31));
+      const columns = t.rows.length > 0 ? Object.keys(t.rows[0]) : [];
+      sheet.columns = columns.map((c) => ({ header: c, key: c, width: 20 }));
+      for (const row of t.rows) {
+        const flat = {};
+        for (const c of columns) {
+          const v = row[c];
+          flat[c] = v !== null && typeof v === "object" ? JSON.stringify(v) : v;
+        }
+        sheet.addRow(flat);
+      }
+    }
+    const buffer = await workbook.xlsx.writeBuffer();
+    await writeAudit(orgId, req.user.id, "org.export_xlsx", "organizations", orgId, {});
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="org-export-${orgId}.xlsx"`);
+    res.send(Buffer.from(buffer));
+  } catch (err) {
+    next(err);
+  }
+});
+router14.post("/offboard", requireRole("owner"), async (req, res, next) => {
+  try {
+    const { confirmOrgName } = offboardRequestSchema.parse(req.body);
+    const orgId = req.user.organizationId;
+    const { data: org, error: orgErr } = await supabaseAdmin.from("organizations").select("name, status").eq("id", orgId).single();
+    if (orgErr) throw orgErr;
+    if (org.status === "offboarded") {
+      return res.status(409).json({ error: { code: "already_offboarded", message: "This organization is already offboarded" } });
+    }
+    if (confirmOrgName.trim() !== org.name.trim()) {
+      return res.status(422).json({ error: { code: "name_mismatch", message: "Typed name doesn't match the organization's name" } });
+    }
+    const { error } = await supabaseAdmin.from("organizations").update({ status: "offboarded", offboarded_at: (/* @__PURE__ */ new Date()).toISOString(), offboarded_by: req.user.id }).eq("id", orgId);
+    if (error) throw error;
+    invalidateAllMemberships();
+    await writeAudit(orgId, req.user.id, "org.offboarded", "organizations", orgId, {});
+    const body = { ok: true };
+    res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+var orgExport_default = router14;
+
+// server/routes/auditLog.ts
+import express15 from "express";
+
+// shared/schemas/auditLog.ts
+import { z as z13 } from "zod";
+var auditLogQuerySchema = z13.object({
+  orgId: z13.string().uuid().optional(),
+  actorId: z13.string().uuid().optional(),
+  entityType: z13.string().min(1).max(60).optional(),
+  from: z13.string().datetime().optional(),
+  to: z13.string().datetime().optional(),
+  limit: z13.coerce.number().int().min(1).max(200).default(50),
+  offset: z13.coerce.number().int().min(0).default(0)
+});
+var auditEventSchema = z13.object({
+  id: z13.string().uuid(),
+  organizationId: z13.string().uuid(),
+  organizationName: z13.string().nullable(),
+  actorId: z13.string().uuid().nullable(),
+  actorName: z13.string().nullable(),
+  actorEmail: z13.string().nullable(),
+  // Set when the action had no signed-in user behind it (e.g. a payment
+  // gateway webhook). actorId is null in that case, which on its own is
+  // indistinguishable from a user who was later deleted — actor_id is
+  // `on delete set null`. See AuditActor in server/utils/audit.ts.
+  systemActor: z13.string().nullable(),
+  action: z13.string(),
+  entityType: z13.string().nullable(),
+  entityId: z13.string().nullable(),
+  payload: z13.record(z13.string(), z13.unknown()),
+  createdAt: z13.string()
+});
+var listAuditEventsResponseSchema = z13.object({
+  events: z13.array(auditEventSchema),
+  total: z13.number().int()
+});
+
+// server/routes/auditLog.ts
+var router15 = express15.Router();
+router15.use(authenticateToken);
+var ORG_SCOPED_ROLES = /* @__PURE__ */ new Set(["owner", "admin", "accountant"]);
+router15.get("/", async (req, res, next) => {
+  try {
+    const query = auditLogQuerySchema.parse(req.query);
+    const userId = req.user.id;
+    const { rowCount: isPlatformAdmin } = await pool.query(
+      `select 1 from platform_admins where user_id = $1 limit 1`,
+      [userId]
+    );
+    let orgId;
+    if (isPlatformAdmin) {
+      orgId = query.orgId ?? null;
+    } else {
+      if (!req.user.organizationId || !ORG_SCOPED_ROLES.has(req.user.role ?? "")) {
+        return res.status(403).json({ error: { code: "forbidden", message: "Not authorized to view the audit log" } });
+      }
+      orgId = req.user.organizationId;
+    }
+    const params = [
+      orgId,
+      query.actorId ?? null,
+      query.entityType ?? null,
+      query.from ?? null,
+      query.to ?? null
+    ];
+    const whereClause = `
+      where ($1::uuid is null or ae.organization_id = $1)
+        and ($2::uuid is null or ae.actor_id = $2)
+        and ($3::text is null or ae.payload ->> 'entityType' = $3)
+        and ($4::timestamptz is null or ae.created_at >= $4)
+        and ($5::timestamptz is null or ae.created_at <= $5)
+    `;
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      pool.query(
+        `
+        select
+          ae.id,
+          ae.organization_id,
+          o.name as organization_name,
+          ae.actor_id,
+          p.name as actor_name,
+          p.email as actor_email,
+          ae.action,
+          ae.payload ->> 'entityType' as entity_type,
+          ae.payload ->> 'entityId' as entity_id,
+          ae.payload ->> 'systemActor' as system_actor,
+          ae.payload,
+          ae.created_at
+        from audit_events ae
+        join organizations o on o.id = ae.organization_id
+        left join profiles p on p.id = ae.actor_id
+        ${whereClause}
+        order by ae.created_at desc
+        limit $6 offset $7
+        `,
+        [...params, query.limit, query.offset]
+      ),
+      pool.query(`select count(*)::int as total from audit_events ae ${whereClause}`, params)
+    ]);
+    const body = {
+      events: rows.map((r) => ({
+        id: r.id,
+        organizationId: r.organization_id,
+        organizationName: r.organization_name,
+        actorId: r.actor_id,
+        actorName: r.actor_name,
+        actorEmail: r.actor_email,
+        systemActor: r.system_actor,
+        action: r.action,
+        entityType: r.entity_type,
+        entityId: r.entity_id,
+        payload: r.payload,
+        createdAt: new Date(r.created_at).toISOString()
+      })),
+      total: countRows[0]?.total ?? 0
+    };
+    res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+var auditLog_default = router15;
 
 // server/app.ts
 function createApp() {
@@ -1825,7 +2957,7 @@ function createApp() {
       tracesSampleRate: 0.1
     });
   }
-  const app2 = express10();
+  const app2 = express16();
   const isProd = process.env.NODE_ENV === "production";
   app2.use(pino({
     level: isProd ? "info" : "debug",
@@ -1846,7 +2978,7 @@ function createApp() {
     // header-based auth only; no cookies, no CSRF surface
   }));
   app2.set("trust proxy", 1);
-  app2.use("/api/webhooks", express10.raw({ type: "*/*", limit: "1mb" }), webhooks_default);
+  app2.use("/api/webhooks", express16.raw({ type: "*/*", limit: "1mb" }), webhooks_default);
   const apiLimiter = rateLimit({
     windowMs: 60 * 1e3,
     max: 120,
@@ -1856,17 +2988,22 @@ function createApp() {
     // (coaching centers share IPs). ipKeyGenerator handles IPv6 subnets.
     keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip || "")
   });
-  app2.use(express10.json({ limit: "1mb" }));
+  app2.use(express16.json({ limit: "1mb" }));
   app2.use("/api/", apiLimiter);
   app2.use("/api/v1/settings", settings_default);
   app2.use("/api/v1/members", members_default);
   app2.use("/api/v1/billing", billing_default);
   app2.use("/api/v1/gateway", gateway_default);
   app2.use("/api/v1/parents", parents_default);
+  app2.use("/api/v1/students", students_default);
   app2.use("/api/v1/scheduling", scheduling_default);
   app2.use("/api/v1/documents", documents_default);
+  app2.use("/api/v1/inbox", inbox_default);
+  app2.use("/api/v1/subscription", subscription_default);
+  app2.use("/api/v1/admin", admin_default);
+  app2.use("/api/v1/org-export", orgExport_default);
+  app2.use("/api/v1/audit-log", auditLog_default);
   app2.use("/api/cron", cron_default);
-  app2.use("/api/settings", settings_default);
   app2.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
   });

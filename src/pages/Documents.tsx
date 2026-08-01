@@ -6,6 +6,7 @@ import { uploadDocument, getDocumentUrl, deleteDocument } from "../lib/api";
 import { toast } from "sonner";
 
 import LoadingSpinner from "../components/LoadingSpinner";
+import { Modal } from "../components/kit";
 
 // NOTE: uploadDocument / getDocumentUrl / deleteDocument (from ../lib/api) call
 // the server, which is the one that talks to Firebase/Cloud Storage for the
@@ -219,10 +220,14 @@ export default function Documents() {
               <div className="absolute inset-0 bg-gray-500 opacity-75" onClick={() => setIsModalOpen(false)}></div>
             </div>
             <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div className="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+            <Modal
+              onClose={() => setIsModalOpen(false)}
+              labelledBy="upload-document-title"
+              className="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            >
               <form onSubmit={handleSubmit}>
                 <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">Upload Document</h3>
+                  <h3 id="upload-document-title" className="text-lg leading-6 font-medium text-gray-900 mb-4">Upload Document</h3>
                   {uploadError && (
                     <div className="mb-4 p-3 bg-red-50 text-red-700 text-sm rounded-md border border-red-200">
                       {uploadError}
@@ -265,7 +270,7 @@ export default function Documents() {
                   </button>
                 </div>
               </form>
-            </div>
+            </Modal>
           </div>
         </div>
       )}
@@ -278,7 +283,11 @@ export default function Documents() {
               <div className="absolute inset-0 bg-gray-500 opacity-75" onClick={() => setIsDeleteModalOpen(false)}></div>
             </div>
             <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div className="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+            <Modal
+              onClose={() => setIsDeleteModalOpen(false)}
+              labelledBy="modal-title"
+              className="relative z-20 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            >
               <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                 <div className="sm:flex sm:items-start">
                   <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
@@ -312,7 +321,7 @@ export default function Documents() {
                   Cancel
                 </button>
               </div>
-            </div>
+            </Modal>
           </div>
         </div>
       )}

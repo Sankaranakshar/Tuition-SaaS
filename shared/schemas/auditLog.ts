@@ -26,6 +26,11 @@ export const auditEventSchema = z.object({
   actorId: z.string().uuid().nullable(),
   actorName: z.string().nullable(),
   actorEmail: z.string().nullable(),
+  // Set when the action had no signed-in user behind it (e.g. a payment
+  // gateway webhook). actorId is null in that case, which on its own is
+  // indistinguishable from a user who was later deleted — actor_id is
+  // `on delete set null`. See AuditActor in server/utils/audit.ts.
+  systemActor: z.string().nullable(),
   action: z.string(),
   entityType: z.string().nullable(),
   entityId: z.string().nullable(),

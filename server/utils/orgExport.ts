@@ -43,10 +43,15 @@ export interface OrgExportTable {
  *  row itself), so this is safe to call with any orgId — callers are
  *  responsible for authorizing that the caller may see that org's data. */
 export async function fetchOrgExportData(orgId: string): Promise<OrgExportTable[]> {
-  const results: OrgExportTable[] = [];
-  for (const table of EXPORT_TABLES) {
-    const { rows } = await pool.query(table.query, [orgId]);
-    results.push({ key: table.key, rows });
-  }
-  return results;
+  // The 15 table queries are independent, so they go out together rather than
+  // paying a full round trip each in series. The pool (PG_POOL_MAX, default 3)
+  // caps real concurrency; this just keeps those connections busy instead of
+  // idle between statements. Order is preserved by Promise.all, so the sheet
+  // and JSON-key order stays exactly as EXPORT_TABLES declares it.
+  return Promise.all(
+    EXPORT_TABLES.map(async (table) => {
+      const { rows } = await pool.query(table.query, [orgId]);
+      return { key: table.key, rows };
+    })
+  );
 }

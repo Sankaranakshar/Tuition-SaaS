@@ -20,7 +20,6 @@ function getEncryptionKey(): Buffer {
 }
 
 const IV_LENGTH = 12; // For AES-GCM, 12 bytes is the standard IV length
-const AUTH_TAG_LENGTH = 16; // 16 bytes is the standard tag length
 
 export function encrypt(text: string) {
   const key = getEncryptionKey();

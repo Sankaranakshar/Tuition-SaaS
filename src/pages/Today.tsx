@@ -726,17 +726,11 @@ function RosterPopover({
 }) {
   const ids = session.studentIds || [];
 
-  const trigger = (
-    <button
-      className={`inline-flex items-center gap-1.5 rounded-[6px] px-3 py-1.5 text-sm font-medium ${
-        unmarkedNudge
-          ? "bg-[var(--cs-accent)] text-white hover:opacity-90"
-          : "border border-[var(--cs-border)] text-[var(--cs-text)] hover:bg-[var(--cs-bg)]"
-      }`}
-    >
+  const triggerContent = (
+    <>
       <Check className="h-3.5 w-3.5" strokeWidth={2} />
       {unmarkedNudge ? "Mark attendance" : "Mark"}
-    </button>
+    </>
   );
 
   if (ids.length === 0) {
@@ -745,7 +739,16 @@ function RosterPopover({
   }
 
   return (
-    <Popover trigger={trigger} align="right" className="w-72">
+    <Popover
+      trigger={triggerContent}
+      triggerClassName={`inline-flex items-center gap-1.5 rounded-[6px] px-3 py-1.5 text-sm font-medium ${
+        unmarkedNudge
+          ? "bg-[var(--cs-accent)] text-white hover:opacity-90"
+          : "border border-[var(--cs-border)] text-[var(--cs-text)] hover:bg-[var(--cs-bg)]"
+      }`}
+      align="right"
+      className="w-72"
+    >
       {(close) => <RosterForm ids={ids} roster={roster} onConfirm={(recs) => { onCommit(session, recs); close(); }} onCancel={close} />}
     </Popover>
   );

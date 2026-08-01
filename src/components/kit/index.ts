@@ -10,3 +10,4 @@ export { ContextCard } from "./ContextCard";
 export { CapacityMeter } from "./CapacityMeter";
 export { Popover } from "./Popover";
 export { PopoverEdit } from "./PopoverEdit";
+export { Modal } from "./Modal";
