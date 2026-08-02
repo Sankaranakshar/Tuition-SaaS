@@ -16,12 +16,16 @@ import {
   Check,
   BellOff,
   X,
+  Users,
 } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
-import { StatChip, StatusChip, AgedBadge, EmptyState, SkeletonRow, Skeleton, Popover } from "../components/kit";
+import { StatChip, StatusChip, AgedBadge, EmptyState, SkeletonRow, Skeleton, Popover, BottomSheet } from "../components/kit";
 import { formatPaise, formatTime } from "../lib/format";
 import { markAttendance, type AttendanceStatus } from "../lib/api";
+import { debounce } from "../lib/debounce";
+import { useIsMobile } from "../hooks/useIsMobile";
+import { useSwipeAction } from "../hooks/useSwipeAction";
 import StudentDashboard from "./StudentDashboard";
 import ParentPortal from "./ParentPortal";
 import {
@@ -133,7 +137,7 @@ export default function Today() {
 function StaffToday({ user, currentRole }: { user: any; currentRole: string | null }) {
   const orgId = user?.organizationId as string | undefined;
   const isTutor = (currentRole || user?.role) === "tutor";
-  const isAdminTier = currentRole === "admin" || user?.role === "admin" || currentRole === "owner";
+  const isAdminTier = user?.organizationRole === "owner" || user?.organizationRole === "admin";
 
   const [sessions, setSessions] = useState<TodaySession[] | null>(null);
   const [invoices, setInvoices] = useState<TodayInvoice[]>([]);
@@ -309,15 +313,18 @@ function StaffToday({ user, currentRole }: { user: any; currentRole: string | nu
 
     // postgres_changes filters only support one simple column=eq condition
     // server-side, so subscribe on organization_id (broadest safe scope) and
-    // let each load() reapply its own role/time filters on refetch.
+    // let each load() reapply its own role/time filters on refetch. Debounced
+    // per table so a burst (e.g. the Monday-6pm attendance-mark scenario
+    // DEV_PLAN's k6 script targets) collapses into one reload each, not one
+    // per event.
     const channel = supabase
       .channel(`today-${orgId}-${isTutor ? user?.id : "all"}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions", filter: `organization_id=eq.${orgId}` }, loadSessions)
-      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `organization_id=eq.${orgId}` }, loadStudents)
-      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `organization_id=eq.${orgId}` }, loadInvoices)
-      .on("postgres_changes", { event: "*", schema: "public", table: "attendance_records", filter: `organization_id=eq.${orgId}` }, loadAttendance)
-      .on("postgres_changes", { event: "*", schema: "public", table: "leads", filter: `organization_id=eq.${orgId}` }, loadLeads)
-      .on("postgres_changes", { event: "*", schema: "public", table: "profiles", filter: `organization_id=eq.${orgId}` }, loadTutors)
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions", filter: `organization_id=eq.${orgId}` }, debounce(loadSessions, 200))
+      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `organization_id=eq.${orgId}` }, debounce(loadStudents, 200))
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `organization_id=eq.${orgId}` }, debounce(loadInvoices, 200))
+      .on("postgres_changes", { event: "*", schema: "public", table: "attendance_records", filter: `organization_id=eq.${orgId}` }, debounce(loadAttendance, 200))
+      .on("postgres_changes", { event: "*", schema: "public", table: "leads", filter: `organization_id=eq.${orgId}` }, debounce(loadLeads, 200))
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles", filter: `organization_id=eq.${orgId}` }, debounce(loadTutors, 200))
       .subscribe();
 
     return () => {
@@ -624,7 +631,20 @@ function SessionBlock({
   const title = roster.length === 0 ? "Session" : roster.length <= 2 ? roster.join(", ") : `${roster[0]} +${roster.length - 1} more`;
   const cancelled = phase === "cancelled";
 
-  return (
+  const isMobile = useIsMobile();
+  const [mobileRosterOpen, setMobileRosterOpen] = useState(false);
+  const swipable = isMobile && ids.length > 0 && (phase === "live" || phase === "unmarked");
+
+  const markAllPresent = useCallback(() => {
+    onCommit(session, ids.map((id) => ({ studentId: id, status: "present" as AttendanceStatus })));
+  }, [session, ids, onCommit]);
+
+  const swipe = useSwipeAction({
+    onSwipeRight: swipable ? markAllPresent : undefined,
+    onSwipeLeft: swipable ? () => setMobileRosterOpen(true) : undefined,
+  });
+
+  const row = (
     <div className="flex items-center gap-3 px-4 py-3">
       <div className="w-16 shrink-0 text-right">
         <div className={`text-sm font-medium tabular-nums ${cancelled ? "text-[var(--cs-text-muted)] line-through" : "text-[var(--cs-text)]"}`}>
@@ -655,6 +675,49 @@ function SessionBlock({
         <SessionAction session={session} phase={phase} now={now} roster={roster} onCommit={onCommit} />
       </div>
     </div>
+  );
+
+  if (!swipable) return row;
+
+  return (
+    <>
+      <div className="relative overflow-hidden">
+        <div className="absolute inset-0 flex">
+          <div className="flex w-1/2 items-center gap-1.5 pl-4 text-sm font-medium text-white" style={{ backgroundColor: "var(--cs-ok)" }}>
+            <Check className="h-4 w-4" strokeWidth={2.5} /> All present
+          </div>
+          <div className="flex w-1/2 items-center justify-end gap-1.5 pr-4 text-sm font-medium text-[var(--cs-text)]" style={{ backgroundColor: "var(--cs-bg)" }}>
+            <Users className="h-4 w-4" strokeWidth={1.75} /> Roster
+          </div>
+        </div>
+        <div
+          ref={swipe.ref}
+          {...swipe.bind}
+          className="relative touch-pan-y bg-[var(--cs-surface)]"
+          style={{
+            transform: `translateX(${swipe.offsetX}px)`,
+            transition: swipe.dragging ? "none" : "transform 200ms ease-out",
+          }}
+        >
+          {row}
+        </div>
+      </div>
+      {mobileRosterOpen && (
+        <BottomSheet onClose={() => setMobileRosterOpen(false)} label="Mark attendance">
+          <div className="px-4 pb-4">
+            <RosterForm
+              ids={ids}
+              roster={roster}
+              onConfirm={(recs) => {
+                onCommit(session, recs);
+                setMobileRosterOpen(false);
+              }}
+              onCancel={() => setMobileRosterOpen(false)}
+            />
+          </div>
+        </BottomSheet>
+      )}
+    </>
   );
 }
 
@@ -903,7 +966,7 @@ function QueueAction({ item, phone }: { item: QueueItem; phone: string }) {
     case "unmarked_session":
       // The session is on the Line/debt window; jump to the calendar to mark.
       return (
-        <Link to="/app/calendar" className={base}>
+        <Link to="/app/schedule" className={base}>
           <Check className="h-3.5 w-3.5" strokeWidth={1.75} /> Mark
         </Link>
       );
@@ -925,7 +988,7 @@ function QueueAction({ item, phone }: { item: QueueItem; phone: string }) {
       );
     case "schedule_conflict":
       return (
-        <Link to="/app/calendar" className={base}>
+        <Link to="/app/schedule" className={base}>
           Resolve
         </Link>
       );

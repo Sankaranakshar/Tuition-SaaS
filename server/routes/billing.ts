@@ -16,6 +16,7 @@ import {
   recordManualPaymentRequestSchema as paymentSchema,
   refundRequestSchema as refundSchema,
 } from "../../shared/schemas/billing.ts";
+import { rupeesToPaise, paiseToRupees } from "../../shared/money.ts";
 
 const router = express.Router();
 router.use(authenticateToken, requireOrg);
@@ -31,11 +32,11 @@ router.post("/invoices", requireRole(...CAN_MARK), async (req: AuthRequest, res,
     const body = createInvoiceSchema.parse(req.body);
     const orgId = req.user!.organizationId!;
 
-    const subtotalPaise = body.items.reduce((sum, it) => sum + Math.round(it.amount * it.quantity * 100), 0);
+    const subtotalPaise = body.items.reduce((sum, it) => sum + rupeesToPaise(it.amount * it.quantity), 0);
     const taxPaise = Math.round((subtotalPaise * body.taxPercentage) / 100);
     const totalPaise = subtotalPaise + taxPaise;
     const items = body.items.map((it) => ({
-      description: it.description, amountPaise: Math.round(it.amount * 100), quantity: it.quantity,
+      description: it.description, amountPaise: rupeesToPaise(it.amount), quantity: it.quantity,
     }));
 
     const { data: inv, error } = await supabaseAdmin.from("invoices").insert({
@@ -46,8 +47,8 @@ router.post("/invoices", requireRole(...CAN_MARK), async (req: AuthRequest, res,
       tax_paise: taxPaise,
       discount_paise: 0,
       total_paise: totalPaise,
-      total_amount: totalPaise / 100,
-      subtotal: subtotalPaise / 100,
+      total_amount: paiseToRupees(totalPaise),
+      subtotal: paiseToRupees(subtotalPaise),
       status: "unpaid",
       due_date: body.dueDate || null,
       items,
@@ -88,7 +89,7 @@ router.post("/wallets/topup", requireRole(...CAN_MONEY), async (req: AuthRequest
       );
       await client.query(
         `update wallets set balance_currency = balance_currency + $1 where id = $2`,
-        [body.amountPaise / 100, walletRes.rows[0].id]
+        [paiseToRupees(body.amountPaise), walletRes.rows[0].id]
       );
       await client.query(
         `insert into wallet_ledger (organization_id, student_id, type, credits, paise, reason, by, idempotency_key, at)
@@ -189,7 +190,7 @@ router.post("/attendance", requireRole(...CAN_MARK), async (req: AuthRequest, re
 
       const toBill = marks.filter((m) => m.shouldBill);
       if (toBill.length > 0) {
-        const feePaise = Math.round((template!.fee_amount || 0) * 100);
+        const feePaise = rupeesToPaise(template!.fee_amount || 0);
 
         // Every wallet locked in one statement. `order by student_id` gives
         // concurrent batches a consistent lock order, so two overlapping
@@ -214,7 +215,7 @@ router.post("/attendance", requireRole(...CAN_MARK), async (req: AuthRequest, re
             creditWalletIds.push(w.id);
             ledger.push({ studentId: m.studentId, type: "debit_credit", credits: -1, paise: 0 });
             billed.push(m.studentId);
-          } else if (w && Math.round((w.balance_currency || 0) * 100) >= feePaise) {
+          } else if (w && rupeesToPaise(w.balance_currency || 0) >= feePaise) {
             currencyWalletIds.push(w.id);
             ledger.push({ studentId: m.studentId, type: "debit_currency", credits: 0, paise: -feePaise });
             billed.push(m.studentId);
@@ -235,7 +236,7 @@ router.post("/attendance", requireRole(...CAN_MARK), async (req: AuthRequest, re
         if (currencyWalletIds.length > 0) {
           await client.query(
             `update wallets set balance_currency = balance_currency - $1 where id = any($2::uuid[])`,
-            [feePaise / 100, currencyWalletIds]
+            [paiseToRupees(feePaise), currencyWalletIds]
           );
         }
         if (ledger.length > 0) {
@@ -256,7 +257,7 @@ router.post("/attendance", requireRole(...CAN_MARK), async (req: AuthRequest, re
                (organization_id, tutor_id, student_id, subtotal_paise, total_paise, tax_paise, discount_paise, total_amount, subtotal, status, due_date, items, source)
              select $1, $2, v.student_id, $3, $3, 0, 0, $4, $4, 'unpaid', $5, $6::jsonb, $7::jsonb
              from unnest($8::uuid[]) as v(student_id)`,
-            [orgId, session.tutor_id, feePaise, feePaise / 100, due.toISOString().split("T")[0],
+            [orgId, session.tutor_id, feePaise, paiseToRupees(feePaise), due.toISOString().split("T")[0],
               JSON.stringify(items), JSON.stringify({ kind: "attendance", sessionId }), invoiceStudentIds]
           );
         }

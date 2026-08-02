@@ -22,7 +22,9 @@ import {
   revenueTrend, collectionRate, revenueByLineItem,
 } from "../lib/money";
 import { formatPaise, formatDate } from "../lib/format";
-import { EmptyState, SkeletonRow, AgedBadge, StatChip, Popover, StatusChip, type ChipTone } from "../components/kit";
+import { rupeesToPaise, paiseToRupees } from "../../shared/money";
+import { EmptyState, SkeletonRow, AgedBadge, StatChip, Popover, StatusChip, BottomSheet, type ChipTone } from "../components/kit";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 type Segment = "outstanding" | "wallets" | "insights";
 const SEGMENTS: { key: Segment; labelKey: string; icon: typeof Receipt }[] = [
@@ -184,7 +186,7 @@ function OutstandingSegment({
   const remind = async (invoiceId: string, studentName: string) => {
     try {
       const { shortUrl } = await createInvoicePaymentLink(invoiceId);
-      const text = `Hi, here's the payment link for ${studentName}'s tuition invoice: ${shortUrl}`;
+      const text = `Hi, here's the payment link for ${studentName}'s tuition invoice: ${shortUrl}` + t("money.paymentLinkFooter", { url: window.location.origin + "/" });
       window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
     } catch (err: any) {
       toast.error(t("money.reminderFailed"), { description: err.message });
@@ -199,14 +201,14 @@ function OutstandingSegment({
       try {
         const links = await Promise.all(own.map((l: any) => createInvoicePaymentLink(l.invoice.id)));
         lines.push(
-          `${group.studentName}: ` + links.map((r, i) => `₹${(own[i].outstandingPaise / 100).toFixed(0)} → ${r.shortUrl}`).join(", ")
+          `${group.studentName}: ` + links.map((r, i) => `₹${paiseToRupees(own[i].outstandingPaise).toFixed(0)} → ${r.shortUrl}`).join(", ")
         );
       } catch (err: any) {
         toast.error(t("money.reminderFailed"), { description: `${group.studentName}: ${err.message}` });
       }
     }
     if (lines.length === 0) return;
-    const text = lines.join("\n");
+    const text = lines.join("\n") + t("money.paymentLinkFooter", { url: window.location.origin + "/" });
     try {
       await navigator.clipboard.writeText(text);
       toast.success(t("money.remindersCopied", { count: lines.length }));
@@ -310,6 +312,31 @@ function OutstandingSegment({
 
 function RecordPaymentPopover({ invoiceId, outstandingPaise }: { invoiceId: string; outstandingPaise: number }) {
   const { t } = useTranslation();
+  const isMobile = useIsMobile();
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  if (isMobile) {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => setSheetOpen(true)}
+          title={t("money.recordPayment")}
+          className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]"
+        >
+          <IndianRupee className="h-4 w-4" />
+        </button>
+        {sheetOpen && (
+          <BottomSheet onClose={() => setSheetOpen(false)} label={t("money.recordPayment")}>
+            <div className="px-4 pb-4">
+              <RecordPaymentForm invoiceId={invoiceId} outstandingPaise={outstandingPaise} onDone={() => setSheetOpen(false)} />
+            </div>
+          </BottomSheet>
+        )}
+      </>
+    );
+  }
+
   return (
     <Popover
       align="right"
@@ -324,7 +351,7 @@ function RecordPaymentPopover({ invoiceId, outstandingPaise }: { invoiceId: stri
 
 function RecordPaymentForm({ invoiceId, outstandingPaise, onDone }: { invoiceId: string; outstandingPaise: number; onDone: () => void }) {
   const { t } = useTranslation();
-  const [amount, setAmount] = useState((outstandingPaise / 100).toFixed(2));
+  const [amount, setAmount] = useState(paiseToRupees(outstandingPaise).toFixed(2));
   const [method, setMethod] = useState<(typeof PAYMENT_METHODS)[number]>("cash");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -332,7 +359,7 @@ function RecordPaymentForm({ invoiceId, outstandingPaise, onDone }: { invoiceId:
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    const amountPaise = Math.round(parseFloat(amount) * 100);
+    const amountPaise = rupeesToPaise(parseFloat(amount));
     if (!amountPaise || amountPaise <= 0) {
       setError(t("money.amountRequired"));
       return;
@@ -350,7 +377,7 @@ function RecordPaymentForm({ invoiceId, outstandingPaise, onDone }: { invoiceId:
   };
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-2 w-56">
+    <form onSubmit={submit} className="flex w-full flex-col gap-2">
       <label className="text-xs font-medium text-[var(--cs-text-muted)]">{t("money.amount")}</label>
       <input
         autoFocus
@@ -446,7 +473,7 @@ function TopUpForm({ studentId, onDone }: { studentId: string; onDone: () => voi
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    const amountPaise = Math.round(parseFloat(amount) * 100);
+    const amountPaise = rupeesToPaise(parseFloat(amount));
     if (!amountPaise || amountPaise <= 0) {
       setError(t("money.amountRequired"));
       return;
@@ -583,7 +610,7 @@ function InvoiceDetailModal({ invoice, studentName, payments, onClose, onChanged
   const share = async () => {
     try {
       const { shortUrl } = await createInvoicePaymentLink(invoice.id);
-      const text = `Hi, here's the payment link for ${studentName}'s tuition invoice: ${shortUrl}`;
+      const text = `Hi, here's the payment link for ${studentName}'s tuition invoice: ${shortUrl}` + t("money.paymentLinkFooter", { url: window.location.origin + "/" });
       window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
     } catch (err: any) {
       toast.error(t("money.reminderFailed"), { description: err.message });

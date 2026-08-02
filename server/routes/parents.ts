@@ -1,11 +1,11 @@
 import express from "express";
 import crypto from "node:crypto";
-import { z } from "zod";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { withTransaction } from "../db.ts";
 import { authenticateToken, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
 import { setMembership } from "./members.ts";
+import { parentInviteRequestSchema, parentRedeemRequestSchema } from "../../shared/schemas/parents.ts";
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -24,7 +24,7 @@ router.post("/invites", async (req: AuthRequest, res, next) => {
     if (!req.user!.role || !STAFF_WHO_CAN_INVITE.includes(req.user!.role)) {
       return res.status(403).json({ error: { code: "forbidden", message: "Insufficient role" } });
     }
-    const { studentId } = z.object({ studentId: z.string().uuid() }).parse(req.body);
+    const { studentId } = parentInviteRequestSchema.parse(req.body);
 
     const { data: student, error: studentErr } = await supabaseAdmin
       .from("students").select("name, organization_id").eq("id", studentId).maybeSingle();
@@ -80,11 +80,6 @@ router.get("/invites/:token/preview", async (req: AuthRequest, res, next) => {
   } catch (err) { next(err); }
 });
 
-const redeemSchema = z.object({
-  token: z.string().min(10),
-  consent: z.literal(true),
-});
-
 // Creates the parent_links row (the only thing is_parent_of() checks) and
 // grants the parent role + org membership. The link + invite-burn happens in
 // one Postgres transaction; membership then follows as a second write, same
@@ -93,7 +88,7 @@ const redeemSchema = z.object({
 // required, not optional.
 router.post("/redeem", async (req: AuthRequest, res, next) => {
   try {
-    const body = redeemSchema.parse(req.body);
+    const body = parentRedeemRequestSchema.parse(req.body);
     const uid = req.user!.id;
 
     const invite = await loadInvite(body.token);

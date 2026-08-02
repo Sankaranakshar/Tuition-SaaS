@@ -19,7 +19,6 @@ export default function BillingInvoiceSettings() {
     rolloverArrears: false,
     statusMapping: 'manual',
     invoiceSchema: ['tutorId', 'courseId', 'studentId'],
-    excelExportFields: ['Invoice ID', 'Student Name', 'Amount', 'Status', 'Issue Date', 'Due Date', 'Services']
   });
 
   useEffect(() => {
@@ -76,20 +75,9 @@ export default function BillingInvoiceSettings() {
     }));
   };
 
-  const handleExcelFieldToggle = (field: string) => {
-    const currentFields = settings.excelExportFields || [];
-    if (currentFields.includes(field)) {
-      updateSetting('excelExportFields', currentFields.filter((f: string) => f !== field));
-    } else {
-      updateSetting('excelExportFields', [...currentFields, field]);
-    }
-  };
-
   if (!user || (user.role !== 'admin' && user.role !== 'tutor')) {
     return <div className="p-4 text-gray-500">You do not have permission to view billing settings.</div>;
   }
-
-  const availableExcelFields = ['Invoice ID', 'Student Name', 'Amount', 'Status', 'Issue Date', 'Due Date', 'Services', 'Tax', 'Discount'];
 
   return (
     <div className="space-y-6">
@@ -326,30 +314,6 @@ export default function BillingInvoiceSettings() {
                 <label htmlFor="rolloverArrears" className="ml-2 block text-sm text-gray-900">
                   Rollover Arrears (Add unpaid invoices to next month's billing cycle)
                 </label>
-              </div>
-            </div>
-          </section>
-
-          {/* 5. Document & Export Settings */}
-          <section>
-            <h3 className="text-md font-semibold text-gray-800 mb-4 border-b pb-2">5. Document & Export Settings</h3>
-
-            <div className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Excel Export Fields</label>
-                <div className="flex flex-wrap gap-2">
-                  {availableExcelFields.map(field => (
-                    <label key={field} className="inline-flex items-center bg-gray-50 px-3 py-2 rounded-md border border-gray-200 cursor-pointer hover:bg-gray-100">
-                      <input
-                        type="checkbox"
-                        checked={(settings.excelExportFields || []).includes(field)}
-                        onChange={() => handleExcelFieldToggle(field)}
-                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                      />
-                      <span className="ml-2 text-sm text-gray-700">{field}</span>
-                    </label>
-                  ))}
-                </div>
               </div>
             </div>
           </section>

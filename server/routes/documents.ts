@@ -1,10 +1,10 @@
 import express from "express";
 import multer from "multer";
 import { randomUUID } from "crypto";
-import { z } from "zod";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { authenticateToken, requireRole, requireOrg, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
+import { documentMetaRequestSchema } from "../../shared/schemas/documents.ts";
 
 // Documents used to be base64-encoded straight into a Firestore field
 // (fileUrl), never touching Cloud Storage at all: no org-isolated storage
@@ -48,17 +48,11 @@ function sanitizeFilename(name: string): string {
   return cleaned || "file";
 }
 
-const metaSchema = z.object({
-  studentId: z.string().uuid(),
-  category: z.string().min(1),
-  notes: z.string().optional().default(""),
-});
-
 router.post("/", requireRole(...CAN_UPLOAD), upload.single("file"), async (req: AuthRequest, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: { code: "no_file", message: "No file uploaded" } });
 
-    const body = metaSchema.parse(req.body);
+    const body = documentMetaRequestSchema.parse(req.body);
     const orgId = req.user!.organizationId!;
     const sniffed = sniffContentType(req.file.buffer);
     if (!sniffed) {

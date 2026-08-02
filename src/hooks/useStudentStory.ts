@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
+import { debounce } from "../lib/debounce";
 import type { TodayInvoice } from "../lib/today";
 import type { StorySession, StoryAssessment, StoryDocument, StoryPayment, StoryNote } from "../lib/studentStory";
 
@@ -207,17 +208,21 @@ export function useStudentStory(studentId: string | undefined) {
     // postgres_changes filters only support one simple column=eq condition
     // server-side (same constraint noted in the deleted StudentProfile.tsx);
     // scope each subscription to organization_id and let load() reapply the
-    // student-id filter.
+    // student-id filter. Org-wide scoping means any other student's session/
+    // invoice/etc change also fires this — debounced (and shared across every
+    // .on() below, since they all call the same load()) so a burst on several
+    // tables collapses into one reload instead of one per table per event.
+    const debouncedLoad = debounce(load, 200);
     const channel = supabase
       .channel(`student-story-${resolvedId}-${orgId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `id=eq.${resolvedId}` }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions", filter: `organization_id=eq.${orgId}` }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "assessments", filter: `organization_id=eq.${orgId}` }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `organization_id=eq.${orgId}` }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `organization_id=eq.${orgId}` }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "payments", filter: `organization_id=eq.${orgId}` }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `organization_id=eq.${orgId}` }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "student_notes", filter: `organization_id=eq.${orgId}` }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `id=eq.${resolvedId}` }, debouncedLoad)
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions", filter: `organization_id=eq.${orgId}` }, debouncedLoad)
+      .on("postgres_changes", { event: "*", schema: "public", table: "assessments", filter: `organization_id=eq.${orgId}` }, debouncedLoad)
+      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `organization_id=eq.${orgId}` }, debouncedLoad)
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `organization_id=eq.${orgId}` }, debouncedLoad)
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments", filter: `organization_id=eq.${orgId}` }, debouncedLoad)
+      .on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `organization_id=eq.${orgId}` }, debouncedLoad)
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_notes", filter: `organization_id=eq.${orgId}` }, debouncedLoad)
       .subscribe();
 
     return () => {

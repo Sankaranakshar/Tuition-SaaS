@@ -108,6 +108,7 @@ async function loadMembership(userId) {
      from organization_members om
      join organizations o on o.id = om.organization_id
      where om.user_id = $1
+     order by om.created_at asc
      limit 1`,
     [userId]
   );
@@ -268,7 +269,7 @@ router.get("/google/callback", async (req, res) => {
     );
     const { tokens } = await oauth2Client.getToken(code);
     if (tokens.refresh_token) {
-      const { data: membership, error: memErr } = await supabaseAdmin.from("organization_members").select("organization_id").eq("user_id", userId).limit(1).maybeSingle();
+      const { data: membership, error: memErr } = await supabaseAdmin.from("organization_members").select("organization_id").eq("user_id", userId).order("created_at", { ascending: true }).limit(1).maybeSingle();
       if (memErr) throw memErr;
       if (!membership) throw new Error("User has no organization membership");
       const { error: upsertErr } = await supabaseAdmin.from("google_tokens").upsert({
@@ -329,7 +330,7 @@ var settings_default = router;
 
 // server/routes/members.ts
 import express2 from "express";
-import { z } from "zod";
+import crypto2 from "node:crypto";
 
 // server/utils/audit.ts
 async function writeAudit(organizationId, actor, action, entityType, entityId, summary) {
@@ -352,25 +353,34 @@ async function writeAudit(organizationId, actor, action, entityType, entityId, s
   }
 }
 
+// shared/schemas/members.ts
+import { z } from "zod";
+var ORG_ROLES = ["owner", "admin", "tutor", "frontdesk", "accountant", "parent", "student"];
+var setMemberRoleRequestSchema = z.object({
+  userId: z.string().uuid(),
+  role: z.enum(ORG_ROLES)
+});
+var bootstrapOrgRequestSchema = z.object({ organizationName: z.string().min(2).max(120) });
+var INVITABLE_STAFF_ROLES = ["admin", "tutor", "frontdesk", "accountant"];
+var createStaffInviteRequestSchema = z.object({ role: z.enum(INVITABLE_STAFF_ROLES) });
+var staffRedeemRequestSchema = z.object({ token: z.string().min(10) });
+
 // server/routes/members.ts
 var router2 = express2.Router();
-var STAFF_ROLES = ["owner", "admin", "tutor", "frontdesk", "accountant"];
-var ALL_ROLES = [...STAFF_ROLES, "parent", "student"];
-var memberSchema = z.object({
-  userId: z.string().uuid(),
-  role: z.enum(ALL_ROLES)
-});
+var INVITE_TTL_MS = 7 * 24 * 3600 * 1e3;
 async function setMembership(orgId, userId, role, _actorId) {
   const { error } = await supabaseAdmin.from("organization_members").upsert({ organization_id: orgId, user_id: userId, role }, { onConflict: "organization_id,user_id" });
   if (error) throw error;
   invalidateMembership(userId);
+  const { error: profileErr } = await supabaseAdmin.from("profiles").update({ organization_id: orgId }).eq("id", userId);
+  if (profileErr) throw profileErr;
 }
 router2.post("/bootstrap", authenticateToken, async (req, res, next) => {
   try {
     if (req.user?.organizationId) {
       return res.status(409).json({ error: { code: "already_member", message: "User already belongs to an organization" } });
     }
-    const body = z.object({ organizationName: z.string().min(2).max(120) }).parse(req.body);
+    const body = bootstrapOrgRequestSchema.parse(req.body);
     const { data: org, error: orgErr } = await supabaseAdmin.from("organizations").insert({ name: body.organizationName }).select("id").single();
     if (orgErr) throw orgErr;
     await setMembership(org.id, req.user.id, "owner", req.user.id);
@@ -382,7 +392,7 @@ router2.post("/bootstrap", authenticateToken, async (req, res, next) => {
 });
 router2.put("/", authenticateToken, requireOrg, requireRole("owner", "admin"), async (req, res, next) => {
   try {
-    const body = memberSchema.parse(req.body);
+    const body = setMemberRoleRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
     if ((body.role === "owner" || body.role === "admin") && req.user.role !== "owner") {
       return res.status(403).json({ error: { code: "forbidden", message: "Only the owner can grant owner or admin roles" } });
@@ -406,6 +416,74 @@ router2.delete("/:userId", authenticateToken, requireOrg, requireRole("owner", "
     invalidateMembership(userId);
     await writeAudit(orgId, req.user.id, "member.remove", "organization_members", `${orgId}_${userId}`, {});
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+router2.post("/invites", authenticateToken, requireOrg, requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const body = createStaffInviteRequestSchema.parse(req.body);
+    const orgId = req.user.organizationId;
+    if (body.role === "admin" && req.user.role !== "owner") {
+      return res.status(403).json({ error: { code: "forbidden", message: "Only the owner can invite an admin" } });
+    }
+    const token = crypto2.randomBytes(24).toString("base64url");
+    const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
+    const { error } = await supabaseAdmin.from("staff_invites").insert({
+      token,
+      organization_id: orgId,
+      role: body.role,
+      invited_by: req.user.id,
+      expires_at: expiresAt.toISOString()
+    });
+    if (error) throw error;
+    await writeAudit(orgId, req.user.id, "staff_invite.create", "organization_members", orgId, { role: body.role, token: token.slice(0, 8) + "\u2026" });
+    res.status(201).json({ ok: true, token, expiresAt: expiresAt.toISOString(), role: body.role });
+  } catch (err) {
+    next(err);
+  }
+});
+async function loadStaffInvite(token) {
+  const { data: invite, error } = await supabaseAdmin.from("staff_invites").select("*").eq("token", token).maybeSingle();
+  if (error) throw error;
+  if (!invite) {
+    throw Object.assign(new Error("Invite not found"), { status: 404, code: "not_found" });
+  }
+  if (invite.used_at) {
+    throw Object.assign(new Error("Invite already used"), { status: 410, code: "invite_used" });
+  }
+  if (new Date(invite.expires_at).getTime() < Date.now()) {
+    throw Object.assign(new Error("Invite expired"), { status: 410, code: "invite_expired" });
+  }
+  return invite;
+}
+router2.get("/invites/:token/preview", authenticateToken, async (req, res, next) => {
+  try {
+    const invite = await loadStaffInvite(req.params.token);
+    const { data: org } = await supabaseAdmin.from("organizations").select("name").eq("id", invite.organization_id).maybeSingle();
+    res.json({ ok: true, organizationName: org?.name || null, role: invite.role });
+  } catch (err) {
+    next(err);
+  }
+});
+router2.post("/invites/redeem", authenticateToken, async (req, res, next) => {
+  try {
+    const body = staffRedeemRequestSchema.parse(req.body);
+    const uid = req.user.id;
+    const invite = await loadStaffInvite(body.token);
+    if (req.user.organizationId && req.user.organizationId !== invite.organization_id) {
+      return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to a different organization" } });
+    }
+    await withTransaction(async (client) => {
+      const freshInvite = await client.query(`select used_at from staff_invites where token = $1 for update`, [body.token]);
+      if (freshInvite.rows[0]?.used_at) {
+        throw Object.assign(new Error("Invite already used"), { status: 410, code: "invite_used" });
+      }
+      await client.query(`update staff_invites set used_at = now(), used_by = $1 where token = $2`, [uid, body.token]);
+    });
+    await setMembership(invite.organization_id, uid, invite.role, uid);
+    await writeAudit(invite.organization_id, uid, "staff_invite.redeem", "organization_members", `${invite.organization_id}_${uid}`, { role: invite.role });
+    res.json({ ok: true, organizationId: invite.organization_id, role: invite.role });
   } catch (err) {
     next(err);
   }
@@ -461,15 +539,15 @@ async function allocateInvoiceNumber(client, orgId, orgSlug, when = /* @__PURE__
 }
 
 // server/utils/razorpay.ts
-import crypto2 from "crypto";
+import crypto3 from "crypto";
 var RZP_API = "https://api.razorpay.com/v1";
 function verifyWebhookSignature(rawBody, signature, secret) {
   if (!signature || !secret) return false;
-  const expected = crypto2.createHmac("sha256", secret).update(rawBody).digest("hex");
+  const expected = crypto3.createHmac("sha256", secret).update(rawBody).digest("hex");
   const a = Buffer.from(expected, "utf8");
   const b = Buffer.from(signature, "utf8");
   if (a.length !== b.length) return false;
-  return crypto2.timingSafeEqual(a, b);
+  return crypto3.timingSafeEqual(a, b);
 }
 async function getGatewayCreds(orgId) {
   const { data, error } = await supabaseAdmin.from("payment_gateways").select("key_id, key_secret_enc, webhook_secret_enc").eq("organization_id", orgId).maybeSingle();
@@ -521,12 +599,22 @@ async function fetchPaymentLink(creds, linkId) {
 // server/utils/invoicePdf.ts
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+
+// shared/money.ts
+function rupeesToPaise(rupees) {
+  return Math.round(rupees * 100);
+}
+function paiseToRupees(paise2) {
+  return paise2 / 100;
+}
+
+// server/utils/invoicePdf.ts
 var inrNumber = new Intl.NumberFormat("en-IN", {
   maximumFractionDigits: 2,
   minimumFractionDigits: 0
 });
 function paise(v) {
-  return `Rs. ${inrNumber.format((v || 0) / 100)}`;
+  return `Rs. ${inrNumber.format(paiseToRupees(v || 0))}`;
 }
 function readDate(d) {
   if (!d) return null;
@@ -540,8 +628,8 @@ function formatDate(d) {
   return parsed.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 function resolveInvoiceTotals(inv) {
-  const total = inv.totalPaise ?? Math.round((inv.totalAmount || 0) * 100);
-  const subtotal = inv.subtotalPaise ?? Math.round((inv.subtotal ?? inv.totalAmount ?? 0) * 100);
+  const total = inv.totalPaise ?? rupeesToPaise(inv.totalAmount || 0);
+  const subtotal = inv.subtotalPaise ?? rupeesToPaise(inv.subtotal ?? inv.totalAmount ?? 0);
   const tax = inv.taxPaise ?? 0;
   const discount = inv.discountPaise ?? 0;
   const paid = inv.paidPaise ?? 0;
@@ -609,7 +697,7 @@ function renderInvoicePdf(input) {
     cursorY += 13;
   }
   cursorY += 12;
-  const items = invoice.items && invoice.items.length > 0 ? invoice.items : [{ description: "Tuition fees", quantity: 1, amountPaise: invoice.totalPaise || Math.round((invoice.totalAmount || 0) * 100) }];
+  const items = invoice.items && invoice.items.length > 0 ? invoice.items : [{ description: "Tuition fees", quantity: 1, amountPaise: invoice.totalPaise || rupeesToPaise(invoice.totalAmount || 0) }];
   autoTable(doc, {
     startY: cursorY,
     margin: { left: marginX, right: marginX },
@@ -737,12 +825,12 @@ router3.post("/invoices", requireRole(...CAN_MARK), async (req, res, next) => {
   try {
     const body = createInvoiceRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
-    const subtotalPaise = body.items.reduce((sum, it) => sum + Math.round(it.amount * it.quantity * 100), 0);
+    const subtotalPaise = body.items.reduce((sum, it) => sum + rupeesToPaise(it.amount * it.quantity), 0);
     const taxPaise = Math.round(subtotalPaise * body.taxPercentage / 100);
     const totalPaise = subtotalPaise + taxPaise;
     const items = body.items.map((it) => ({
       description: it.description,
-      amountPaise: Math.round(it.amount * 100),
+      amountPaise: rupeesToPaise(it.amount),
       quantity: it.quantity
     }));
     const { data: inv, error } = await supabaseAdmin.from("invoices").insert({
@@ -753,8 +841,8 @@ router3.post("/invoices", requireRole(...CAN_MARK), async (req, res, next) => {
       tax_paise: taxPaise,
       discount_paise: 0,
       total_paise: totalPaise,
-      total_amount: totalPaise / 100,
-      subtotal: subtotalPaise / 100,
+      total_amount: paiseToRupees(totalPaise),
+      subtotal: paiseToRupees(subtotalPaise),
       status: "unpaid",
       due_date: body.dueDate || null,
       items
@@ -784,7 +872,7 @@ router3.post("/wallets/topup", requireRole(...CAN_MONEY), async (req, res, next)
       );
       await client.query(
         `update wallets set balance_currency = balance_currency + $1 where id = $2`,
-        [body.amountPaise / 100, walletRes.rows[0].id]
+        [paiseToRupees(body.amountPaise), walletRes.rows[0].id]
       );
       await client.query(
         `insert into wallet_ledger (organization_id, student_id, type, credits, paise, reason, by, idempotency_key, at)
@@ -872,7 +960,7 @@ router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => 
       );
       const toBill = marks.filter((m) => m.shouldBill);
       if (toBill.length > 0) {
-        const feePaise = Math.round((template.fee_amount || 0) * 100);
+        const feePaise = rupeesToPaise(template.fee_amount || 0);
         const walletRes = await client.query(
           `select id, student_id, balance_credits, balance_currency from wallets
            where organization_id = $1 and student_id = any($2::uuid[])
@@ -891,7 +979,7 @@ router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => 
             creditWalletIds.push(w.id);
             ledger.push({ studentId: m.studentId, type: "debit_credit", credits: -1, paise: 0 });
             billed.push(m.studentId);
-          } else if (w && Math.round((w.balance_currency || 0) * 100) >= feePaise) {
+          } else if (w && rupeesToPaise(w.balance_currency || 0) >= feePaise) {
             currencyWalletIds.push(w.id);
             ledger.push({ studentId: m.studentId, type: "debit_currency", credits: 0, paise: -feePaise });
             billed.push(m.studentId);
@@ -909,7 +997,7 @@ router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => 
         if (currencyWalletIds.length > 0) {
           await client.query(
             `update wallets set balance_currency = balance_currency - $1 where id = any($2::uuid[])`,
-            [feePaise / 100, currencyWalletIds]
+            [paiseToRupees(feePaise), currencyWalletIds]
           );
         }
         if (ledger.length > 0) {
@@ -940,7 +1028,7 @@ router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => 
               orgId,
               session.tutor_id,
               feePaise,
-              feePaise / 100,
+              paiseToRupees(feePaise),
               due.toISOString().split("T")[0],
               JSON.stringify(items),
               JSON.stringify({ kind: "attendance", sessionId }),
@@ -1188,7 +1276,7 @@ router3.get("/invoices/:invoiceId/pdf", async (req, res, next) => {
   try {
     const orgId = req.user.organizationId;
     const role = req.user.role;
-    const STAFF_ROLES2 = /* @__PURE__ */ new Set(["owner", "admin", "tutor", "frontdesk", "accountant"]);
+    const STAFF_ROLES = /* @__PURE__ */ new Set(["owner", "admin", "tutor", "frontdesk", "accountant"]);
     const { data: inv, error } = await supabaseAdmin.from("invoices").select("*").eq("id", req.params.invoiceId).maybeSingle();
     if (error) throw error;
     if (!inv || inv.organization_id !== orgId) {
@@ -1203,7 +1291,7 @@ router3.get("/invoices/:invoiceId/pdf", async (req, res, next) => {
       if (inv.tutor_id !== req.user.id) {
         return res.status(403).json({ error: { code: "forbidden", message: "Tutors can only download their own invoices" } });
       }
-    } else if (!STAFF_ROLES2.has(role || "")) {
+    } else if (!STAFF_ROLES.has(role || "")) {
       return res.status(403).json({ error: { code: "forbidden", message: "No access to invoice PDF" } });
     }
     const [{ data: org }, { data: gw }, { data: student }] = await Promise.all([
@@ -1370,16 +1458,15 @@ var billing_default = router3;
 
 // server/routes/gateway.ts
 import express4 from "express";
+
+// shared/schemas/gateway.ts
 import { z as z3 } from "zod";
-var router4 = express4.Router();
-router4.use(authenticateToken, requireOrg);
-var CAN_CONFIG = ["owner", "admin"];
-var credsSchema = z3.object({
+var gatewayCredsRequestSchema = z3.object({
   keyId: z3.string().min(6),
   keySecret: z3.string().min(6),
   webhookSecret: z3.string().min(6)
 });
-var taxSchema = z3.object({
+var gatewayTaxRequestSchema = z3.object({
   legalName: z3.string().max(200).optional(),
   gstin: z3.string().max(20).optional(),
   addressLines: z3.array(z3.string().max(200)).max(5).optional(),
@@ -1387,6 +1474,11 @@ var taxSchema = z3.object({
   defaultTaxRatePercent: z3.number().min(0).max(28).optional(),
   invoicePrefix: z3.string().max(8).optional()
 });
+
+// server/routes/gateway.ts
+var router4 = express4.Router();
+router4.use(authenticateToken, requireOrg);
+var CAN_CONFIG = ["owner", "admin"];
 router4.get("/", requireRole(...CAN_CONFIG), async (req, res, next) => {
   try {
     const orgId = req.user.organizationId;
@@ -1404,7 +1496,7 @@ router4.get("/", requireRole(...CAN_CONFIG), async (req, res, next) => {
 });
 router4.put("/razorpay", requireRole(...CAN_CONFIG), async (req, res, next) => {
   try {
-    const { keyId, keySecret, webhookSecret } = credsSchema.parse(req.body);
+    const { keyId, keySecret, webhookSecret } = gatewayCredsRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
     const { error } = await supabaseAdmin.from("payment_gateways").upsert({
       organization_id: orgId,
@@ -1439,7 +1531,7 @@ router4.delete("/razorpay", requireRole(...CAN_CONFIG), async (req, res, next) =
 });
 router4.put("/tax", requireRole(...CAN_CONFIG), async (req, res, next) => {
   try {
-    const tax = taxSchema.parse(req.body);
+    const tax = gatewayTaxRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
     const { error } = await supabaseAdmin.from("payment_gateways").upsert({
       organization_id: orgId,
@@ -1456,12 +1548,21 @@ var gateway_default = router4;
 
 // server/routes/parents.ts
 import express5 from "express";
-import crypto3 from "node:crypto";
+import crypto4 from "node:crypto";
+
+// shared/schemas/parents.ts
 import { z as z4 } from "zod";
+var parentInviteRequestSchema = z4.object({ studentId: z4.string().uuid() });
+var parentRedeemRequestSchema = z4.object({
+  token: z4.string().min(10),
+  consent: z4.literal(true)
+});
+
+// server/routes/parents.ts
 var router5 = express5.Router();
 router5.use(authenticateToken);
 var STAFF_WHO_CAN_INVITE = ["owner", "admin", "frontdesk"];
-var INVITE_TTL_MS = 7 * 24 * 3600 * 1e3;
+var INVITE_TTL_MS2 = 7 * 24 * 3600 * 1e3;
 router5.post("/invites", async (req, res, next) => {
   try {
     const orgId = req.user.organizationId;
@@ -1471,14 +1572,14 @@ router5.post("/invites", async (req, res, next) => {
     if (!req.user.role || !STAFF_WHO_CAN_INVITE.includes(req.user.role)) {
       return res.status(403).json({ error: { code: "forbidden", message: "Insufficient role" } });
     }
-    const { studentId } = z4.object({ studentId: z4.string().uuid() }).parse(req.body);
+    const { studentId } = parentInviteRequestSchema.parse(req.body);
     const { data: student, error: studentErr } = await supabaseAdmin.from("students").select("name, organization_id").eq("id", studentId).maybeSingle();
     if (studentErr) throw studentErr;
     if (!student || student.organization_id !== orgId) {
       return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
     }
-    const token = crypto3.randomBytes(24).toString("base64url");
-    const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
+    const token = crypto4.randomBytes(24).toString("base64url");
+    const expiresAt = new Date(Date.now() + INVITE_TTL_MS2);
     const { error: inviteErr } = await supabaseAdmin.from("parent_invites").insert({
       token,
       organization_id: orgId,
@@ -1522,13 +1623,9 @@ router5.get("/invites/:token/preview", async (req, res, next) => {
     next(err);
   }
 });
-var redeemSchema = z4.object({
-  token: z4.string().min(10),
-  consent: z4.literal(true)
-});
 router5.post("/redeem", async (req, res, next) => {
   try {
-    const body = redeemSchema.parse(req.body);
+    const body = parentRedeemRequestSchema.parse(req.body);
     const uid = req.user.id;
     const invite = await loadInvite(body.token);
     if (req.user.organizationId && req.user.organizationId !== invite.organization_id) {
@@ -1568,12 +1665,18 @@ var parents_default = router5;
 
 // server/routes/students.ts
 import express6 from "express";
-import crypto4 from "node:crypto";
+import crypto5 from "node:crypto";
+
+// shared/schemas/students.ts
 import { z as z5 } from "zod";
+var studentInviteRequestSchema = z5.object({ studentId: z5.string().uuid() });
+var studentRedeemRequestSchema = z5.object({ token: z5.string().min(10) });
+
+// server/routes/students.ts
 var router6 = express6.Router();
 router6.use(authenticateToken);
 var STAFF_WHO_CAN_INVITE2 = ["owner", "admin", "frontdesk"];
-var INVITE_TTL_MS2 = 7 * 24 * 3600 * 1e3;
+var INVITE_TTL_MS3 = 7 * 24 * 3600 * 1e3;
 router6.post("/invites", async (req, res, next) => {
   try {
     const orgId = req.user.organizationId;
@@ -1583,7 +1686,7 @@ router6.post("/invites", async (req, res, next) => {
     if (!req.user.role || !STAFF_WHO_CAN_INVITE2.includes(req.user.role)) {
       return res.status(403).json({ error: { code: "forbidden", message: "Insufficient role" } });
     }
-    const { studentId } = z5.object({ studentId: z5.string().uuid() }).parse(req.body);
+    const { studentId } = studentInviteRequestSchema.parse(req.body);
     const { data: student, error: studentErr } = await supabaseAdmin.from("students").select("name, organization_id, student_user_id").eq("id", studentId).maybeSingle();
     if (studentErr) throw studentErr;
     if (!student || student.organization_id !== orgId) {
@@ -1592,8 +1695,8 @@ router6.post("/invites", async (req, res, next) => {
     if (student.student_user_id) {
       return res.status(409).json({ error: { code: "already_linked", message: "This student already has a portal account linked" } });
     }
-    const token = crypto4.randomBytes(24).toString("base64url");
-    const expiresAt = new Date(Date.now() + INVITE_TTL_MS2);
+    const token = crypto5.randomBytes(24).toString("base64url");
+    const expiresAt = new Date(Date.now() + INVITE_TTL_MS3);
     const { error: inviteErr } = await supabaseAdmin.from("student_invites").insert({
       token,
       organization_id: orgId,
@@ -1637,10 +1740,9 @@ router6.get("/invites/:token/preview", async (req, res, next) => {
     next(err);
   }
 });
-var redeemSchema2 = z5.object({ token: z5.string().min(10) });
 router6.post("/redeem", async (req, res, next) => {
   try {
-    const body = redeemSchema2.parse(req.body);
+    const body = studentRedeemRequestSchema.parse(req.body);
     const uid = req.user.id;
     const invite = await loadInvite2(body.token);
     if (req.user.organizationId && req.user.organizationId !== invite.organization_id) {
@@ -2292,7 +2394,16 @@ var cron_default = router9;
 import express10 from "express";
 import multer from "multer";
 import { randomUUID } from "crypto";
+
+// shared/schemas/documents.ts
 import { z as z7 } from "zod";
+var documentMetaRequestSchema = z7.object({
+  studentId: z7.string().uuid(),
+  category: z7.string().min(1),
+  notes: z7.string().optional().default("")
+});
+
+// server/routes/documents.ts
 var router10 = express10.Router();
 router10.use(authenticateToken, requireOrg);
 var BUCKET = "documents";
@@ -2322,15 +2433,10 @@ function sanitizeFilename(name) {
   const cleaned = base.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-150);
   return cleaned || "file";
 }
-var metaSchema = z7.object({
-  studentId: z7.string().uuid(),
-  category: z7.string().min(1),
-  notes: z7.string().optional().default("")
-});
 router10.post("/", requireRole(...CAN_UPLOAD), upload.single("file"), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: { code: "no_file", message: "No file uploaded" } });
-    const body = metaSchema.parse(req.body);
+    const body = documentMetaRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
     const sniffed = sniffContentType(req.file.buffer);
     if (!sniffed) {

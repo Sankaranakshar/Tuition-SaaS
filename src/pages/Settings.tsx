@@ -2,14 +2,16 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { Calendar, CheckCircle, AlertCircle, Settings as SettingsIcon, Building, Clock, User as UserIcon } from "lucide-react";
 import { supabase } from "../supabase";
+import { debounce } from "../lib/debounce";
 import TutorAvailabilitySettings from "../components/TutorAvailabilitySettings";
 import OrganizationSettings from "../components/OrganizationSettings";
 import BillingInvoiceSettings from "../components/BillingInvoiceSettings";
 import TutorProfileSettings from "../components/TutorProfileSettings";
 import SubscriptionSettings from "../components/SubscriptionSettings";
 import OrgExportSettings from "../components/OrgExportSettings";
+import TeamSettings from "../components/TeamSettings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Receipt, CreditCard, Database } from "lucide-react";
+import { Receipt, CreditCard, Database, Users } from "lucide-react";
 
 export default function Settings() {
   const { user } = useAuth();
@@ -36,12 +38,13 @@ export default function Settings() {
 
     load();
 
+    const debouncedLoad = debounce(load, 200);
     const channel = supabase
       .channel(`profile-google-calendar-${user.id}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "profiles", filter: `id=eq.${user.id}` },
-        load
+        debouncedLoad
       )
       .subscribe();
 
@@ -150,6 +153,12 @@ export default function Settings() {
             <TabsTrigger value="organization" className="flex items-center">
               <Building className="w-4 h-4 mr-2" />
               Organization
+            </TabsTrigger>
+          )}
+          {(user?.organizationRole === "owner" || user?.organizationRole === "admin") && (
+            <TabsTrigger value="team" className="flex items-center">
+              <Users className="w-4 h-4 mr-2" />
+              Team
             </TabsTrigger>
           )}
           {(user?.role === "admin" || user?.role === "tutor") && (
@@ -283,6 +292,12 @@ export default function Settings() {
         {(user?.role === "admin" || user?.role === "tutor") && (
           <TabsContent value="organization">
             <OrganizationSettings />
+          </TabsContent>
+        )}
+
+        {(user?.organizationRole === "owner" || user?.organizationRole === "admin") && (
+          <TabsContent value="team">
+            <TeamSettings />
           </TabsContent>
         )}
 

@@ -1,11 +1,11 @@
 import express from "express";
 import crypto from "node:crypto";
-import { z } from "zod";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { withTransaction } from "../db.ts";
 import { authenticateToken, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
 import { setMembership } from "./members.ts";
+import { studentInviteRequestSchema, studentRedeemRequestSchema } from "../../shared/schemas/students.ts";
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -27,7 +27,7 @@ router.post("/invites", async (req: AuthRequest, res, next) => {
     if (!req.user!.role || !STAFF_WHO_CAN_INVITE.includes(req.user!.role)) {
       return res.status(403).json({ error: { code: "forbidden", message: "Insufficient role" } });
     }
-    const { studentId } = z.object({ studentId: z.string().uuid() }).parse(req.body);
+    const { studentId } = studentInviteRequestSchema.parse(req.body);
 
     const { data: student, error: studentErr } = await supabaseAdmin
       .from("students").select("name, organization_id, student_user_id").eq("id", studentId).maybeSingle();
@@ -86,15 +86,13 @@ router.get("/invites/:token/preview", async (req: AuthRequest, res, next) => {
   } catch (err) { next(err); }
 });
 
-const redeemSchema = z.object({ token: z.string().min(10) });
-
 // Claims the students row (sets student_user_id — the only thing
 // is_student_self() checks) and grants the student role + org membership.
 // The claim + invite-burn happens in one Postgres transaction; membership
 // then follows as a second write, same two-step posture as parents.ts redeem.
 router.post("/redeem", async (req: AuthRequest, res, next) => {
   try {
-    const body = redeemSchema.parse(req.body);
+    const body = studentRedeemRequestSchema.parse(req.body);
     const uid = req.user!.id;
 
     const invite = await loadInvite(body.token);

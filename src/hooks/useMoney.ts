@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { useRealtimeList } from "./useRealtimeList";
+import { debounce } from "../lib/debounce";
+import { rupeesToPaise } from "../../shared/money";
 import type { RealtimeMergeConfig } from "./realtimeMerge";
 import type { MoneyInvoice, MoneyWallet, MoneyPayment } from "../lib/money";
 
@@ -102,7 +104,7 @@ export function useMoneyWallets() {
       studentId: row.student_id,
       studentName: nameOf.get(row.student_id) || "Unknown student",
       balanceCredits: row.balance_credits || 0,
-      balanceCurrencyPaise: Math.round((row.balance_currency || 0) * 100),
+      balanceCurrencyPaise: rupeesToPaise(row.balance_currency || 0),
     }));
   }, [orgId]);
   return useRealtimeList<MoneyWallet>("money", "wallets", orgId, load);
@@ -164,7 +166,7 @@ export function useAvgSessionFeePaise(): number {
         .limit(200);
       if (cancelled || error || !data || data.length === 0) return;
       const rupees = data.reduce((sum: number, row: any) => sum + (row.fee_amount || 0), 0) / data.length;
-      setAvgPaise(Math.round(rupees * 100));
+      setAvgPaise(rupeesToPaise(rupees));
     })();
     return () => {
       cancelled = true;
@@ -264,7 +266,7 @@ export function useSelfMoney(): SelfMoney {
                 studentId: student.id,
                 studentName: student.name,
                 balanceCredits: w.balance_credits || 0,
-                balanceCurrencyPaise: Math.round((w.balance_currency || 0) * 100),
+                balanceCurrencyPaise: rupeesToPaise(w.balance_currency || 0),
               }
             : { studentId: student.id, studentName: student.name, balanceCredits: 0, balanceCurrencyPaise: 0 }
         );
@@ -292,11 +294,12 @@ export function useSelfMoney(): SelfMoney {
 
   useEffect(() => {
     if (!studentId) return;
+    const debouncedRefetch = debounce(refetch, 200);
     const channel = supabase
       .channel(`money-self-${studentId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `student_id=eq.${studentId}` }, refetch)
-      .on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `student_id=eq.${studentId}` }, refetch)
-      .on("postgres_changes", { event: "*", schema: "public", table: "wallet_ledger", filter: `student_id=eq.${studentId}` }, refetch)
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `student_id=eq.${studentId}` }, debouncedRefetch)
+      .on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `student_id=eq.${studentId}` }, debouncedRefetch)
+      .on("postgres_changes", { event: "*", schema: "public", table: "wallet_ledger", filter: `student_id=eq.${studentId}` }, debouncedRefetch)
       .subscribe();
     return () => {
       supabase.removeChannel(channel);

@@ -67,7 +67,8 @@ router.get("/google/callback", async (req, res) => {
       // google_tokens is keyed by (organization_id, user_id) — the state
       // token only carries userId, so resolve the org via membership here.
       const { data: membership, error: memErr } = await supabaseAdmin
-        .from("organization_members").select("organization_id").eq("user_id", userId).limit(1).maybeSingle();
+        .from("organization_members").select("organization_id").eq("user_id", userId)
+        .order("created_at", { ascending: true }).limit(1).maybeSingle();
       if (memErr) throw memErr;
       if (!membership) throw new Error("User has no organization membership");
 

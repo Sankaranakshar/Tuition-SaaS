@@ -6,6 +6,7 @@ import { format, isSameDay, parseISO, isAfter, startOfDay } from "date-fns";
 import { Link } from "react-router-dom";
 import LoadingSpinner from "../components/LoadingSpinner";
 import { formatINR } from "../lib/format";
+import { debounce } from "../lib/debounce";
 
 export default function StudentDashboard() {
   const { user } = useAuth();
@@ -119,17 +120,19 @@ export default function StudentDashboard() {
     };
     loadAll();
 
-    // postgres_changes filters only support one simple column=eq condition, and
-    // none of these tables are org-scoped filterable by this student directly
-    // via a single column here, so scope each subscription to its own table
-    // and just refetch that table's query on any change within the org-visible
-    // rows RLS already restricts to this student.
+    // class_sessions has no plain student_id column (membership is an
+    // array-contains check on student_user_ids), so postgres_changes' single
+    // column=eq filter genuinely can't scope it — left broad, debounced, and
+    // loadSessions() reapplies the real filter on refetch. assessments/
+    // invoices/wallets DO have a plain student_id column, so (unlike the
+    // stale comment this replaces claimed) they're filtered directly instead
+    // of firing this student's dashboard on every other student's row change.
     const channel = supabase
       .channel(`student-dashboard-${user.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions" }, loadSessions)
-      .on("postgres_changes", { event: "*", schema: "public", table: "assessments" }, loadAssessments)
-      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, loadInvoices)
-      .on("postgres_changes", { event: "*", schema: "public", table: "wallets" }, loadWallet)
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions" }, debounce(loadSessions, 200))
+      .on("postgres_changes", { event: "*", schema: "public", table: "assessments", filter: `student_id=eq.${user.id}` }, debounce(loadAssessments, 200))
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `student_id=eq.${user.id}` }, debounce(loadInvoices, 200))
+      .on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `student_id=eq.${user.id}` }, debounce(loadWallet, 200))
       .subscribe();
 
     return () => {
@@ -182,16 +185,16 @@ export default function StudentDashboard() {
             {upcomingClasses.length > 0 ? (
               <ul className="divide-y divide-gray-100">
                 {upcomingClasses.map((session) => (
-                  <li key={session.id} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
-                    <div>
+                  <li key={session.id} className="px-6 py-4 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors">
+                    <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-900">{session.title || 'Class Session'}</p>
                       <p className="text-sm text-gray-500 flex items-center mt-1">
-                        <Clock className="w-4 h-4 mr-1" />
+                        <Clock className="w-4 h-4 mr-1 shrink-0" />
                         {format(parseISO(session.startTime), 'MMM d, yyyy')} • {format(parseISO(session.startTime), 'h:mm a')} - {format(parseISO(session.endTime), 'h:mm a')}
                       </p>
                     </div>
-                    <div className="flex items-center space-x-3">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${session.isOnline ? 'bg-indigo-50 text-indigo-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                    <div className="flex items-center space-x-3 shrink-0">
+                      <span className={`whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-medium ${session.isOnline ? 'bg-indigo-50 text-indigo-700' : 'bg-emerald-50 text-emerald-700'}`}>
                         {session.isOnline ? 'Online' : 'In-Person'}
                       </span>
                       {session.isOnline && session.meetingLink && (

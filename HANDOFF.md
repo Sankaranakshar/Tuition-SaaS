@@ -4,7 +4,7 @@
 
 **Companion docs:** [DEV_PLAN.md](DEV_PLAN.md) is what is left to build. [REDESIGN.md](REDESIGN.md) is the product-experience spec. [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) is strategy (its architecture and security sections are Firestore-era history). [docs/BUILD_LOG_ARCHIVE.md](docs/BUILD_LOG_ARCHIVE.md) is the old append-only build log, kept for narrative detail only. [docs/OPTIMIZATION_AUDIT.md](docs/OPTIMIZATION_AUDIT.md) is a 2026-07-26 performance/correctness audit; its fixes are applied (commit `b15f691`), see §8 for the two most consequential findings.
 
-_Last verified 2026-08-01 against commit `b15f691`, working tree clean. Every number below was re-run, not inherited._
+_Last verified 2026-08-02 against commit `861e50c` plus an uncommitted tech-debt sweep (DEV_PLAN §4) and the Tech Debt #1 invite/team-management feature on top. Every number below was re-run, not inherited._
 
 ---
 
@@ -20,20 +20,20 @@ Multi-tenant SaaS for Indian tuition centers: INR, GST invoices, UPI/Razorpay co
 | 1 | Payments, Today workspace, parent portal, live infra, wedge demo | Complete, money loop verified live |
 | 2 | People, Student Story, Money, Inbox, Onboarding | Complete, all 14 legacy pages deleted |
 | 3 | Schedule rebuild, subscription billing, super-admin, org export, audit log | Complete, all five browser-verified |
-| 3 (rest) | Hardening: axe pass, route contracts, optimization audit, and real-scale k6 (p95 79-101ms vs 400ms target, live-prod verified 2026-08-01) done; external pentest open | **Active**, see DEV_PLAN §2 |
-| 4 | Mobile polish, growth loop, AI morning brief | Not started |
+| 3 (rest) | Hardening: axe pass, route contracts, optimization audit, and real-scale k6 (p95 79-101ms vs 400ms target, live-prod verified 2026-08-01) done; external pentest open | Only the pentest remains, see DEV_PLAN §2 |
+| 4 | Mobile polish (done); growth-loop payment-link footer (done, not live-verified — no Razorpay creds locally); AI morning brief, reporting, activation-funnel analytics not started | **Active**, see DEV_PLAN §3 |
 | External | Razorpay live keys, Google OAuth, phone OTP, Sentry, staging, legal | Deferred by founder, see §7 |
 
-**Gates, all re-run and green on 2026-08-01:**
+**Gates, all re-run and green on 2026-08-02:**
 
 | Gate | Command | Result |
 |---|---|---|
 | Typecheck | `npm run lint` | clean |
-| Unit | `npm test` | 167/167 (14 files) |
-| RLS / authorization | `npm run test:rls` | 80/80 (4 files) |
-| Route contracts | `npm run test:contract` | 179/179 (14 files) |
-| Build | `npm run build` | passes, server bundle 127.7 KB |
-| Bundle budget | `npm run check:bundle-size` | 196.8 KB gzip, budget 260 KB |
+| Unit | `npm test` | 177/177 (16 files) |
+| RLS / authorization | `npm run test:rls` | 81/81 (4 files) |
+| Route contracts | `npm run test:contract` | 195/195 (14 files) |
+| Build | `npm run build` | passes, server bundle 132.3 KB |
+| Bundle budget | `npm run check:bundle-size` | 198.1 KB gzip, budget 260 KB |
 | API bundle | `npm run build:api && npm run check:api-bundle` | all 15 route mounts present |
 
 Run all seven before every commit. None of them need Docker, Java, or a live database.
@@ -137,8 +137,8 @@ Each of these cost real debugging time. They are distilled here so they cost nob
 
 ## 9. What is verified, and what is not
 
-**Verified live in a browser:** signup, onboarding (solo and center, CSV import, invite redeem), course and class creation, drag-reschedule with conflict rejection, attendance, invoice accrual and PDF download, manual payment, Money's Outstanding and insights, Inbox class channels and DM and archive, student-sees-own-session, Plan and Billing with the real student-cap trigger, the super-admin console including impersonation link generation, org export, and the audit log.
+**Verified live in a browser:** signup, onboarding (solo and center, CSV import, invite redeem), course and class creation, drag-reschedule with conflict rejection, attendance, invoice accrual and PDF download, manual payment, Money's Outstanding and insights, Inbox class channels and DM and archive, student-sees-own-session, Plan and Billing with the real student-cap trigger, the super-admin console including impersonation link generation, org export, and the audit log. **Also 2026-08-02:** generating a parent/student invite link from a student's row in People.tsx, and generating a staff invite link (with a role picker) from Settings → Team — both previously nonexistent UI (see DEV_PLAN's Tech Debt #1 closure note) — were clicked live against production and produced real tokens/rows.
 
-**Built and covered by tests, but never clicked in a browser.** Not known-broken, just unexercised: admin verify/revoke on another tutor (also gated on Tech Debt #1, the unreachable admin tier), Student Story's Record Payment composer and the parent-facing view, Money's wallet top-up and bulk reminder links and invoice void, Inbox's anchor cards and snooze, Onboarding's parent invite-redeem path, Schedule's cancel-session popover and month-view day-click, and Supabase Storage upload/download through the app (no file has ever been uploaded against the live project).
+**Built and covered by tests, but never clicked in a browser.** Not known-broken, just unexercised: Student Story's Record Payment composer and the parent-facing view, Money's wallet top-up and bulk reminder links and invoice void, Inbox's anchor cards and snooze, the staff-invite redeem screen (new 2026-08-02; parent/student redeem screens were separately verified live pre-existing), Schedule's cancel-session popover and month-view day-click, and Supabase Storage upload/download through the app (no file has ever been uploaded against the live project). (Admin verify/revoke on another tutor **is** now exercised — Tech Debt #1's client-side gating bug was fixed 2026-08-01 and browser-verified against the real org owner; see DEV_PLAN §4 item 1.)
 
 **Blocked on the founder's deferral, not on engineering:** parent portal at 375px, Google OAuth, phone OTP, and any real Razorpay flow.

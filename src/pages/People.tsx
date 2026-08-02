@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   Plus, Search, Trash2, FileText, MessageSquare, Receipt, Download,
-  CheckCircle, XCircle, Users, TrendingUp, UserCircle, GraduationCap,
+  CheckCircle, XCircle, Users, TrendingUp, UserCircle, GraduationCap, UserPlus, Copy,
 } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
@@ -17,8 +17,9 @@ import {
   rankStudentsByAttention, buildLeadFunnel, rankLeadsByGoingCold,
   LEAD_FUNNEL_STAGES, type AttentionReason,
 } from "../lib/people";
-import { uploadDocument, getDocumentUrl, deleteDocument } from "../lib/api";
+import { uploadDocument, getDocumentUrl, deleteDocument, createParentInvite, createStudentInvite } from "../lib/api";
 import { planLimitErrorMessage } from "../lib/subscription";
+import { debounce } from "../lib/debounce";
 
 type Lens = "students" | "leads" | "parents" | "tutors";
 const LENSES: { key: Lens; labelKey: string; icon: typeof Users }[] = [
@@ -104,6 +105,7 @@ function StudentsLens({ search, user, navigate, t }: any) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [modalStudent, setModalStudent] = useState<StudentRow | "new" | null>(null);
   const [docsStudent, setDocsStudent] = useState<StudentRow | null>(null);
+  const [inviteStudent, setInviteStudent] = useState<StudentRow | null>(null);
   const [toArchive, setToArchive] = useState<string | null>(null);
 
   const ranked = useMemo(() => {
@@ -214,6 +216,9 @@ function StudentsLens({ search, user, navigate, t }: any) {
                     onClick={() => navigate(`/app/students/${student.id}`)}
                     actions={
                       <>
+                        <button onClick={(e) => { e.stopPropagation(); setInviteStudent(student); }} title={t("people.invite")} className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
+                          <UserPlus className="h-4 w-4" />
+                        </button>
                         <button onClick={(e) => { e.stopPropagation(); setDocsStudent(student); }} title="Documents" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
                           <FileText className="h-4 w-4" />
                         </button>
@@ -245,6 +250,7 @@ function StudentsLens({ search, user, navigate, t }: any) {
         />
       )}
       {docsStudent && <DocumentsModal student={docsStudent} onClose={() => setDocsStudent(null)} />}
+      {inviteStudent && <InviteModal student={inviteStudent} onClose={() => setInviteStudent(null)} />}
       {toArchive && (
         <ConfirmModal
           title={t("people.archiveTitle")}
@@ -341,7 +347,7 @@ function DocumentsModal({ student, onClose }: any) {
     load();
     const channel = supabase
       .channel(`people-documents-${student.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `student_id=eq.${student.id}` }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `student_id=eq.${student.id}` }, debounce(load, 200))
       .subscribe();
     return () => { cancelled = true; supabase.removeChannel(channel); };
   }, [student.id]);
@@ -413,6 +419,90 @@ function DocumentsModal({ student, onClose }: any) {
             </ul>
           )}
         </div>
+      </div>
+    </Modal>
+  );
+}
+
+// Tech Debt #1 follow-up: createParentInvite/createStudentInvite (lib/api.ts)
+// and the full redeem flow (Onboarding.tsx) already existed and were tested,
+// but no page ever called the create side — staff had no way to actually
+// generate a link. This modal is that missing piece.
+function InviteLinkGenerator({ label, hint, onGenerate }: { label: string; hint: string; onGenerate: () => Promise<{ link: string; expiresAt: string }> }) {
+  const { t } = useTranslation();
+  const [link, setLink] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const generate = async () => {
+    setLoading(true);
+    try {
+      const result = await onGenerate();
+      setLink(result.link);
+      setExpiresAt(result.expiresAt);
+    } catch (err: any) {
+      toast.error(t("people.inviteFailed"), { description: err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copy = async () => {
+    if (!link) return;
+    await navigator.clipboard.writeText(link);
+    toast.success(t("people.inviteCopied"));
+  };
+
+  return (
+    <div className="space-y-2 rounded-md border border-gray-200 p-3">
+      <div className="text-sm font-medium text-gray-900">{label}</div>
+      <p className="text-xs text-gray-500">{hint}</p>
+      {link ? (
+        <div className="space-y-1">
+          <div className="flex gap-2">
+            <input readOnly value={link} className="w-full rounded-md border border-gray-300 bg-gray-50 px-2 py-1.5 text-xs text-gray-700" />
+            <button onClick={copy} title={t("people.inviteCopy")} className="shrink-0 rounded-md border border-gray-300 px-2 py-1.5 text-gray-500 hover:bg-gray-50">
+              <Copy className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {expiresAt && <p className="text-xs text-gray-400">{t("people.inviteExpires", { date: new Date(expiresAt).toLocaleDateString() })}</p>}
+        </div>
+      ) : (
+        <button
+          onClick={generate}
+          disabled={loading}
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {loading ? t("people.inviteGenerating") : t("people.inviteGenerate")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function InviteModal({ student, onClose }: { student: StudentRow; onClose: () => void }) {
+  const { t } = useTranslation();
+  const origin = window.location.origin;
+
+  return (
+    <Modal onClose={onClose} title={t("people.inviteTitle", { name: student.name })}>
+      <div className="space-y-4">
+        <InviteLinkGenerator
+          label={t("people.inviteParentSection")}
+          hint={t("people.inviteParentHint")}
+          onGenerate={async () => {
+            const result = await createParentInvite(student.id);
+            return { link: `${origin}/onboarding?invite=${result.token}`, expiresAt: result.expiresAt };
+          }}
+        />
+        <InviteLinkGenerator
+          label={t("people.inviteStudentSection")}
+          hint={t("people.inviteStudentHint")}
+          onGenerate={async () => {
+            const result = await createStudentInvite(student.id);
+            return { link: `${origin}/onboarding?studentInvite=${result.token}`, expiresAt: result.expiresAt };
+          }}
+        />
       </div>
     </Modal>
   );
@@ -637,7 +727,7 @@ function TutorsLens({ search, user, t }: any) {
   const filtered = tutors.filter((tu) => tu.fullName.toLowerCase().includes(search.toLowerCase()));
   // Verification is admin-only (matches the old Admin.tsx gate); the
   // directory itself is visible to any staff role per REDESIGN §6.2.
-  const canVerify = user?.role_type === "admin" || user?.role === "admin";
+  const canVerify = user?.organizationRole === "owner" || user?.organizationRole === "admin";
 
   const setVerified = async (userId: string, isVerified: boolean) => {
     try {

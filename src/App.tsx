@@ -86,6 +86,16 @@ function capturePendingStudentInvite() {
 }
 capturePendingStudentInvite();
 
+// Same deep-link problem as the two invites above (Tech Debt #1): a
+// logged-out invitee opening /onboarding?staffInvite=TOKEN gets bounced
+// through /login → /app before landing on /onboarding, dropping the query
+// string along the way.
+function capturePendingStaffInvite() {
+  const token = new URLSearchParams(window.location.search).get("staffInvite");
+  if (token) sessionStorage.setItem("pendingStaffInvite", token);
+}
+capturePendingStaffInvite();
+
 export default function App() {
   return (
     <AuthProvider>

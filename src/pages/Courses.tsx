@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { EmptyState, SkeletonRow } from "../components/kit";
+import { debounce } from "../lib/debounce";
 
 interface Course {
   id: string;
@@ -47,9 +48,10 @@ export default function Courses() {
 
     load();
 
+    const debouncedLoad = debounce(load, 200);
     const channel = supabase
       .channel(`courses-${user.organizationId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "courses", filter: `organization_id=eq.${user.organizationId}` }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "courses", filter: `organization_id=eq.${user.organizationId}` }, debouncedLoad)
       .subscribe();
 
     return () => {

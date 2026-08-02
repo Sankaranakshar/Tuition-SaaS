@@ -105,11 +105,18 @@ async function loadMembership(userId: string): Promise<Membership> {
     if (hit && hit.expiresAt > Date.now()) return hit.value;
   }
 
+  // organization_members' primary key is (organization_id, user_id), so a
+  // user genuinely can hold more than one row (e.g. a tutor working at two
+  // centers) — without this order by, an unordered `limit 1` could pick a
+  // different row per request. There is no org-switcher UI yet, so this
+  // deterministically picks the earliest (first-joined) org as "home" until
+  // one exists. See DEV_PLAN Tech Debt #5.
   const { rows } = await pool.query(
     `select om.organization_id, om.role, o.status as organization_status
      from organization_members om
      join organizations o on o.id = om.organization_id
      where om.user_id = $1
+     order by om.created_at asc
      limit 1`,
     [userId]
   );

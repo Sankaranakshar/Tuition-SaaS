@@ -3,6 +3,7 @@ import { Upload, FileText, Download, Trash2 } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { uploadDocument, getDocumentUrl, deleteDocument } from "../lib/api";
+import { debounce } from "../lib/debounce";
 import { toast } from "sonner";
 
 import LoadingSpinner from "../components/LoadingSpinner";
@@ -73,11 +74,11 @@ export default function Documents() {
 
     const studentsChannel = supabase
       .channel(`documents-students-${user.organizationId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `organization_id=eq.${user.organizationId}` }, loadStudents)
+      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `organization_id=eq.${user.organizationId}` }, debounce(loadStudents, 200))
       .subscribe();
     const docsChannel = supabase
       .channel(`documents-${user.organizationId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `organization_id=eq.${user.organizationId}` }, loadDocs)
+      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `organization_id=eq.${user.organizationId}` }, debounce(loadDocs, 200))
       .subscribe();
 
     return () => {

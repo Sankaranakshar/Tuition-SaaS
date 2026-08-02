@@ -3,6 +3,8 @@
 // the whole workspace is unit-testable and the clock is injectable. The page
 // (src/pages/Today.tsx) is the only place these get wired to live listeners.
 
+import { rupeesToPaise } from "../../shared/money";
+
 // ---- Shapes (loose; Firestore docs carry extra fields we ignore) -----------
 
 export interface TodaySession {
@@ -135,7 +137,7 @@ function toDate(raw: unknown): Date | null {
 
 export function invoiceTotalPaise(inv: TodayInvoice): number {
   if (typeof inv.totalPaise === "number") return inv.totalPaise;
-  return Math.round(((inv.totalAmount ?? inv.amount ?? 0) as number) * 100);
+  return rupeesToPaise((inv.totalAmount ?? inv.amount ?? 0) as number);
 }
 
 export function invoicePaidPaise(inv: TodayInvoice): number {

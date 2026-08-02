@@ -283,6 +283,35 @@ export function redeemStudentInvite(token: string) {
   });
 }
 
+// Staff invites (Tech Debt #1). Mirrors the parent/student invite calls
+// above: owner/admin mints a token carrying a role, the invitee previews it,
+// then redeems it to join the org via organization_members (setMembership()
+// server-side) instead of a parent_links row or claiming a students row.
+export type InvitableStaffRole = "admin" | "tutor" | "frontdesk" | "accountant";
+
+/** Owner/admin: mint a single-use, 7-day invite token for a given staff role. Only the owner can invite 'admin'. */
+export function createStaffInvite(role: InvitableStaffRole) {
+  return api<{ ok: true; token: string; expiresAt: string; role: InvitableStaffRole }>(
+    "/members/invites",
+    { method: "POST", body: { role } }
+  );
+}
+
+/** Preview which org/role an invite grants before redeeming. */
+export function previewStaffInvite(token: string) {
+  return api<{ ok: true; organizationName: string | null; role: InvitableStaffRole }>(
+    `/members/invites/${encodeURIComponent(token)}/preview`
+  );
+}
+
+/** Redeem an invite: grants the invited role via organization_members. */
+export function redeemStaffInvite(token: string) {
+  return api<{ ok: true; organizationId: string; role: InvitableStaffRole }>("/members/invites/redeem", {
+    method: "POST",
+    body: { token },
+  });
+}
+
 /** Parent-authorized Razorpay UPI payment link for one of their linked children's invoices. */
 export function payInvoiceAsParent(invoiceId: string) {
   return api<{ ok: true; shortUrl: string; reused: boolean }>(`/billing/invoices/${invoiceId}/pay`, {

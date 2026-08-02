@@ -1,9 +1,9 @@
 import express from "express";
-import { z } from "zod";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { authenticateToken, requireRole, requireOrg, type AuthRequest } from "../middleware/auth.ts";
 import { encrypt } from "../utils/crypto.ts";
 import { writeAudit } from "../utils/audit.ts";
+import { gatewayCredsRequestSchema, gatewayTaxRequestSchema } from "../../shared/schemas/gateway.ts";
 
 // Per-org payment gateway + tax settings. Secrets are AES-GCM-encrypted in the
 // server-only `payment_gateways` table (no client RLS policy exists → default
@@ -13,21 +13,6 @@ const router = express.Router();
 router.use(authenticateToken, requireOrg);
 
 const CAN_CONFIG = ["owner", "admin"] as const;
-
-const credsSchema = z.object({
-  keyId: z.string().min(6),
-  keySecret: z.string().min(6),
-  webhookSecret: z.string().min(6),
-});
-
-const taxSchema = z.object({
-  legalName: z.string().max(200).optional(),
-  gstin: z.string().max(20).optional(),
-  addressLines: z.array(z.string().max(200)).max(5).optional(),
-  placeOfSupply: z.string().max(60).optional(),
-  defaultTaxRatePercent: z.number().min(0).max(28).optional(),
-  invoicePrefix: z.string().max(8).optional(),
-});
 
 // Connection state + tax settings. Secrets are never included.
 router.get("/", requireRole(...CAN_CONFIG), async (req: AuthRequest, res, next) => {
@@ -50,7 +35,7 @@ router.get("/", requireRole(...CAN_CONFIG), async (req: AuthRequest, res, next) 
 
 router.put("/razorpay", requireRole(...CAN_CONFIG), async (req: AuthRequest, res, next) => {
   try {
-    const { keyId, keySecret, webhookSecret } = credsSchema.parse(req.body);
+    const { keyId, keySecret, webhookSecret } = gatewayCredsRequestSchema.parse(req.body);
     const orgId = req.user!.organizationId!;
     const { error } = await supabaseAdmin.from("payment_gateways").upsert({
       organization_id: orgId,
@@ -83,7 +68,7 @@ router.delete("/razorpay", requireRole(...CAN_CONFIG), async (req: AuthRequest, 
 
 router.put("/tax", requireRole(...CAN_CONFIG), async (req: AuthRequest, res, next) => {
   try {
-    const tax = taxSchema.parse(req.body);
+    const tax = gatewayTaxRequestSchema.parse(req.body);
     const orgId = req.user!.organizationId!;
     const { error } = await supabaseAdmin.from("payment_gateways").upsert({
       organization_id: orgId,

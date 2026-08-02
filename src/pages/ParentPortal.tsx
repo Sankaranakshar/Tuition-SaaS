@@ -5,7 +5,9 @@ import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { EmptyState, Skeleton, SkeletonText, StatChip, StatusChip, type ChipTone } from "../components/kit";
 import { formatPaise, formatINR, formatDate, formatRelativeDays } from "../lib/format";
+import { rupeesToPaise } from "../../shared/money";
 import { payInvoiceAsParent, downloadInvoicePdf } from "../lib/api";
+import { debounce } from "../lib/debounce";
 
 // Epic 10 (parent portal v1, mobile-web-first). One page, three tabs, no new
 // routes: a parent's whole world is "which of my kids, what do I owe, what
@@ -119,7 +121,7 @@ export default function ParentPortal() {
     load();
     const channel = supabase
       .channel(`parent-links-${user.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "parent_links", filter: `parent_user_id=eq.${user.id}` }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "parent_links", filter: `parent_user_id=eq.${user.id}` }, debounce(load, 200))
       .subscribe();
     return () => { cancelled = true; supabase.removeChannel(channel); };
   }, [user?.id]);
@@ -202,17 +204,17 @@ export default function ParentPortal() {
       // postgres_changes filters only support a single `column=eq.value`
       // condition, and membership here is an array-contains check, so this
       // listens broadly and re-applies the real filter inside loadSessions().
-      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions" }, loadSessions)
-      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `student_id=eq.${selectedId}` }, loadInvoices)
-      .on("postgres_changes", { event: "*", schema: "public", table: "payments", filter: `student_id=eq.${selectedId}` }, loadPayments)
-      .on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `student_id=eq.${selectedId}` }, loadWallet)
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_sessions" }, debounce(loadSessions, 200))
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `student_id=eq.${selectedId}` }, debounce(loadInvoices, 200))
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments", filter: `student_id=eq.${selectedId}` }, debounce(loadPayments, 200))
+      .on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `student_id=eq.${selectedId}` }, debounce(loadWallet, 200))
       .subscribe();
 
     return () => { cancelled = true; supabase.removeChannel(channel); };
   }, [user?.id, selectedId]);
 
   const outstandingPaise = useMemo(
-    () => invoices.filter((i) => PAYABLE_STATUSES.has(i.status)).reduce((sum, i) => sum + ((i.totalPaise ?? Math.round((i.totalAmount || 0) * 100)) - (i.paidPaise || 0)), 0),
+    () => invoices.filter((i) => PAYABLE_STATUSES.has(i.status)).reduce((sum, i) => sum + ((i.totalPaise ?? rupeesToPaise(i.totalAmount || 0)) - (i.paidPaise || 0)), 0),
     [invoices]
   );
 
@@ -239,7 +241,7 @@ export default function ParentPortal() {
   async function handleShare(invoiceId: string) {
     try {
       const { shortUrl } = await payInvoiceAsParent(invoiceId);
-      const text = `Tuition payment link: ${shortUrl}`;
+      const text = `Tuition payment link: ${shortUrl}\n\n— sent via ClassStackr, fee-collection software for tuition centers: ${window.location.origin}/`;
       window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't create a link to share");
@@ -341,7 +343,7 @@ export default function ParentPortal() {
           ) : (
             <div className="space-y-2">
               {invoices.map((inv) => {
-                const total = inv.totalPaise ?? Math.round((inv.totalAmount || 0) * 100);
+                const total = inv.totalPaise ?? rupeesToPaise(inv.totalAmount || 0);
                 const due = total - (inv.paidPaise || 0);
                 const payable = PAYABLE_STATUSES.has(inv.status);
                 return (

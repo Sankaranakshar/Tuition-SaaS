@@ -16,9 +16,11 @@ import {
   ChevronDown,
   ShieldAlert,
   ClipboardList,
+  MoreHorizontal,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import CommandPalette from "./CommandPalette";
+import { BottomSheet } from "./kit";
 import { useNotificationsList } from "../hooks/useInbox";
 import { useIsPlatformAdmin } from "../hooks/usePlatformAdmin";
 
@@ -32,6 +34,7 @@ export default function Layout() {
   const location = useLocation();
   const [showRoleDropdown, setShowRoleDropdown] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { data: notifications } = useNotificationsList();
   const unreadCount = notifications.filter((n) => !n.read).length;
@@ -89,12 +92,25 @@ export default function Layout() {
 
   const settingsPath = isStudent || isParent ? "/app/preferences" : "/app/settings";
 
+  // Mobile bottom tab bar (REDESIGN §16): Today / Schedule / Inbox / More,
+  // People and Money live behind More. Parents keep their short rail as
+  // primary tabs with nothing content-wise left for More, but every role
+  // still needs More for Settings/Log out since the rail's bottom section
+  // is hidden on mobile.
+  const mobileTabs = isStudent
+    ? rail.filter((item) => ["/app", "/app/my-schedule", "/app/inbox"].includes(item.to))
+    : isParent
+    ? rail
+    : rail.filter((item) => ["/app", "/app/schedule", "/app/inbox"].includes(item.to));
+
+  const moreNavItems = rail.filter((item) => !mobileTabs.includes(item));
+
   return (
     <div className="flex h-screen bg-[var(--cs-bg)] font-sans">
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
 
-      {/* Icon rail */}
-      <aside className="flex w-14 flex-col items-center border-r border-[var(--cs-border)] bg-[var(--cs-surface)] py-3">
+      {/* Icon rail (desktop/tablet only — bottom tab bar replaces it below md) */}
+      <aside className="hidden w-14 flex-col items-center border-r border-[var(--cs-border)] bg-[var(--cs-surface)] py-3 md:flex">
         <button
           onClick={() => navigate("/app")}
           className="mb-4 flex h-8 w-8 items-center justify-center rounded-[6px] bg-[var(--cs-accent)] text-sm font-semibold text-white"
@@ -250,12 +266,107 @@ export default function Layout() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="flex-1 overflow-y-auto px-6 pb-24 pt-6 md:pb-6">
           <ErrorBoundary key={location.pathname}>
             <Outlet />
           </ErrorBoundary>
         </main>
       </div>
+
+      {/* Bottom tab bar (mobile only) */}
+      <nav
+        className="fixed inset-x-0 bottom-0 z-30 flex border-t border-[var(--cs-border)] bg-[var(--cs-surface)] pb-[env(safe-area-inset-bottom)] md:hidden"
+        aria-label={t("common.navigation", "Navigation")}
+      >
+        {mobileTabs.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={(item as any).end}
+            className={({ isActive }) =>
+              `flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-medium ${
+                isActive ? "text-[var(--cs-accent)]" : "text-[var(--cs-text-muted)]"
+              }`
+            }
+          >
+            <item.icon className="h-5 w-5" strokeWidth={1.75} />
+            {item.label}
+          </NavLink>
+        ))}
+        <button
+          onClick={() => setMoreOpen(true)}
+          className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-medium ${
+            moreNavItems.some((item) => location.pathname === item.to) || location.pathname === settingsPath
+              ? "text-[var(--cs-accent)]"
+              : "text-[var(--cs-text-muted)]"
+          }`}
+        >
+          <MoreHorizontal className="h-5 w-5" strokeWidth={1.75} />
+          {t("common.more", "More")}
+        </button>
+      </nav>
+
+      {moreOpen && (
+        <BottomSheet onClose={() => setMoreOpen(false)} label={t("common.more", "More")}>
+          <div className="flex flex-col gap-1 px-2 pb-4">
+            {moreNavItems.map((item) => (
+              <button
+                key={item.to}
+                onClick={() => {
+                  navigate(item.to);
+                  setMoreOpen(false);
+                }}
+                className="flex items-center gap-3 rounded-[6px] px-3 py-2.5 text-left text-sm text-[var(--cs-text)] hover:bg-[var(--cs-bg)]"
+              >
+                <item.icon className="h-[18px] w-[18px] text-[var(--cs-text-muted)]" strokeWidth={1.75} />
+                {item.label}
+              </button>
+            ))}
+            {isPlatformAdmin && (
+              <button
+                onClick={() => {
+                  navigate("/app/platform-admin");
+                  setMoreOpen(false);
+                }}
+                className="flex items-center gap-3 rounded-[6px] px-3 py-2.5 text-left text-sm text-[var(--cs-text)] hover:bg-[var(--cs-bg)]"
+              >
+                <ShieldAlert className="h-[18px] w-[18px] text-[var(--cs-text-muted)]" strokeWidth={1.75} />
+                Platform admin
+              </button>
+            )}
+            {(isStaff || isPlatformAdmin) && (
+              <button
+                onClick={() => {
+                  navigate("/app/audit-log");
+                  setMoreOpen(false);
+                }}
+                className="flex items-center gap-3 rounded-[6px] px-3 py-2.5 text-left text-sm text-[var(--cs-text)] hover:bg-[var(--cs-bg)]"
+              >
+                <ClipboardList className="h-[18px] w-[18px] text-[var(--cs-text-muted)]" strokeWidth={1.75} />
+                {t("common.auditLog", "Audit log")}
+              </button>
+            )}
+            <button
+              onClick={() => {
+                navigate(settingsPath);
+                setMoreOpen(false);
+              }}
+              className="flex items-center gap-3 rounded-[6px] px-3 py-2.5 text-left text-sm text-[var(--cs-text)] hover:bg-[var(--cs-bg)]"
+            >
+              <Settings className="h-[18px] w-[18px] text-[var(--cs-text-muted)]" strokeWidth={1.75} />
+              {t("common.settings")}
+            </button>
+            <div className="my-1 border-t border-[var(--cs-border)]" />
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-3 rounded-[6px] px-3 py-2.5 text-left text-sm text-[var(--cs-text)] hover:bg-[var(--cs-bg)]"
+            >
+              <LogOut className="h-[18px] w-[18px] text-[var(--cs-text-muted)]" strokeWidth={1.75} />
+              {t("common.logOut")}
+            </button>
+          </div>
+        </BottomSheet>
+      )}
     </div>
   );
 }

@@ -7,6 +7,7 @@
 
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { rupeesToPaise, paiseToRupees } from "../../shared/money.ts";
 
 export interface InvoicePdfLine {
   description: string;
@@ -60,7 +61,7 @@ const inrNumber = new Intl.NumberFormat("en-IN", {
 });
 
 function paise(v: number | null | undefined): string {
-  return `Rs. ${inrNumber.format((v || 0) / 100)}`;
+  return `Rs. ${inrNumber.format(paiseToRupees(v || 0))}`;
 }
 
 function readDate(d: Date | string | null | undefined): Date | null {
@@ -81,8 +82,8 @@ function formatDate(d: Date | string | null | undefined): string {
  * present on invoices created before Epic 3. Never trust just one shape.
  */
 export function resolveInvoiceTotals(inv: InvoicePdfInvoice) {
-  const total = inv.totalPaise ?? Math.round((inv.totalAmount || 0) * 100);
-  const subtotal = inv.subtotalPaise ?? Math.round((inv.subtotal ?? inv.totalAmount ?? 0) * 100);
+  const total = inv.totalPaise ?? rupeesToPaise(inv.totalAmount || 0);
+  const subtotal = inv.subtotalPaise ?? rupeesToPaise(inv.subtotal ?? inv.totalAmount ?? 0);
   const tax = inv.taxPaise ?? 0;
   const discount = inv.discountPaise ?? 0;
   const paid = inv.paidPaise ?? 0;
@@ -176,7 +177,7 @@ export function renderInvoicePdf(input: {
   // Line items.
   const items = invoice.items && invoice.items.length > 0
     ? invoice.items
-    : [{ description: "Tuition fees", quantity: 1, amountPaise: invoice.totalPaise || Math.round((invoice.totalAmount || 0) * 100) }];
+    : [{ description: "Tuition fees", quantity: 1, amountPaise: invoice.totalPaise || rupeesToPaise(invoice.totalAmount || 0) }];
 
   autoTable(doc, {
     startY: cursorY,

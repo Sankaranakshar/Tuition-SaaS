@@ -7,6 +7,7 @@ import { ORG, uids } from "../integration/fixtures.ts";
 
 let app: any;
 let db: PGlite;
+let orglessUserId: string;
 
 function expectStatus(res: any, status: number) {
   if (res.status !== status) {
@@ -16,8 +17,27 @@ function expectStatus(res: any, status: number) {
   expect(res.status).toBe(status);
 }
 
+async function insertStaffInvite(overrides: Partial<{ token: string; role: string; orgId: string; invitedBy: string; expiresAt: Date; usedAt: Date | null }> = {}) {
+  const token = overrides.token ?? crypto.randomBytes(12).toString("hex");
+  await db.query(
+    `insert into staff_invites (token, organization_id, role, invited_by, expires_at, used_at)
+     values ($1, $2, $3, $4, $5, $6)`,
+    [
+      token,
+      overrides.orgId ?? ORG,
+      overrides.role ?? "tutor",
+      overrides.invitedBy ?? uids.owner,
+      (overrides.expiresAt ?? new Date(Date.now() + 7 * 24 * 3600 * 1000)).toISOString(),
+      overrides.usedAt ? overrides.usedAt.toISOString() : null,
+    ]
+  );
+  return token;
+}
+
 beforeAll(async () => {
   ({ app, db } = await createTestApp());
+  orglessUserId = crypto.randomUUID();
+  await db.query(`insert into auth.users (id) values ($1)`, [orglessUserId]);
 });
 
 afterAll(async () => {
@@ -151,5 +171,170 @@ describe("DELETE /api/v1/members/:userId", () => {
 
     const row = await db.query<any>(`select 1 from organization_members where organization_id = $1 and user_id = $2`, [ORG, targetId]);
     expect(row.rows.length).toBe(0);
+  });
+});
+
+describe("POST /api/v1/members/invites", () => {
+  it("401s with no token", async () => {
+    const res = await request(app).post("/api/v1/members/invites").send({ role: "tutor" });
+    expectStatus(res, 401);
+  });
+
+  it("403s for a role below owner/admin (tutor inviting)", async () => {
+    const res = await request(app)
+      .post("/api/v1/members/invites")
+      .set(...authHeader(uids.tutor))
+      .send({ role: "frontdesk" });
+    expectStatus(res, 403);
+  });
+
+  it("403s an admin trying to invite the admin role (owner-only)", async () => {
+    const res = await request(app)
+      .post("/api/v1/members/invites")
+      .set(...authHeader(uids.admin))
+      .send({ role: "admin" });
+    expectStatus(res, 403);
+  });
+
+  it("422s on a malformed body (bad role)", async () => {
+    const res = await request(app)
+      .post("/api/v1/members/invites")
+      .set(...authHeader(uids.owner))
+      .send({ role: "owner" }); // 'owner' is deliberately not invitable
+    expectStatus(res, 422);
+  });
+
+  it("201s and creates a real, usable invite for an owner inviting admin", async () => {
+    const res = await request(app)
+      .post("/api/v1/members/invites")
+      .set(...authHeader(uids.owner))
+      .send({ role: "admin" });
+    expectStatus(res, 201);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.token).toBeTruthy();
+    expect(res.body.role).toBe("admin");
+
+    const row = await db.query<any>(`select organization_id, role, invited_by from staff_invites where token = $1`, [res.body.token]);
+    expect(row.rows[0].organization_id).toBe(ORG);
+    expect(row.rows[0].role).toBe("admin");
+    expect(row.rows[0].invited_by).toBe(uids.owner);
+  });
+
+  it("201s for an admin inviting a lower role (tutor)", async () => {
+    const res = await request(app)
+      .post("/api/v1/members/invites")
+      .set(...authHeader(uids.admin))
+      .send({ role: "frontdesk" });
+    expectStatus(res, 201);
+    expect(res.body.role).toBe("frontdesk");
+  });
+});
+
+describe("GET /api/v1/members/invites/:token/preview", () => {
+  it("401s with no token (auth token, not the invite token)", async () => {
+    const invite = await insertStaffInvite();
+    const res = await request(app).get(`/api/v1/members/invites/${invite}/preview`);
+    expectStatus(res, 401);
+  });
+
+  it("404s for an unknown invite token", async () => {
+    const res = await request(app)
+      .get("/api/v1/members/invites/does-not-exist/preview")
+      .set(...authHeader(orglessUserId));
+    expectStatus(res, 404);
+  });
+
+  it("410s for an expired invite", async () => {
+    const invite = await insertStaffInvite({ expiresAt: new Date(Date.now() - 1000) });
+    const res = await request(app)
+      .get(`/api/v1/members/invites/${invite}/preview`)
+      .set(...authHeader(orglessUserId));
+    expectStatus(res, 410);
+    expect(res.body.error.code).toBe("invite_expired");
+  });
+
+  it("410s for an already-used invite", async () => {
+    const invite = await insertStaffInvite({ usedAt: new Date() });
+    const res = await request(app)
+      .get(`/api/v1/members/invites/${invite}/preview`)
+      .set(...authHeader(orglessUserId));
+    expectStatus(res, 410);
+    expect(res.body.error.code).toBe("invite_used");
+  });
+
+  it("200s with the org name and role for a live invite", async () => {
+    const invite = await insertStaffInvite({ role: "accountant" });
+    const res = await request(app)
+      .get(`/api/v1/members/invites/${invite}/preview`)
+      .set(...authHeader(orglessUserId));
+    expectStatus(res, 200);
+    expect(res.body.role).toBe("accountant");
+    expect(res.body.organizationName).toBeTruthy();
+  });
+});
+
+describe("POST /api/v1/members/invites/redeem", () => {
+  it("401s with no token", async () => {
+    const res = await request(app).post("/api/v1/members/invites/redeem").send({ token: "x" });
+    expectStatus(res, 401);
+  });
+
+  it("404s an unknown token", async () => {
+    const res = await request(app)
+      .post("/api/v1/members/invites/redeem")
+      .set(...authHeader(orglessUserId))
+      .send({ token: "does-not-exist-12345" });
+    expectStatus(res, 404);
+  });
+
+  it("409s when the caller already belongs to a different organization", async () => {
+    const invite = await insertStaffInvite();
+    const res = await request(app)
+      .post("/api/v1/members/invites/redeem")
+      .set(...authHeader(uids.outsider)) // member of OTHER_ORG
+      .send({ token: invite });
+    expectStatus(res, 409);
+    expect(res.body.error.code).toBe("org_conflict");
+  });
+
+  it("200s and grants org membership for a fresh user, and burns the invite", async () => {
+    const redeemerId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [redeemerId]);
+    const invite = await insertStaffInvite({ role: "frontdesk" });
+
+    const res = await request(app)
+      .post("/api/v1/members/invites/redeem")
+      .set(...authHeader(redeemerId))
+      .send({ token: invite });
+    expectStatus(res, 200);
+    expect(res.body.organizationId).toBe(ORG);
+    expect(res.body.role).toBe("frontdesk");
+
+    const membership = await db.query<any>(`select role from organization_members where user_id = $1`, [redeemerId]);
+    expect(membership.rows[0].role).toBe("frontdesk");
+
+    const inviteRow = await db.query<any>(`select used_at, used_by from staff_invites where token = $1`, [invite]);
+    expect(inviteRow.rows[0].used_at).not.toBeNull();
+    expect(inviteRow.rows[0].used_by).toBe(redeemerId);
+  });
+
+  it("410s redeeming the same invite a second time", async () => {
+    const invite = await insertStaffInvite();
+    const redeemerId1 = crypto.randomUUID();
+    const redeemerId2 = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1), ($2)`, [redeemerId1, redeemerId2]);
+
+    const first = await request(app)
+      .post("/api/v1/members/invites/redeem")
+      .set(...authHeader(redeemerId1))
+      .send({ token: invite });
+    expectStatus(first, 200);
+
+    const second = await request(app)
+      .post("/api/v1/members/invites/redeem")
+      .set(...authHeader(redeemerId2))
+      .send({ token: invite });
+    expectStatus(second, 410);
+    expect(second.body.error.code).toBe("invite_used");
   });
 });

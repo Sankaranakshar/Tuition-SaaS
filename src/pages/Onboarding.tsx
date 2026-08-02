@@ -4,7 +4,11 @@ import { useAuth } from "../context/AuthContext";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../supabase";
 import { Users, Building2, UserRound, Upload } from "lucide-react";
-import { previewParentInvite, redeemParentInvite, previewStudentInvite, redeemStudentInvite, bootstrapOrganization, api } from "../lib/api";
+import {
+  previewParentInvite, redeemParentInvite, previewStudentInvite, redeemStudentInvite,
+  previewStaffInvite, redeemStaffInvite, bootstrapOrganization, api,
+  type InvitableStaffRole,
+} from "../lib/api";
 import { ClassManager } from "../services/ClassManager";
 import type { MaterializeResponse } from "../../shared/schemas/scheduling";
 import {
@@ -52,11 +56,21 @@ export default function Onboarding() {
   const [studentInvitePreview, setStudentInvitePreview] = useState<{ studentName: string | null; organizationName: string | null } | null>(null);
   const [studentPreviewLoading, setStudentPreviewLoading] = useState(false);
 
-  // Which of the three flows to show. A parent/student invite token means we
-  // already know the visitor's role — no generic "pick your role" screen
-  // needed (the old 3-card picker asked this even of invite-token holders).
-  // Everyone else is on the only other real self-serve path: becoming a tutor.
-  const flow: "parent" | "student" | "tutor" = inviteToken ? "parent" : studentInviteToken ? "student" : "tutor";
+  // Staff State (Tech Debt #1): joining an org as tutor/frontdesk/accountant/
+  // admin happens via an owner/admin-issued invite token carrying a role —
+  // organization_members has no client write path, so this is the only way.
+  const [staffInviteToken, setStaffInviteToken] = useState(
+    searchParams.get("staffInvite") || sessionStorage.getItem("pendingStaffInvite") || ""
+  );
+  const [staffInvitePreview, setStaffInvitePreview] = useState<{ organizationName: string | null; role: InvitableStaffRole } | null>(null);
+  const [staffPreviewLoading, setStaffPreviewLoading] = useState(false);
+
+  // Which of the four flows to show. An invite token means we already know
+  // the visitor's role — no generic "pick your role" screen needed (the old
+  // 3-card picker asked this even of invite-token holders). Everyone else is
+  // on the only other real self-serve path: becoming a (solo) tutor.
+  const flow: "parent" | "student" | "staff" | "tutor" =
+    inviteToken ? "parent" : studentInviteToken ? "student" : staffInviteToken ? "staff" : "tutor";
 
   useEffect(() => {
     if (user?.profile_status === "complete") {
@@ -113,6 +127,30 @@ export default function Onboarding() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow]);
 
+  const handlePreviewStaffInvite = async () => {
+    const token = staffInviteToken.trim();
+    if (!token) return;
+    setStaffPreviewLoading(true);
+    setError("");
+    setStaffInvitePreview(null);
+    try {
+      const result = await previewStaffInvite(token);
+      setStaffInvitePreview({ organizationName: result.organizationName, role: result.role });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invite not found or expired.");
+    } finally {
+      setStaffPreviewLoading(false);
+    }
+  };
+
+  // A link opened with ?staffInvite=TOKEN previews itself immediately, same as above.
+  useEffect(() => {
+    if (flow === "staff" && staffInviteToken && !staffInvitePreview && !staffPreviewLoading) {
+      handlePreviewStaffInvite();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flow]);
+
   const handleCompleteOnboarding = async () => {
     if (!user?.id) return;
     setLoading(true);
@@ -126,6 +164,16 @@ export default function Onboarding() {
       // staff rail despite organization_members.role being correct.
       if (flow === "parent" || flow === "student") {
         const { error: roleErr } = await supabase.from("profiles").update({ role_type: flow }).eq("id", user.id);
+        if (roleErr) throw roleErr;
+      } else if (flow === "staff") {
+        // role_type only distinguishes tutor/parent/student/admin for portal
+        // routing (RoleSelection.tsx) — there's no separate bucket for
+        // frontdesk/accountant, so they get the tutor portal shell too. The
+        // real authorization tier (organization_members.role, surfaced as
+        // user.organizationRole) is set correctly below regardless.
+        if (!staffInvitePreview) return;
+        const roleType = staffInvitePreview.role === "admin" ? "admin" : "tutor";
+        const { error: roleErr } = await supabase.from("profiles").update({ role_type: roleType }).eq("id", user.id);
         if (roleErr) throw roleErr;
       }
 
@@ -142,6 +190,12 @@ export default function Onboarding() {
         sessionStorage.removeItem("pendingStudentInvite");
         // No token refresh needed: organization membership is read fresh
         // from Postgres on every request, same as the parent redeem above.
+      } else if (flow === "staff") {
+        if (!staffInvitePreview) return;
+        await redeemStaffInvite(staffInviteToken.trim());
+        sessionStorage.removeItem("pendingStaffInvite");
+        // No token refresh needed: organization membership is read fresh
+        // from Postgres on every request, same as the parent/student redeems above.
       }
 
       const { error: profileError } = await supabase
@@ -255,6 +309,51 @@ export default function Onboarding() {
       <button
         onClick={handleCompleteOnboarding}
         disabled={loading || !studentInvitePreview}
+        className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+      >
+        {loading ? "Joining…" : "Join"}
+      </button>
+    </div>
+  );
+
+  const renderStaffSteps = () => (
+    <div className="space-y-4">
+      <h3 className="text-xl font-bold">Join your tutoring center's team</h3>
+      <p className="text-sm text-gray-500">
+        Ask the org owner or admin for an invite link or code — they generate one from Settings → Team.
+      </p>
+      <div>
+        <label className="block text-sm font-medium text-gray-700">Invite code</label>
+        <div className="mt-1 flex gap-2">
+          <input
+            type="text"
+            value={staffInviteToken}
+            onChange={e => { setStaffInviteToken(e.target.value); setStaffInvitePreview(null); }}
+            placeholder="Paste the code from your center"
+            className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border"
+          />
+          <button
+            onClick={handlePreviewStaffInvite}
+            disabled={staffPreviewLoading || !staffInviteToken.trim()}
+            className="whitespace-nowrap py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+          >
+            {staffPreviewLoading ? "Looking up…" : "Look up"}
+          </button>
+        </div>
+      </div>
+
+      {staffInvitePreview && (
+        <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4">
+          <p className="text-sm text-indigo-900">
+            This will add you to <span className="font-semibold">{staffInvitePreview.organizationName || "this tutoring center"}</span> as{" "}
+            <span className="font-semibold capitalize">{staffInvitePreview.role}</span>.
+          </p>
+        </div>
+      )}
+
+      <button
+        onClick={handleCompleteOnboarding}
+        disabled={loading || !staffInvitePreview}
         className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
       >
         {loading ? "Joining…" : "Join"}
@@ -577,6 +676,7 @@ export default function Onboarding() {
 
           {flow === "parent" && renderParentSteps()}
           {flow === "student" && renderStudentSteps()}
+          {flow === "staff" && renderStaffSteps()}
           {flow === "tutor" && renderTutorWizard()}
         </div>
       </div>

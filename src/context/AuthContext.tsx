@@ -43,6 +43,11 @@ interface User {
   is_active: boolean;
   timezone?: string;
   organizationId?: string;
+  // The real authorization tier, from organization_members.role — distinct
+  // from role_type/role above, which is a person-type (tutor/parent/student)
+  // display preference, not an authorization boundary. Admin-tier UI must
+  // gate on this field, not role_type.
+  organizationRole?: 'owner' | 'admin' | 'tutor' | 'frontdesk' | 'accountant' | 'parent' | 'student' | null;
 }
 
 interface AuthContextType {
@@ -77,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const loadUser = async (authUserId: string, authEmail: string | undefined): Promise<User | null> => {
+  const loadUser = async (authUserId: string, authEmail: string | undefined, authUserMetadata?: Record<string, unknown>): Promise<User | null> => {
     try {
       const { data: profile, error } = await supabase
         .from("profiles")
@@ -110,9 +115,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Create a new profile row if it doesn't exist. Authorization-bearing
         // fields (organization membership/role) are never written here — that
         // comes exclusively from the organization_members table via the server.
+        // The Full Name typed at signup lives in GoTrue's user_metadata (set
+        // via signUp's options.data), not on the profiles row yet — read it
+        // back here or every self-registered account gets a blank name.
+        const metadataName = (authUserMetadata?.name || authUserMetadata?.full_name) as string | undefined;
         currentUserData = {
           id: authUserId,
-          name: "",
+          name: metadataName || "",
           email: authEmail || "",
           phone_number: "",
           role_type: null,
@@ -148,10 +157,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // old Firebase-custom-claims model, there's no token refresh needed
       // here — RLS reads organization_members fresh on every query.
       try {
+        // A user can hold more than one membership row (primary key is
+        // org_id+user_id); order deterministically so this always agrees
+        // with the server's own pick in loadMembership (server/middleware/auth.ts).
         const { data: membership } = await supabase
           .from("organization_members")
-          .select("organization_id")
+          .select("organization_id, role")
           .eq("user_id", authUserId)
+          .order("created_at", { ascending: true })
           .limit(1)
           .maybeSingle();
 
@@ -169,9 +182,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (resp.ok) {
             const body = await resp.json();
             currentUserData.organizationId = body.organizationId;
+            // Bootstrap always creates the caller as owner (server/routes/members.ts).
+            currentUserData.organizationRole = "owner";
           }
         } else if (membership) {
           currentUserData.organizationId = membership.organization_id as string;
+          currentUserData.organizationRole = membership.role as User["organizationRole"];
         }
       } catch (error) {
         console.error("Failed to resolve organization membership", error);
@@ -195,7 +211,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const checkAuth = async (): Promise<User | null> => {
     const { data: { session: currentSession } } = await supabase.auth.getSession();
     if (currentSession?.user) {
-      return await loadUser(currentSession.user.id, currentSession.user.email);
+      return await loadUser(currentSession.user.id, currentSession.user.email, currentSession.user.user_metadata);
     }
     return null;
   };
@@ -203,7 +219,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
       if (newSession?.user) {
-        await loadUser(newSession.user.id, newSession.user.email);
+        await loadUser(newSession.user.id, newSession.user.email, newSession.user.user_metadata);
       } else {
         setUser(null);
       }

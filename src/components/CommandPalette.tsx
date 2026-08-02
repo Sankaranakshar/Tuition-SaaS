@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
+import { debounce } from "../lib/debounce";
 
 interface PaletteProps {
   open: boolean;
@@ -67,12 +68,13 @@ export default function CommandPalette({ open, onOpenChange }: PaletteProps) {
 
     load();
 
+    const debouncedLoad = debounce(load, 200);
     const channel = supabase
       .channel(`command-palette-students-${user.organizationId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "students", filter: `organization_id=eq.${user.organizationId}` },
-        load
+        debouncedLoad
       )
       .subscribe();
 
