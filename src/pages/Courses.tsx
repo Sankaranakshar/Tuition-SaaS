@@ -132,7 +132,7 @@ export default function Courses() {
               <span className="text-sm font-medium text-[var(--cs-text)]">{course.name}</span>
               <button
                 onClick={() => handleDelete(course)}
-                className="text-xs text-[var(--cs-text-muted)] hover:text-[var(--cs-danger,#dc2626)]"
+                className="text-xs text-[var(--cs-text-muted)] hover:text-[var(--cs-danger)]"
               >
                 Remove
               </button>

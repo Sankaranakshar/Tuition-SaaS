@@ -95,35 +95,35 @@ export default function TutorProfileSettings() {
   };
 
   if (!user || (user.role !== 'admin' && user.role !== 'tutor')) {
-    return <div className="p-4 text-gray-500">You do not have permission to view tutor profiles.</div>;
+    return <div className="p-4 text-[var(--cs-text-muted)]">You do not have permission to view tutor profiles.</div>;
   }
 
   return (
     <div className="space-y-6">
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm flex items-center">
+        <div className="bg-red-50 border border-red-200 text-[var(--cs-danger)] px-4 py-3 rounded-[6px] text-sm flex items-center">
           <AlertCircle className="w-5 h-5 mr-2" />
           {error}
         </div>
       )}
 
       {success && (
-        <div className="bg-green-50 border border-green-200 text-green-600 px-4 py-3 rounded-md text-sm flex items-center">
+        <div className="bg-green-50 border border-green-200 text-[var(--cs-ok)] px-4 py-3 rounded-[6px] text-sm flex items-center">
           <CheckCircle className="w-5 h-5 mr-2" />
           {success}
         </div>
       )}
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+      <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden">
+        <div className="px-6 py-4 border-b border-[var(--cs-border)] flex justify-between items-center bg-[var(--cs-bg)]">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">Tutor Marketplace Profile</h2>
-            <p className="text-sm text-gray-500">This information will be displayed on your public profile in the tutor marketplace.</p>
+            <h2 className="text-lg font-semibold text-[var(--cs-text)]">Tutor Marketplace Profile</h2>
+            <p className="text-sm text-[var(--cs-text-muted)]">This information will be displayed on your public profile in the tutor marketplace.</p>
           </div>
           <button
             onClick={handleSave}
             disabled={loading}
-            className="flex items-center px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 disabled:opacity-50"
+            className="flex items-center rounded-[6px] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
             <Save className="w-4 h-4 mr-2" />
             {loading ? "Saving..." : "Save Profile"}
@@ -133,46 +133,46 @@ export default function TutorProfileSettings() {
         <div className="p-6 space-y-8">
           {/* Basic Info */}
           <section>
-            <h3 className="text-md font-semibold text-gray-800 mb-4 border-b pb-2">Basic Information</h3>
+            <h3 className="text-md font-semibold text-[var(--cs-text)] mb-4 border-b border-[var(--cs-border)] pb-2">Basic Information</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700">Full Name</label>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Full Name</label>
                 <input
                   type="text"
                   value={profile.full_name}
                   onChange={(e) => handleChange('full_name', e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
                   placeholder="e.g. Jane Doe"
                 />
               </div>
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700">Bio</label>
-                <p className="text-xs text-gray-500 mb-1">A short description about yourself, your teaching style, and what makes you unique.</p>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Bio</label>
+                <p className="text-xs text-[var(--cs-text-muted)] mb-1">A short description about yourself, your teaching style, and what makes you unique.</p>
                 <textarea
                   rows={4}
                   value={profile.bio}
                   onChange={(e) => handleChange('bio', e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
                   placeholder="I am a passionate math tutor with over 5 years of experience..."
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Years of Experience</label>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Years of Experience</label>
                 <input
                   type="number"
                   min="0"
                   value={profile.experience_years}
                   onChange={(e) => handleChange('experience_years', e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Highest Qualification</label>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Highest Qualification</label>
                 <input
                   type="text"
                   value={profile.qualification}
                   onChange={(e) => handleChange('qualification', e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
                   placeholder="e.g. M.Sc. in Mathematics"
                 />
               </div>
@@ -181,34 +181,34 @@ export default function TutorProfileSettings() {
 
           {/* Teaching Details */}
           <section>
-            <h3 className="text-md font-semibold text-gray-800 mb-4 border-b pb-2">Teaching Details</h3>
+            <h3 className="text-md font-semibold text-[var(--cs-text)] mb-4 border-b border-[var(--cs-border)] pb-2">Teaching Details</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700">Subjects Taught (comma separated)</label>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Subjects Taught (comma separated)</label>
                 <input
                   type="text"
                   value={profile.subjects}
                   onChange={(e) => handleChange('subjects', e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
                   placeholder="e.g. Algebra, Physics, Chemistry"
                 />
               </div>
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700">Grades/Levels (comma separated)</label>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Grades/Levels (comma separated)</label>
                 <input
                   type="text"
                   value={profile.grades}
                   onChange={(e) => handleChange('grades', e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
                   placeholder="e.g. High School, College, Grade 10"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Teaching Mode</label>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Teaching Mode</label>
                 <select
                   value={profile.teaching_mode}
                   onChange={(e) => handleChange('teaching_mode', e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
                 >
                   <option value="online">Online Only</option>
                   <option value="offline">In-Person Only</option>
@@ -216,12 +216,12 @@ export default function TutorProfileSettings() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Location / City</label>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Location / City</label>
                 <input
                   type="text"
                   value={profile.location}
                   onChange={(e) => handleChange('location', e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
                   placeholder="e.g. San Francisco, CA"
                 />
               </div>
@@ -230,14 +230,14 @@ export default function TutorProfileSettings() {
 
           {/* Pricing & Capacity */}
           <section>
-            <h3 className="text-md font-semibold text-gray-800 mb-4 border-b pb-2">Pricing & Capacity</h3>
+            <h3 className="text-md font-semibold text-[var(--cs-text)] mb-4 border-b border-[var(--cs-border)] pb-2">Pricing & Capacity</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700">Pricing Model</label>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Pricing Model</label>
                 <select
                   value={profile.price_model}
                   onChange={(e) => handleChange('price_model', e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
                 >
                   <option value="hourly">Hourly Rate</option>
                   <option value="per_session">Per Session</option>
@@ -245,34 +245,34 @@ export default function TutorProfileSettings() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Min Price</label>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Min Price</label>
                 <input
                   type="number"
                   min="0"
                   value={profile.price_range_min}
                   onChange={(e) => handleChange('price_range_min', e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Max Price</label>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Max Price</label>
                 <input
                   type="number"
                   min="0"
                   value={profile.price_range_max}
                   onChange={(e) => handleChange('price_range_max', e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Max Batch Size</label>
-                <p className="text-xs text-gray-500 mb-1">Maximum students per group session.</p>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Max Batch Size</label>
+                <p className="text-xs text-[var(--cs-text-muted)] mb-1">Maximum students per group session.</p>
                 <input
                   type="number"
                   min="1"
                   value={profile.max_batch_size}
                   onChange={(e) => handleChange('max_batch_size', e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
                 />
               </div>
             </div>

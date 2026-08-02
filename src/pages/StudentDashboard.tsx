@@ -146,19 +146,19 @@ export default function StudentDashboard() {
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">Student Overview</h1>
+        <h1 className="text-2xl font-bold text-[var(--cs-text)]">Student Overview</h1>
       </div>
-      
+
       {/* Action Center Alerts */}
       {overdueInvoices.length > 0 && (
-        <div className="bg-red-50 border-l-4 border-red-400 p-4 rounded-md">
+        <div className="bg-red-50 border-l-4 border-[var(--cs-danger)] p-4 rounded-[6px]">
           <div className="flex">
             <div className="flex-shrink-0">
-              <AlertTriangle className="h-5 w-5 text-red-400" />
+              <AlertTriangle className="h-5 w-5 text-[var(--cs-danger)]" />
             </div>
             <div className="ml-3">
-              <p className="text-sm text-red-700">
-                You have {overdueInvoices.length} overdue invoice(s). 
+              <p className="text-sm text-[var(--cs-danger)]">
+                You have {overdueInvoices.length} overdue invoice(s).
                 <Link to="/app/money" className="font-medium underline ml-1">Pay now</Link>
               </p>
             </div>
@@ -169,40 +169,40 @@ export default function StudentDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: My Snapshot */}
         <div className="lg:col-span-2 space-y-6">
-          
+
           {/* Upcoming Classes */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden transition-all duration-200 hover:shadow-md hover:-translate-y-1">
-            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-lg font-semibold text-gray-900 flex items-center">
-                <Calendar className="w-5 h-5 mr-2 text-indigo-500" />
+          <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden">
+            <div className="px-6 py-4 border-b border-[var(--cs-border)] flex justify-between items-center">
+              <h2 className="text-lg font-semibold text-[var(--cs-text)] flex items-center">
+                <Calendar className="w-5 h-5 mr-2 text-[var(--cs-accent)]" />
                 Next Upcoming Classes
               </h2>
-              <Link to="/app/timetable" className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">
+              <Link to="/app/timetable" className="text-sm text-[var(--cs-accent)] hover:opacity-80 font-medium">
                 View Timetable
               </Link>
             </div>
-            
+
             {upcomingClasses.length > 0 ? (
-              <ul className="divide-y divide-gray-100">
+              <ul className="divide-y divide-[var(--cs-border)]">
                 {upcomingClasses.map((session) => (
-                  <li key={session.id} className="px-6 py-4 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors">
+                  <li key={session.id} className="px-6 py-4 flex items-center justify-between gap-3 hover:bg-[var(--cs-bg)] transition-colors">
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-900">{session.title || 'Class Session'}</p>
-                      <p className="text-sm text-gray-500 flex items-center mt-1">
+                      <p className="text-sm font-medium text-[var(--cs-text)]">{session.title || 'Class Session'}</p>
+                      <p className="text-sm text-[var(--cs-text-muted)] flex items-center mt-1">
                         <Clock className="w-4 h-4 mr-1 shrink-0" />
                         {format(parseISO(session.startTime), 'MMM d, yyyy')} • {format(parseISO(session.startTime), 'h:mm a')} - {format(parseISO(session.endTime), 'h:mm a')}
                       </p>
                     </div>
-                    <div className="flex items-center space-x-3 shrink-0">
-                      <span className={`whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-medium ${session.isOnline ? 'bg-indigo-50 text-indigo-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className={`whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-medium ${session.isOnline ? 'bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]' : 'bg-green-50 text-[var(--cs-ok)]'}`}>
                         {session.isOnline ? 'Online' : 'In-Person'}
                       </span>
                       {session.isOnline && session.meetingLink && (
-                        <a 
-                          href={session.meetingLink} 
-                          target="_blank" 
+                        <a
+                          href={session.meetingLink}
+                          target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center px-3 py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 transition-colors"
+                          className="flex items-center rounded-[6px] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 transition-opacity"
                         >
                           <Video className="w-4 h-4 mr-2" />
                           Join
@@ -214,45 +214,45 @@ export default function StudentDashboard() {
               </ul>
             ) : (
               <div className="px-6 py-8 text-center">
-                <Calendar className="mx-auto h-10 w-10 text-gray-300" />
-                <p className="mt-2 text-sm text-gray-500">No upcoming classes scheduled.</p>
+                <Calendar className="mx-auto h-10 w-10 text-[var(--cs-border)]" />
+                <p className="mt-2 text-sm text-[var(--cs-text-muted)]">No upcoming classes scheduled.</p>
               </div>
             )}
           </div>
 
           {/* Recent Grades */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden transition-all duration-200 hover:shadow-md hover:-translate-y-1">
-            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-lg font-semibold text-gray-900 flex items-center">
-                <BookOpen className="w-5 h-5 mr-2 text-indigo-500" />
+          <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden">
+            <div className="px-6 py-4 border-b border-[var(--cs-border)] flex justify-between items-center">
+              <h2 className="text-lg font-semibold text-[var(--cs-text)] flex items-center">
+                <BookOpen className="w-5 h-5 mr-2 text-[var(--cs-accent)]" />
                 Latest Grades
               </h2>
-              <Link to="/app/my-story" className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">
+              <Link to="/app/my-story" className="text-sm text-[var(--cs-accent)] hover:opacity-80 font-medium">
                 View Gradebook
               </Link>
             </div>
-            
+
             {recentGrades.length > 0 ? (
-              <ul className="divide-y divide-gray-100">
+              <ul className="divide-y divide-[var(--cs-border)]">
                 {recentGrades.map((grade) => {
                   const maxScore = grade.totalScore || grade.maxScore || 100;
                   const percentage = Math.round((Number(grade.score) / Number(maxScore)) * 100);
-                  let statusColor = 'text-green-600 bg-green-50';
-                  if (percentage < 60) statusColor = 'text-red-600 bg-red-50';
-                  else if (percentage < 80) statusColor = 'text-yellow-600 bg-yellow-50';
+                  let statusColor = 'text-[var(--cs-ok)] bg-green-50';
+                  if (percentage < 60) statusColor = 'text-[var(--cs-danger)] bg-red-50';
+                  else if (percentage < 80) statusColor = 'text-[var(--cs-warn)] bg-yellow-50';
 
                   return (
-                    <li key={grade.id} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                    <li key={grade.id} className="px-6 py-4 flex items-center justify-between hover:bg-[var(--cs-bg)] transition-colors">
                       <div>
-                        <p className="text-sm font-medium text-gray-900">{grade.title || 'Untitled Assessment'}</p>
-                        <p className="text-xs text-gray-500 mt-1">{grade.date ? format(parseISO(grade.date), 'MMM d, yyyy') : 'N/A'} • {grade.type}</p>
+                        <p className="text-sm font-medium text-[var(--cs-text)]">{grade.title || 'Untitled Assessment'}</p>
+                        <p className="text-xs text-[var(--cs-text-muted)] mt-1">{grade.date ? format(parseISO(grade.date), 'MMM d, yyyy') : 'N/A'} • {grade.type}</p>
                       </div>
-                      <div className="flex items-center space-x-4">
+                      <div className="flex items-center gap-4">
                         <div className="text-right">
-                          <p className="text-sm font-bold text-gray-900">{grade.score} / {maxScore}</p>
-                          <p className="text-xs text-gray-500">{percentage}%</p>
+                          <p className="text-sm font-bold text-[var(--cs-text)]">{grade.score} / {maxScore}</p>
+                          <p className="text-xs text-[var(--cs-text-muted)]">{percentage}%</p>
                         </div>
-                        <div className={`px-2.5 py-1 rounded-md text-xs font-bold ${statusColor}`}>
+                        <div className={`px-2.5 py-1 rounded-[6px] text-xs font-bold ${statusColor}`}>
                           {percentage >= 60 ? 'Pass' : 'Review'}
                         </div>
                       </div>
@@ -262,8 +262,8 @@ export default function StudentDashboard() {
               </ul>
             ) : (
               <div className="px-6 py-8 text-center">
-                <FileText className="mx-auto h-10 w-10 text-gray-300" />
-                <p className="mt-2 text-sm text-gray-500">No recent grades available.</p>
+                <FileText className="mx-auto h-10 w-10 text-[var(--cs-border)]" />
+                <p className="mt-2 text-sm text-[var(--cs-text-muted)]">No recent grades available.</p>
               </div>
             )}
           </div>
@@ -272,42 +272,42 @@ export default function StudentDashboard() {
         {/* Right Column: Wallet & Quick Links */}
         <div className="space-y-6">
           {/* Wallet Snapshot */}
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all duration-200 hover:shadow-md hover:-translate-y-1">
-            <h2 className="text-lg font-semibold text-gray-900 flex items-center mb-4">
-              <DollarSign className="w-5 h-5 mr-2 text-indigo-500" />
+          <div className="bg-[var(--cs-surface)] p-6 rounded-[10px] border border-[var(--cs-border)]">
+            <h2 className="text-lg font-semibold text-[var(--cs-text)] flex items-center mb-4">
+              <DollarSign className="w-5 h-5 mr-2 text-[var(--cs-accent)]" />
               Wallet Balance
             </h2>
             <div className="text-center py-4">
-              <p className="text-4xl font-bold text-gray-900">{formatINR(walletBalance)}</p>
-              <p className="text-sm text-gray-500 mt-1">Available Credits</p>
+              <p className="text-4xl font-bold text-[var(--cs-text)]">{formatINR(walletBalance)}</p>
+              <p className="text-sm text-[var(--cs-text-muted)] mt-1">Available Credits</p>
             </div>
             <div className="mt-4">
-              <Link to="/app/money" className="w-full flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-indigo-700 bg-indigo-100 hover:bg-indigo-200">
+              <Link to="/app/money" className="w-full flex justify-center items-center rounded-[6px] bg-[var(--cs-accent-soft)] px-4 py-2 text-sm font-medium text-[var(--cs-accent)] hover:opacity-90">
                 Top-up Wallet
               </Link>
             </div>
           </div>
 
           {/* Quick Links */}
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all duration-200 hover:shadow-md hover:-translate-y-1">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Links</h2>
+          <div className="bg-[var(--cs-surface)] p-6 rounded-[10px] border border-[var(--cs-border)]">
+            <h2 className="text-lg font-semibold text-[var(--cs-text)] mb-4">Quick Links</h2>
             <div className="space-y-3">
-              <Link to="/app/my-story" className="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
-                <div className="bg-blue-100 p-2 rounded-md mr-3 text-blue-600">
+              <Link to="/app/my-story" className="flex items-center p-3 rounded-[6px] border border-[var(--cs-border)] hover:bg-[var(--cs-bg)] transition-colors">
+                <div className="bg-[var(--cs-accent-soft)] p-2 rounded-[6px] mr-3 text-[var(--cs-accent)]">
                   <FileText className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-gray-900">Study Material</p>
-                  <p className="text-xs text-gray-500">Access notes & assignments</p>
+                  <p className="text-sm font-medium text-[var(--cs-text)]">Study Material</p>
+                  <p className="text-xs text-[var(--cs-text-muted)]">Access notes & assignments</p>
                 </div>
               </Link>
-              <Link to="/app/inbox" className="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
-                <div className="bg-green-100 p-2 rounded-md mr-3 text-green-600">
+              <Link to="/app/inbox" className="flex items-center p-3 rounded-[6px] border border-[var(--cs-border)] hover:bg-[var(--cs-bg)] transition-colors">
+                <div className="bg-green-50 p-2 rounded-[6px] mr-3 text-[var(--cs-ok)]">
                   <CheckCircle className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-gray-900">Tutor Chat</p>
-                  <p className="text-xs text-gray-500">Message your instructors</p>
+                  <p className="text-sm font-medium text-[var(--cs-text)]">Tutor Chat</p>
+                  <p className="text-xs text-[var(--cs-text-muted)]">Message your instructors</p>
                 </div>
               </Link>
             </div>

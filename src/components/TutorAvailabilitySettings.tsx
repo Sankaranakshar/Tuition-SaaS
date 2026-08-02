@@ -104,30 +104,30 @@ export default function TutorAvailabilitySettings() {
   };
 
   if (loading) {
-    return <div className="p-4 text-gray-500">Loading availability...</div>;
+    return <div className="p-4 text-[var(--cs-text-muted)]">Loading availability...</div>;
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mt-6">
-      <div className="px-6 py-4 border-b border-gray-100">
-        <h2 className="text-lg font-semibold text-gray-900">Tutor Availability</h2>
-        <p className="mt-1 text-sm text-gray-500">Manage your available hours for one-on-one bookings.</p>
+    <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden mt-6">
+      <div className="px-6 py-4 border-b border-[var(--cs-border)]">
+        <h2 className="text-lg font-semibold text-[var(--cs-text)]">Tutor Availability</h2>
+        <p className="mt-1 text-sm text-[var(--cs-text-muted)]">Manage your available hours for one-on-one bookings.</p>
       </div>
       
       <div className="p-6">
         {error && (
-          <div className="mb-4 text-sm text-red-600 bg-red-50 p-2 rounded">
+          <div className="mb-4 text-sm text-[var(--cs-danger)] bg-red-50 p-2 rounded-[6px]">
             {error}
           </div>
         )}
 
-        <div className="flex flex-wrap items-end gap-4 mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
+        <div className="flex flex-wrap items-end gap-4 mb-6 bg-[var(--cs-bg)] p-4 rounded-[6px] border border-[var(--cs-border)]">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Day</label>
+            <label className="block text-sm font-medium text-[var(--cs-text-muted)] mb-1">Day</label>
             <select
               value={newDay}
               onChange={(e) => setNewDay(Number(e.target.value))}
-              className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              className="block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] text-sm outline-none focus:border-[var(--cs-accent)]"
             >
               {DAYS_OF_WEEK.map((day, index) => (
                 <option key={index} value={index}>{day}</option>
@@ -135,26 +135,26 @@ export default function TutorAvailabilitySettings() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
+            <label className="block text-sm font-medium text-[var(--cs-text-muted)] mb-1">Start Time</label>
             <input
               type="time"
               value={newStartTime}
               onChange={(e) => setNewStartTime(e.target.value)}
-              className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              className="block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] text-sm outline-none focus:border-[var(--cs-accent)]"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">End Time</label>
+            <label className="block text-sm font-medium text-[var(--cs-text-muted)] mb-1">End Time</label>
             <input
               type="time"
               value={newEndTime}
               onChange={(e) => setNewEndTime(e.target.value)}
-              className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              className="block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] text-sm outline-none focus:border-[var(--cs-accent)]"
             />
           </div>
           <button
             onClick={handleAddSlot}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            className="inline-flex items-center rounded-[6px] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
           >
             <Plus className="w-4 h-4 mr-2" />
             Add Slot
@@ -167,19 +167,19 @@ export default function TutorAvailabilitySettings() {
             if (daySlots.length === 0) return null;
             
             return (
-              <div key={dayIndex} className="border border-gray-200 rounded-lg overflow-hidden">
-                <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 font-medium text-gray-700">
+              <div key={dayIndex} className="border border-[var(--cs-border)] rounded-[6px] overflow-hidden">
+                <div className="bg-[var(--cs-bg)] px-4 py-2 border-b border-[var(--cs-border)] font-medium text-[var(--cs-text-muted)]">
                   {dayName}
                 </div>
-                <ul className="divide-y divide-gray-200">
+                <ul className="divide-y divide-[var(--cs-border)]">
                   {daySlots.map(slot => (
-                    <li key={slot.id} className="px-4 py-3 flex justify-between items-center hover:bg-gray-50">
-                      <span className="text-sm text-gray-900">
+                    <li key={slot.id} className="px-4 py-3 flex justify-between items-center hover:bg-[var(--cs-bg)]">
+                      <span className="text-sm text-[var(--cs-text)]">
                         {slot.startTime} - {slot.endTime}
                       </span>
                       <button
                         onClick={() => handleDeleteSlot(slot.id)}
-                        className="text-red-600 hover:text-red-900 p-1 rounded-full hover:bg-red-50"
+                        className="text-[var(--cs-danger)] hover:opacity-80 p-1 rounded-full hover:bg-red-50"
                         title="Delete slot"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -192,7 +192,7 @@ export default function TutorAvailabilitySettings() {
           })}
           
           {slots.length === 0 && (
-            <p className="text-sm text-gray-500 text-center py-4">
+            <p className="text-sm text-[var(--cs-text-muted)] text-center py-4">
               No availability slots configured. Add some above to allow students to book one-on-one sessions.
             </p>
           )}

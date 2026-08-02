@@ -7,7 +7,11 @@ export default function RoleSelection() {
   const navigate = useNavigate();
 
   if (!user || !user.roles || user.roles.length === 0) {
-    return <div className="flex h-screen items-center justify-center">Loading roles...</div>;
+    return (
+      <div className="flex h-screen items-center justify-center text-[var(--cs-text-muted)]">
+        Loading roles...
+      </div>
+    );
   }
 
   const handleRoleSelect = (role: string) => {
@@ -17,11 +21,11 @@ export default function RoleSelection() {
 
   const getRoleIcon = (role: string) => {
     switch (role) {
-      case 'student': return <GraduationCap className="w-8 h-8 text-indigo-600" />;
-      case 'parent': return <Users className="w-8 h-8 text-green-600" />;
-      case 'tutor': return <User className="w-8 h-8 text-blue-600" />;
-      case 'admin': return <Shield className="w-8 h-8 text-red-600" />;
-      default: return <User className="w-8 h-8 text-gray-600" />;
+      case 'student': return <GraduationCap className="w-8 h-8 text-[var(--cs-accent)]" />;
+      case 'parent': return <Users className="w-8 h-8 text-[var(--cs-ok)]" />;
+      case 'tutor': return <User className="w-8 h-8 text-[var(--cs-warn)]" />;
+      case 'admin': return <Shield className="w-8 h-8 text-[var(--cs-danger)]" />;
+      default: return <User className="w-8 h-8 text-[var(--cs-text-muted)]" />;
     }
   };
 
@@ -40,31 +44,31 @@ export default function RoleSelection() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-[var(--cs-bg)] flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+        <h2 className="mt-6 text-center text-3xl font-extrabold text-[var(--cs-text)]">
           Select Your Portal
         </h2>
-        <p className="mt-2 text-center text-sm text-gray-600">
+        <p className="mt-2 text-center text-sm text-[var(--cs-text-muted)]">
           You have multiple roles. Please choose which portal you want to access.
         </p>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
+        <div className="bg-[var(--cs-surface)] py-8 px-4 border border-[var(--cs-border)] rounded-[10px] sm:px-10">
           <div className="space-y-4">
             {user.roles.map((role) => (
               <button
                 key={role}
                 onClick={() => handleRoleSelect(role)}
-                className="w-full flex items-center p-4 border border-gray-300 rounded-lg hover:bg-gray-50 hover:border-indigo-500 transition-colors text-left"
+                className="w-full flex items-center p-4 border border-[var(--cs-border)] rounded-[6px] hover:bg-[var(--cs-bg)] hover:border-[var(--cs-accent)] transition-colors text-left"
               >
                 <div className="flex-shrink-0 mr-4">
                   {getRoleIcon(role)}
                 </div>
                 <div>
-                  <h3 className="text-lg font-medium text-gray-900">{getRoleTitle(role)}</h3>
-                  <p className="text-sm text-gray-500">{getRoleDescription(role)}</p>
+                  <h3 className="text-lg font-medium text-[var(--cs-text)]">{getRoleTitle(role)}</h3>
+                  <p className="text-sm text-[var(--cs-text-muted)]">{getRoleDescription(role)}</p>
                 </div>
               </button>
             ))}

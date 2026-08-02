@@ -12,6 +12,7 @@ import OrgExportSettings from "../components/OrgExportSettings";
 import TeamSettings from "../components/TeamSettings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Receipt, CreditCard, Database, Users } from "lucide-react";
+import { StatusChip } from "../components/kit";
 
 export default function Settings() {
   const { user } = useAuth();
@@ -141,7 +142,7 @@ export default function Settings() {
 
   return (
     <div className="space-y-6 max-w-4xl">
-      <h1 className="text-2xl font-bold text-gray-900">Profile & Org Control</h1>
+      <h1 className="text-2xl font-bold text-[var(--cs-text)]">Profile & Org Control</h1>
 
       <Tabs defaultValue="general" className="w-full">
         <TabsList className="mb-4">
@@ -195,67 +196,65 @@ export default function Settings() {
 
         <TabsContent value="general" className="space-y-6">
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm flex items-center">
+            <div className="bg-red-50 border border-red-200 text-[var(--cs-danger)] px-4 py-3 rounded-[6px] text-sm flex items-center">
               <AlertCircle className="w-5 h-5 mr-2" />
               {error}
             </div>
           )}
 
           {success && (
-            <div className="bg-green-50 border border-green-200 text-green-600 px-4 py-3 rounded-md text-sm flex items-center">
+            <div className="bg-green-50 border border-green-200 text-[var(--cs-ok)] px-4 py-3 rounded-[6px] text-sm flex items-center">
               <CheckCircle className="w-5 h-5 mr-2" />
               {success}
             </div>
           )}
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-900">Profile Information</h2>
+          <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden">
+            <div className="px-6 py-4 border-b border-[var(--cs-border)]">
+              <h2 className="text-lg font-semibold text-[var(--cs-text)]">Profile Information</h2>
             </div>
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <label htmlFor="profile-full-name" className="block text-sm font-medium text-gray-700">Full Name</label>
-                  <input id="profile-full-name" type="text" disabled value={user?.name || ""} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 bg-gray-50 text-gray-500 sm:text-sm" />
+                  <label htmlFor="profile-full-name" className="block text-sm font-medium text-[var(--cs-text-muted)]">Full Name</label>
+                  <input id="profile-full-name" type="text" disabled value={user?.name || ""} className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] py-2 px-3 text-sm text-[var(--cs-text-muted)]" />
                 </div>
                 <div>
-                  <label htmlFor="profile-email" className="block text-sm font-medium text-gray-700">Email Address</label>
-                  <input id="profile-email" type="email" disabled value={user?.email || ""} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 bg-gray-50 text-gray-500 sm:text-sm" />
+                  <label htmlFor="profile-email" className="block text-sm font-medium text-[var(--cs-text-muted)]">Email Address</label>
+                  <input id="profile-email" type="email" disabled value={user?.email || ""} className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] py-2 px-3 text-sm text-[var(--cs-text-muted)]" />
                 </div>
                 <div>
-                  <label htmlFor="profile-role" className="block text-sm font-medium text-gray-700">Role</label>
-                  <input id="profile-role" type="text" disabled value={user?.role || ""} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 bg-gray-50 text-gray-500 sm:text-sm capitalize" />
+                  <label htmlFor="profile-role" className="block text-sm font-medium text-[var(--cs-text-muted)]">Role</label>
+                  <input id="profile-role" type="text" disabled value={user?.role || ""} className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] py-2 px-3 text-sm text-[var(--cs-text-muted)] capitalize" />
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-900">Integrations</h2>
-              <p className="mt-1 text-sm text-gray-500">Connect third-party services to enhance your experience.</p>
+          <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden">
+            <div className="px-6 py-4 border-b border-[var(--cs-border)]">
+              <h2 className="text-lg font-semibold text-[var(--cs-text)]">Integrations</h2>
+              <p className="mt-1 text-sm text-[var(--cs-text-muted)]">Connect third-party services to enhance your experience.</p>
             </div>
             <div className="p-6">
-              <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+              <div className="flex items-center justify-between p-4 border border-[var(--cs-border)] rounded-[6px]">
                 <div className="flex items-center">
-                  <div className="p-2 bg-blue-50 rounded-lg mr-4">
-                    <Calendar className="w-6 h-6 text-blue-600" />
+                  <div className="p-2 bg-[var(--cs-accent-soft)] rounded-[6px] mr-4">
+                    <Calendar className="w-6 h-6 text-[var(--cs-accent)]" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-medium text-gray-900">Google Calendar & Meet</h3>
-                    <p className="text-sm text-gray-500">Automatically generate Google Meet links for online classes.</p>
+                    <h3 className="text-sm font-medium text-[var(--cs-text)]">Google Calendar & Meet</h3>
+                    <p className="text-sm text-[var(--cs-text-muted)]">Automatically generate Google Meet links for online classes.</p>
                   </div>
                 </div>
                 <div>
                   {isConnected ? (
-                    <div className="flex items-center space-x-4">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                        Connected
-                      </span>
+                    <div className="flex items-center gap-4">
+                      <StatusChip label="Connected" tone="positive" />
                       <button
                         onClick={handleDisconnectGoogle}
                         disabled={loading}
-                        className="text-sm font-medium text-red-600 hover:text-red-500"
+                        className="text-sm font-medium text-[var(--cs-danger)] hover:opacity-80"
                       >
                         Disconnect
                       </button>
@@ -264,24 +263,24 @@ export default function Settings() {
                     <button
                       onClick={handleConnectGoogle}
                       disabled={loading}
-                      className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                      className="inline-flex items-center rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] px-4 py-2 text-sm font-medium text-[var(--cs-text)] hover:bg-[var(--cs-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--cs-accent)]"
                     >
                       {loading ? "Connecting..." : "Connect Google"}
                     </button>
                   )}
                 </div>
               </div>
-              
+
               {!isConnected && (
-                <div className="mt-4 bg-blue-50 p-4 rounded-md">
-                  <h4 className="text-sm font-medium text-blue-800">Setup Instructions for Google OAuth</h4>
-                  <ol className="mt-2 text-sm text-blue-700 list-decimal list-inside space-y-1">
+                <div className="mt-4 bg-[var(--cs-accent-soft)] p-4 rounded-[6px]">
+                  <h4 className="text-sm font-medium text-[var(--cs-accent)]">Setup Instructions for Google OAuth</h4>
+                  <ol className="mt-2 text-sm text-[var(--cs-accent)] list-decimal list-inside space-y-1">
                     <li>Go to Google Cloud Console and create an OAuth Client ID.</li>
                     <li>Add the following URL to your Authorized redirect URIs:</li>
-                    <li className="font-mono bg-blue-100 p-1 rounded mt-1 break-all">
+                    <li className="font-mono bg-[var(--cs-surface)] p-1 rounded mt-1 break-all">
                       {window.location.origin}/api/v1/settings/google/callback
                     </li>
-                    <li className="mt-2">Ensure you have <code className="bg-blue-100 px-1 rounded">GOOGLE_CLIENT_ID</code> and <code className="bg-blue-100 px-1 rounded">GOOGLE_CLIENT_SECRET</code> set in your environment variables.</li>
+                    <li className="mt-2">Ensure you have <code className="bg-[var(--cs-surface)] px-1 rounded">GOOGLE_CLIENT_ID</code> and <code className="bg-[var(--cs-surface)] px-1 rounded">GOOGLE_CLIENT_SECRET</code> set in your environment variables.</li>
                   </ol>
                 </div>
               )}
