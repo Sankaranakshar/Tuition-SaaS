@@ -22,7 +22,7 @@ export default function SubscriptionSettings() {
 
   if (loading) {
     return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-3">
+      <div className="bg-[var(--cs-surface)] rounded-[10px] shadow-sm border border-[var(--cs-border)] p-6 space-y-3">
         <Skeleton className="h-6 w-40" />
         <Skeleton className="h-4 w-full" />
         <Skeleton className="h-4 w-2/3" />
@@ -32,7 +32,7 @@ export default function SubscriptionSettings() {
 
   if (error || !subscription) {
     return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 text-sm text-gray-500">
+      <div className="bg-[var(--cs-surface)] rounded-[10px] shadow-sm border border-[var(--cs-border)] p-6 text-sm text-[var(--cs-text-muted)]">
         {error || "Couldn't load your plan."}
       </div>
     );
@@ -61,72 +61,72 @@ export default function SubscriptionSettings() {
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-      <div className="px-6 py-4 border-b border-gray-100">
-        <h2 className="text-lg font-semibold text-gray-900">Plan & Billing</h2>
-        <p className="mt-1 text-sm text-gray-500">Your current plan and active-student usage.</p>
+    <div className="bg-[var(--cs-surface)] rounded-[10px] shadow-sm border border-[var(--cs-border)] overflow-hidden">
+      <div className="px-6 py-4 border-b border-[var(--cs-border)]">
+        <h2 className="text-lg font-semibold text-[var(--cs-text)]">Plan & Billing</h2>
+        <p className="mt-1 text-sm text-[var(--cs-text-muted)]">Your current plan and active-student usage.</p>
       </div>
 
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-indigo-50 rounded-lg">
-              <CreditCard className="w-6 h-6 text-indigo-600" />
+            <div className="p-2 bg-[var(--cs-accent-soft)] rounded-[6px]">
+              <CreditCard className="w-6 h-6 text-[var(--cs-accent)]" />
             </div>
             <div>
-              <h3 className="text-sm font-medium text-gray-900">{plan.name} plan</h3>
-              <p className="text-sm text-gray-500">{formatPlanPrice(subscription.pricePaise)} · {plan.tagline}</p>
+              <h3 className="text-sm font-medium text-[var(--cs-text)]">{plan.name} plan</h3>
+              <p className="text-sm text-[var(--cs-text-muted)]">{formatPlanPrice(subscription.pricePaise)} · {plan.tagline}</p>
             </div>
           </div>
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 capitalize">
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-[var(--cs-ok)] capitalize">
             {subscription.status}
           </span>
         </div>
 
         <div>
           <div className="flex items-center justify-between text-sm mb-1">
-            <span className="text-gray-600">Active students</span>
-            <span className={over ? "text-red-600 font-medium" : near ? "text-amber-600 font-medium" : "text-gray-900"}>
+            <span className="text-[var(--cs-text-muted)]">Active students</span>
+            <span className={over ? "text-[var(--cs-danger)] font-medium" : near ? "text-[var(--cs-warn)] font-medium" : "text-[var(--cs-text)]"}>
               {subscription.activeStudentCount}
               {subscription.studentLimit !== null ? ` / ${subscription.studentLimit}` : " (unlimited)"}
             </span>
           </div>
           {subscription.studentLimit !== null && (
-            <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+            <div className="h-2 rounded-full bg-[var(--cs-bg)] overflow-hidden">
               <div
-                className={`h-full rounded-full ${over ? "bg-red-500" : near ? "bg-amber-500" : "bg-indigo-500"}`}
+                className={`h-full rounded-full ${over ? "bg-[var(--cs-danger)]" : near ? "bg-[var(--cs-warn)]" : "bg-[var(--cs-accent)]"}`}
                 style={{ width: `${percent}%` }}
               />
             </div>
           )}
           {over && (
-            <p className="mt-2 text-sm text-red-600 flex items-center gap-1.5">
+            <p className="mt-2 text-sm text-[var(--cs-danger)] flex items-center gap-1.5">
               <AlertTriangle className="w-4 h-4 flex-shrink-0" />
               You're at your plan's limit — adding a new student will be blocked until you upgrade.
             </p>
           )}
           {!over && near && (
-            <p className="mt-2 text-sm text-amber-600">You're close to your plan's student limit.</p>
+            <p className="mt-2 text-sm text-[var(--cs-warn)]">You're close to your plan's student limit.</p>
           )}
         </div>
 
         {options.length > 0 && (
-          <div className="border-t border-gray-100 pt-4">
-            <h4 className="text-sm font-medium text-gray-900 mb-3">Upgrade</h4>
+          <div className="border-t border-[var(--cs-border)] pt-4">
+            <h4 className="text-sm font-medium text-[var(--cs-text)] mb-3">Upgrade</h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {options.map((planId) => {
                 const def = PLAN_CATALOG[planId];
                 return (
-                  <div key={planId} className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between">
+                  <div key={planId} className="border border-[var(--cs-border)] rounded-[6px] p-4 flex flex-col justify-between">
                     <div>
-                      <p className="text-sm font-medium text-gray-900">{def.name}</p>
-                      <p className="text-sm text-gray-500">{def.tagline}</p>
-                      <p className="mt-1 text-sm font-medium text-gray-700">{formatPlanPrice(def.pricePaise)}</p>
+                      <p className="text-sm font-medium text-[var(--cs-text)]">{def.name}</p>
+                      <p className="text-sm text-[var(--cs-text-muted)]">{def.tagline}</p>
+                      <p className="mt-1 text-sm font-medium text-[var(--cs-text-muted)]">{formatPlanPrice(def.pricePaise)}</p>
                     </div>
                     <button
                       onClick={() => handleUpgrade(planId)}
                       disabled={upgrading !== null}
-                      className="mt-3 inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+                      className="mt-3 inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-[6px] text-white bg-[var(--cs-accent)] hover:opacity-90 disabled:opacity-50"
                     >
                       {upgrading === planId ? "Starting..." : `Upgrade to ${def.name}`}
                     </button>

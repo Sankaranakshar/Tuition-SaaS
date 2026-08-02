@@ -62,10 +62,10 @@ export default function OrgExportSettings() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-900">Data Export</h2>
-          <p className="mt-1 text-sm text-gray-500">
+      <div className="bg-[var(--cs-surface)] rounded-[10px] shadow-sm border border-[var(--cs-border)] overflow-hidden">
+        <div className="px-6 py-4 border-b border-[var(--cs-border)]">
+          <h2 className="text-lg font-semibold text-[var(--cs-text)]">Data Export</h2>
+          <p className="mt-1 text-sm text-[var(--cs-text-muted)]">
             Download every record this organization owns — students, courses, sessions, attendance, invoices, payments, and more.
           </p>
         </div>
@@ -73,7 +73,7 @@ export default function OrgExportSettings() {
           <button
             onClick={() => handleExport("json")}
             disabled={exporting !== null}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 border border-[var(--cs-border)] shadow-sm text-sm font-medium rounded-[6px] text-[var(--cs-text)] bg-[var(--cs-surface)] hover:bg-[var(--cs-bg)] disabled:opacity-50"
           >
             <FileJson className="w-4 h-4" />
             {exporting === "json" ? "Preparing…" : "Export as JSON"}
@@ -81,46 +81,46 @@ export default function OrgExportSettings() {
           <button
             onClick={() => handleExport("xlsx")}
             disabled={exporting !== null}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 border border-[var(--cs-border)] shadow-sm text-sm font-medium rounded-[6px] text-[var(--cs-text)] bg-[var(--cs-surface)] hover:bg-[var(--cs-bg)] disabled:opacity-50"
           >
             <FileSpreadsheet className="w-4 h-4" />
             {exporting === "xlsx" ? "Preparing…" : "Export as Excel"}
           </button>
-          <Download className="w-4 h-4 text-gray-300 self-center ml-auto hidden sm:block" />
+          <Download className="w-4 h-4 text-[var(--cs-text-muted)] self-center ml-auto hidden sm:block" />
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-red-100 overflow-hidden">
+      <div className="bg-[var(--cs-surface)] rounded-[10px] shadow-sm border border-red-100 overflow-hidden">
         <div className="px-6 py-4 border-b border-red-100 bg-red-50">
-          <h2 className="text-lg font-semibold text-red-900 flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-[var(--cs-danger)] flex items-center gap-2">
             <AlertTriangle className="w-5 h-5" />
             Offboard this organization
           </h2>
-          <p className="mt-1 text-sm text-red-700">
+          <p className="mt-1 text-sm text-[var(--cs-danger)]">
             This closes the account and blocks all further access for every member. Financial records (invoices, payments) are
             retained per legal requirements and are never deleted. Only the organization's owner can do this.
           </p>
         </div>
         <div className="p-6">
           {offboarded ? (
-            <p className="text-sm text-gray-600">This organization has been offboarded.</p>
+            <p className="text-sm text-[var(--cs-text-muted)]">This organization has been offboarded.</p>
           ) : (
             <div className="max-w-md space-y-3">
-              <label className="block text-sm font-medium text-gray-700">
-                Type <span className="font-mono bg-gray-100 px-1 rounded">{orgName ?? "…"}</span> to confirm
+              <label className="block text-sm font-medium text-[var(--cs-text-muted)]">
+                Type <span className="font-mono bg-[var(--cs-bg)] px-1 rounded">{orgName ?? "…"}</span> to confirm
               </label>
               <input
                 type="text"
                 value={confirmText}
                 onChange={(e) => setConfirmText(e.target.value)}
                 disabled={!orgName}
-                className="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 text-sm disabled:bg-gray-50"
+                className="block w-full border border-[var(--cs-border)] rounded-[6px] shadow-sm py-2 px-3 text-sm bg-[var(--cs-surface)] disabled:bg-[var(--cs-bg)]"
                 placeholder={orgName ?? ""}
               />
               <button
                 onClick={handleOffboard}
                 disabled={offboarding || !orgName || !canConfirmOffboard(orgName, confirmText)}
-                className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:bg-gray-300"
+                className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-[6px] text-white bg-[var(--cs-danger)] hover:opacity-90 disabled:opacity-50 disabled:bg-[var(--cs-border)]"
               >
                 {offboarding ? "Offboarding…" : "Offboard organization"}
               </button>

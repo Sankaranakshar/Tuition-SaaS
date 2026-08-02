@@ -4,7 +4,7 @@
 
 **Companion docs:** [DEV_PLAN.md](DEV_PLAN.md) is what is left to build. [REDESIGN.md](REDESIGN.md) is the product-experience spec. [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) is strategy (its architecture and security sections are Firestore-era history). [docs/BUILD_LOG_ARCHIVE.md](docs/BUILD_LOG_ARCHIVE.md) is the old append-only build log, kept for narrative detail only. [docs/OPTIMIZATION_AUDIT.md](docs/OPTIMIZATION_AUDIT.md) is a 2026-07-26 performance/correctness audit; its fixes are applied (commit `b15f691`), see §8 for the two most consequential findings.
 
-_Last verified 2026-08-02 against commit `861e50c` plus an uncommitted tech-debt sweep (DEV_PLAN §4), the Tech Debt #1 invite/team-management feature, and the Tech Debt #7 token-styling pass on top. Every number below was re-run, not inherited._
+_Last verified 2026-08-02 against commit `f44f085` plus an uncommitted pass adding the DEV_PLAN §3.3 nightly reporting job and closing out Tech Debt #7's three flagged components (TeamSettings/SubscriptionSettings/OrgExportSettings token styling). Every number below was re-run, not inherited._
 
 ---
 
@@ -21,8 +21,8 @@ Multi-tenant SaaS for Indian tuition centers: INR, GST invoices, UPI/Razorpay co
 | 2 | People, Student Story, Money, Inbox, Onboarding | Complete, all 14 legacy pages deleted |
 | 3 | Schedule rebuild, subscription billing, super-admin, org export, audit log | Complete, all five browser-verified |
 | 3 (rest) | Hardening: axe pass, route contracts, optimization audit, and real-scale k6 (p95 79-101ms vs 400ms target, live-prod verified 2026-08-01) done; external pentest open | Only the pentest remains, see DEV_PLAN §2 |
-| 4 | Mobile polish (done); growth-loop payment-link footer (done, not live-verified — no Razorpay creds locally); AI morning brief, reporting, activation-funnel analytics not started | **Active**, see DEV_PLAN §3 |
-| External | Razorpay live keys, Google OAuth, phone OTP, Sentry, staging, legal | Deferred by founder, see §7 |
+| 4 | Mobile polish (done); growth-loop payment-link footer (done, not live-verified — no Razorpay creds locally); reporting (done, see DEV_PLAN §3.3); AI morning brief deferred by founder (2026-08-02); activation-funnel analytics not started | **Active**, see DEV_PLAN §3 |
+| External | Razorpay live keys, Google OAuth, phone OTP, Sentry, staging, legal, AI integrations | Deferred by founder, see §7 |
 
 **Gates, all re-run and green on 2026-08-02:**
 
@@ -106,6 +106,8 @@ supabase db push         # apply migrations to the hosted project
 
 **Decided 2026-07-10 and still in force:** all external integrations and third-party accounts are postponed until every build stage is complete and go-to-market begins. This covers Razorpay live KYC (both org-level and platform-level), Google OAuth verification, SMS/phone OTP provider, WhatsApp Business API, email domain verification, Sentry, staging spend, and legal documents.
 
+**Extended 2026-08-02 to AI integrations specifically:** the Claude-API-backed AI morning brief (DEV_PLAN §3.2) is deferred by the same logic — do not start it or scope it further until asked.
+
 **What this means for engineering:** do not stop to ask about these and do not attempt them. They are not blockers, they are the go-to-market checklist (DEV_PLAN §6). Build every feature that touches an external service to completion behind its degradation path (an error toast, "link pending", or a manual share link), and note the seam.
 
 Every deferred integration already has its degradation path built and tested. Subscription checkout returns a friendly "email us" message until platform keys exist. The platform webhook returns 503 until its secret is set. Payment links surface a clear `gateway_not_connected` error. Sessions without a real Meet link show "link pending".
@@ -137,7 +139,9 @@ Each of these cost real debugging time. They are distilled here so they cost nob
 
 ## 9. What is verified, and what is not
 
-**Verified live in a browser:** signup, onboarding (solo and center, CSV import, invite redeem), course and class creation, drag-reschedule with conflict rejection, attendance, invoice accrual and PDF download, manual payment, Money's Outstanding and insights, Inbox class channels and DM and archive, student-sees-own-session, Plan and Billing with the real student-cap trigger, the super-admin console including impersonation link generation, org export, and the audit log. **Also 2026-08-02:** generating a parent/student invite link from a student's row in People.tsx, and generating a staff invite link (with a role picker) from Settings → Team — both previously nonexistent UI (see DEV_PLAN's Tech Debt #1 closure note) — were clicked live against production and produced real tokens/rows. **Also 2026-08-02, Tech Debt #7's token-styling pass:** Courses, Documents (including the upload modal), Profile (view and edit mode), Preferences, and all five changed Settings tabs (General, Organization, Billing & Invoices, Availability, Tutor Profile) were all clicked live against the demo tutor account and render on the shared `var(--cs-*)` palette with no visual regressions.
+**Verified live in a browser:** signup, onboarding (solo and center, CSV import, invite redeem), course and class creation, drag-reschedule with conflict rejection, attendance, invoice accrual and PDF download, manual payment, Money's Outstanding and insights, Inbox class channels and DM and archive, student-sees-own-session, Plan and Billing with the real student-cap trigger, the super-admin console including impersonation link generation, org export, and the audit log. **Also 2026-08-02:** generating a parent/student invite link from a student's row in People.tsx, and generating a staff invite link (with a role picker) from Settings → Team — both previously nonexistent UI (see DEV_PLAN's Tech Debt #1 closure note) — were clicked live against production and produced real tokens/rows. **Also 2026-08-02, Tech Debt #7's token-styling pass (including its two follow-on components closed the same day):** Courses, Documents (including the upload modal), Profile (view and edit mode), Preferences, all five originally-changed Settings tabs (General, Organization, Billing & Invoices, Availability, Tutor Profile), and Team/Plan & Billing/Data & Offboarding were all clicked live against the demo tutor account and render on the shared `var(--cs-*)` palette with no visual regressions.
+
+**Also 2026-08-02:** `POST /api/cron/reporting-daily` (DEV_PLAN §3.3) was verified against the PGlite contract-test harness — correct aggregation values, idempotent rerun, 404 without the cron secret — via a throwaway test file written and then deleted (this endpoint isn't part of the permanent contract suite, same as `/materialize-sessions`). Never exercised in a real browser, since it has no UI; not run against production either, since Cloud Scheduler isn't wired up yet (see below).
 
 **Built and covered by tests, but never clicked in a browser.** Not known-broken, just unexercised: Student Story's Record Payment composer and the parent-facing view, Money's wallet top-up and bulk reminder links and invoice void, Inbox's anchor cards and snooze, the staff-invite redeem screen (new 2026-08-02; parent/student redeem screens were separately verified live pre-existing), Schedule's cancel-session popover and month-view day-click, and Supabase Storage upload/download through the app (no file has ever been uploaded against the live project). Also unexercised as of 2026-08-02: StudentDashboard's newly token-styled markup and RoleSelection — both role-gated (student session, or a multi-role account) and unreachable from the single-role demo tutor account without creating a throwaway account against production. (Admin verify/revoke on another tutor **is** now exercised — Tech Debt #1's client-side gating bug was fixed 2026-08-01 and browser-verified against the real org owner; see DEV_PLAN §4 item 1.)
 
