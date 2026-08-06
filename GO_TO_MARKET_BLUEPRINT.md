@@ -3,6 +3,8 @@
 
 *Companion to REDESIGN.md (product experience). This document covers everything else: audit, architecture, data, security, APIs, DevOps, QA, AI, documentation, launch readiness, and a 12-month roadmap. Every claim about the current state is verified against the code in this repository.*
 
+**Firestore-era notice (see [MASTER_PLAN.md](MASTER_PLAN.md) §1 source map):** this entire document was written against the original Firestore/SQLite dual-store prototype described in Section 2. That prototype no longer exists — the stack is now Supabase/Postgres with RLS, stateless Express, deployed on Vercel (see [HANDOFF.md](HANDOFF.md) for the real current architecture). **Sections 2, 7, 8, 9, and 10 are historical and describe problems already fixed under a different architecture — do not use them to judge current security posture or take action items from them.** What remains genuinely authoritative here: **§1** executive framing (directionally right, numbers stale), **§3** market position and ICP, **§4** monetization logic and the wedge, **§12** AI roadmap sequencing (superseded in detail by MASTER_PLAN.md R4's AI note, but the "deterministic rules first" sequencing still holds), and **§14**'s launch-gate *categories* (the specific gate contents are stale; MASTER_PLAN.md §8 has the current go-to-market checklist). Section 15's phased roadmap and Section 16's final recommendations are strategic reading only, not a task list — for the actual task list, see MASTER_PLAN.md and [EXECUTION_PLAN.md](EXECUTION_PLAN.md).
+
 **Priority legend used throughout:**
 - **P0 Critical** = launch is irresponsible without it
 - **P1 High** = launch is embarrassing without it

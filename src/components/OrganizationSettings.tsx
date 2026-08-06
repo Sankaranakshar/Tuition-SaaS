@@ -13,7 +13,8 @@ export default function OrganizationSettings() {
     students: { defaultWalletInit: 'currency', enforceCapacityGuardrails: true },
     calendar: { preventConflicts: true },
     documents: { maxFileSizeMB: 10, allowedExtensions: ['pdf', 'doc', 'docx'] },
-    messaging: { autoCreateBatchChannels: true, notifyOnNewSession: true, notifyOnNewMessage: true }
+    messaging: { autoCreateBatchChannels: true, notifyOnNewSession: true, notifyOnNewMessage: true },
+    cancellation: { freeHours: 24, lateFeePercent: 50, noShowForfeitPercent: 100 }
   });
 
   useEffect(() => {
@@ -58,6 +59,8 @@ export default function OrganizationSettings() {
       }
     }));
   };
+
+  const clampPercent = (value: number) => Math.min(100, Math.max(0, value));
 
   if (!user || (user.role !== 'admin' && user.role !== 'tutor')) {
     return <div className="p-4 text-[var(--cs-text-muted)]">You do not have permission to view organization settings.</div>;
@@ -229,6 +232,48 @@ export default function OrganizationSettings() {
                     Notify users on new messages
                   </label>
                 </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Cancellation Policy */}
+          <section>
+            <h3 className="text-md font-semibold text-[var(--cs-text)] mb-4 border-b border-[var(--cs-border)] pb-2">6. Cancellation Policy</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Free Cancellation Window (Hours)</label>
+                <p className="text-xs text-[var(--cs-text-muted)] mb-1">Cancel this many hours before a session with no fee.</p>
+                <input
+                  type="number"
+                  min={0}
+                  value={settings.cancellation.freeHours}
+                  onChange={(e) => updateSetting('cancellation', 'freeHours', Math.max(0, parseInt(e.target.value) || 0))}
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Late Cancellation Fee (%)</label>
+                <p className="text-xs text-[var(--cs-text-muted)] mb-1">Fee charged when cancelling inside the free window.</p>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={settings.cancellation.lateFeePercent}
+                  onChange={(e) => updateSetting('cancellation', 'lateFeePercent', clampPercent(parseInt(e.target.value) || 0))}
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">No-Show Forfeit (%)</label>
+                <p className="text-xs text-[var(--cs-text-muted)] mb-1">Portion forfeited when a student doesn't show up.</p>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={settings.cancellation.noShowForfeitPercent}
+                  onChange={(e) => updateSetting('cancellation', 'noShowForfeitPercent', clampPercent(parseInt(e.target.value) || 0))}
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                />
               </div>
             </div>
           </section>

@@ -51,6 +51,20 @@ export const markAttendanceResponseSchema = z.object({
 });
 export type MarkAttendanceResponse = z.infer<typeof markAttendanceResponseSchema>;
 
+export const reverseAttendanceRequestSchema = z.object({
+  sessionId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  reason: z.enum(["cancellation", "no_show"]),
+});
+export type ReverseAttendanceRequest = z.infer<typeof reverseAttendanceRequestSchema>;
+export const reverseAttendanceResponseSchema = z.object({
+  ok: z.literal(true),
+  reversalPath: z.enum(["credit", "currency", "invoice_voided", "invoice_refunded"]),
+  creditedCredits: z.number().int(),
+  creditedPaise: z.number().int(),
+});
+export type ReverseAttendanceResponse = z.infer<typeof reverseAttendanceResponseSchema>;
+
 export const cancelSessionRequestSchema = z.object({ sessionId: z.string().uuid() });
 export type CancelSessionRequest = z.infer<typeof cancelSessionRequestSchema>;
 export const cancelSessionResponseSchema = z.object({ ok: z.literal(true) });

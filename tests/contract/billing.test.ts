@@ -28,19 +28,47 @@ async function insertInvoice(overrides: Partial<{ orgId: string; status: string;
   return id;
 }
 
-async function insertSession(overrides: Partial<{ orgId: string; tutorId: string; startTime: Date }> = {}) {
+async function insertSession(overrides: Partial<{ orgId: string; tutorId: string; startTime: Date; templateId: string | null }> = {}) {
   const id = crypto.randomUUID();
   await db.query(
-    `insert into class_sessions (id, organization_id, tutor_id, student_ids, start_time, end_time, status)
-     values ($1, $2, $3, $4, $5, $6, 'scheduled')`,
+    `insert into class_sessions (id, organization_id, tutor_id, template_id, student_ids, start_time, end_time, status)
+     values ($1, $2, $3, $4, $5, $6, $7, 'scheduled')`,
     [
       id,
       overrides.orgId ?? ORG,
       overrides.tutorId ?? uids.tutor,
+      overrides.templateId ?? null,
       [bodyStudentId],
       (overrides.startTime ?? new Date(Date.now() - 3600 * 1000)).toISOString(),
       new Date((overrides.startTime ?? new Date(Date.now() - 3600 * 1000)).getTime() + 3600 * 1000).toISOString(),
     ]
+  );
+  return id;
+}
+
+async function insertReversalStudent() {
+  const id = crypto.randomUUID();
+  await db.query(`insert into students (id, organization_id, name) values ($1, $2, 'Reversal Student')`, [id, ORG]);
+  await db.query(`insert into wallets (organization_id, student_id, balance_credits, balance_currency) values ($1, $2, 0, 0)`, [ORG, id]);
+  return id;
+}
+
+async function insertPerSessionTemplate(feeAmountRupees: number) {
+  const id = crypto.randomUUID();
+  await db.query(
+    `insert into class_templates (id, organization_id, name, pricing_model, fee_amount) values ($1, $2, 'Reversal Template', 'PER_SESSION', $3)`,
+    [id, ORG, feeAmountRupees]
+  );
+  return id;
+}
+
+async function insertReversalSession(studentId: string, templateId: string) {
+  const id = crypto.randomUUID();
+  const startTime = new Date(Date.now() - 3600 * 1000);
+  await db.query(
+    `insert into class_sessions (id, organization_id, tutor_id, template_id, student_ids, start_time, end_time, status)
+     values ($1, $2, $3, $4, $5, $6, $7, 'scheduled')`,
+    [id, ORG, uids.tutor, templateId, [studentId], startTime.toISOString(), new Date(startTime.getTime() + 3600 * 1000).toISOString()]
   );
   return id;
 }
@@ -172,6 +200,192 @@ describe("POST /api/v1/billing/attendance", () => {
 
     const session = await db.query<any>(`select status from class_sessions where id = $1`, [sessionId]);
     expect(session.rows[0].status).toBe("completed");
+  });
+});
+
+describe("POST /api/v1/billing/attendance/reverse", () => {
+  it("401s with no token", async () => {
+    const res = await request(app).post("/api/v1/billing/attendance/reverse").send({});
+    expectStatus(res, 401);
+  });
+
+  it("403s for a role outside CAN_MARK (parent)", async () => {
+    const res = await request(app)
+      .post("/api/v1/billing/attendance/reverse")
+      .set(...authHeader(uids.parent))
+      .send({ sessionId: crypto.randomUUID(), studentId: crypto.randomUUID(), reason: "no_show" });
+    expectStatus(res, 403);
+  });
+
+  it("404s reversing a session/student with no attendance record at all", async () => {
+    const res = await request(app)
+      .post("/api/v1/billing/attendance/reverse")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId: crypto.randomUUID(), studentId: crypto.randomUUID(), reason: "no_show" });
+    expectStatus(res, 404);
+  });
+
+  it("422s reversing an attendance record that was never billed", async () => {
+    const studentId = await insertReversalStudent();
+    const sessionId = await insertSession();
+    await db.query(
+      `insert into attendance_records (organization_id, session_id, student_id, tutor_id, status, billed, session_start)
+       values ($1, $2, $3, $4, 'absent', false, now() - interval '1 hour')`,
+      [ORG, sessionId, studentId, uids.tutor]
+    );
+    const res = await request(app)
+      .post("/api/v1/billing/attendance/reverse")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId, studentId, reason: "no_show" });
+    expectStatus(res, 422);
+    expect(res.body.error.code).toBe("not_billed");
+  });
+
+  it("201s reversing a credit-charged session, crediting back the whole credit regardless of policy", async () => {
+    const studentId = await insertReversalStudent();
+    await db.query(`update wallets set balance_credits = 2 where organization_id = $1 and student_id = $2`, [ORG, studentId]);
+    const templateId = await insertPerSessionTemplate(500);
+    const sessionId = await insertReversalSession(studentId, templateId);
+
+    const mark = await request(app)
+      .post("/api/v1/billing/attendance")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId, records: [{ studentId, status: "present" }] });
+    expectStatus(mark, 200);
+    const billedWallet = await db.query<any>(`select balance_credits from wallets where organization_id = $1 and student_id = $2`, [ORG, studentId]);
+    expect(billedWallet.rows[0].balance_credits).toBe(1);
+
+    const res = await request(app)
+      .post("/api/v1/billing/attendance/reverse")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId, studentId, reason: "no_show" });
+    expectStatus(res, 201);
+    expect(res.body.reversalPath).toBe("credit");
+    expect(res.body.creditedCredits).toBe(1);
+
+    const wallet = await db.query<any>(`select balance_credits from wallets where organization_id = $1 and student_id = $2`, [ORG, studentId]);
+    expect(wallet.rows[0].balance_credits).toBe(2);
+    const ledger = await db.query<any>(
+      `select type, credits from wallet_ledger where organization_id = $1 and session_id = $2 and student_id = $3 and type = 'credit_reversal'`,
+      [ORG, sessionId, studentId]
+    );
+    expect(ledger.rows[0].credits).toBe(1);
+    const ar = await db.query<any>(`select reversed_at from attendance_records where session_id = $1 and student_id = $2`, [sessionId, studentId]);
+    expect(ar.rows[0].reversed_at).toBeTruthy();
+  });
+
+  it("409s reversing an already-reversed attendance record", async () => {
+    const studentId = await insertReversalStudent();
+    await db.query(`update wallets set balance_credits = 1 where organization_id = $1 and student_id = $2`, [ORG, studentId]);
+    const templateId = await insertPerSessionTemplate(500);
+    const sessionId = await insertReversalSession(studentId, templateId);
+    await request(app)
+      .post("/api/v1/billing/attendance")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId, records: [{ studentId, status: "present" }] });
+    const first = await request(app)
+      .post("/api/v1/billing/attendance/reverse")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId, studentId, reason: "no_show" });
+    expectStatus(first, 201);
+
+    const second = await request(app)
+      .post("/api/v1/billing/attendance/reverse")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId, studentId, reason: "no_show" });
+    expectStatus(second, 409);
+    expect(second.body.error.code).toBe("already_reversed");
+  });
+
+  it("201s reversing a currency-charged session, crediting back the policy-computed percentage", async () => {
+    const studentId = await insertReversalStudent();
+    await db.query(`update wallets set balance_currency = 200 where organization_id = $1 and student_id = $2`, [ORG, studentId]);
+    const templateId = await insertPerSessionTemplate(100); // fee 100 rupees = 10000 paise
+    const sessionId = await insertReversalSession(studentId, templateId);
+
+    await request(app)
+      .post("/api/v1/billing/attendance")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId, records: [{ studentId, status: "present" }] });
+    const billed = await db.query<any>(`select balance_currency from wallets where organization_id = $1 and student_id = $2`, [ORG, studentId]);
+    expect(Number(billed.rows[0].balance_currency)).toBe(100); // 200 - 100
+
+    // Session already started (in the past), so the free-cancellation window
+    // has passed: default D-08 policy applies the 50% late fee, crediting
+    // back the other 50% (10000 paise fee -> 5000 paise credited).
+    const res = await request(app)
+      .post("/api/v1/billing/attendance/reverse")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId, studentId, reason: "cancellation" });
+    expectStatus(res, 201);
+    expect(res.body.reversalPath).toBe("currency");
+    expect(res.body.creditedPaise).toBe(5000);
+
+    const wallet = await db.query<any>(`select balance_currency from wallets where organization_id = $1 and student_id = $2`, [ORG, studentId]);
+    expect(Number(wallet.rows[0].balance_currency)).toBe(150); // 100 + 50
+  });
+
+  it("201s reversing an invoiced-unpaid session by voiding the invoice", async () => {
+    const studentId = await insertReversalStudent();
+    const templateId = await insertPerSessionTemplate(300);
+    const sessionId = await insertReversalSession(studentId, templateId);
+
+    const mark = await request(app)
+      .post("/api/v1/billing/attendance")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId, records: [{ studentId, status: "present" }] });
+    expectStatus(mark, 200);
+    expect(mark.body.invoiced).toContain(studentId);
+
+    const res = await request(app)
+      .post("/api/v1/billing/attendance/reverse")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId, studentId, reason: "no_show" });
+    expectStatus(res, 201);
+    expect(res.body.reversalPath).toBe("invoice_voided");
+
+    const inv = await db.query<any>(
+      `select status, voided_at from invoices where organization_id = $1 and student_id = $2 and source ->> 'sessionId' = $3`,
+      [ORG, studentId, sessionId]
+    );
+    expect(inv.rows[0].status).toBe("void");
+    expect(inv.rows[0].voided_at).toBeTruthy();
+  });
+
+  it("201s reversing an invoiced-then-paid session by writing a partial refund", async () => {
+    const studentId = await insertReversalStudent();
+    const templateId = await insertPerSessionTemplate(400);
+    const sessionId = await insertReversalSession(studentId, templateId);
+
+    await request(app)
+      .post("/api/v1/billing/attendance")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId, records: [{ studentId, status: "present" }] });
+    const invRow = await db.query<any>(
+      `select id from invoices where organization_id = $1 and student_id = $2 and source ->> 'sessionId' = $3`,
+      [ORG, studentId, sessionId]
+    );
+    const invoiceId = invRow.rows[0].id;
+    const pay = await request(app)
+      .post("/api/v1/billing/payments/manual")
+      .set(...authHeader(uids.owner))
+      .send({ invoiceId, amountPaise: 40000, method: "cash", idempotencyKey: crypto.randomUUID() });
+    expectStatus(pay, 201);
+    expect(pay.body.invoiceStatus).toBe("paid");
+
+    const res = await request(app)
+      .post("/api/v1/billing/attendance/reverse")
+      .set(...authHeader(uids.owner))
+      .send({ sessionId, studentId, reason: "cancellation" });
+    expectStatus(res, 201);
+    expect(res.body.reversalPath).toBe("invoice_refunded");
+    expect(res.body.creditedPaise).toBe(20000); // 50% of 40000, default late-fee policy
+
+    const refund = await db.query<any>(`select amount_paise from refunds where invoice_id = $1`, [invoiceId]);
+    expect(refund.rows[0].amount_paise).toBe(20000);
+    const inv = await db.query<any>(`select paid_paise, status from invoices where id = $1`, [invoiceId]);
+    expect(inv.rows[0].paid_paise).toBe(20000);
+    expect(inv.rows[0].status).toBe("partially_paid");
   });
 });
 

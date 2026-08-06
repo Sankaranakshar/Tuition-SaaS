@@ -2,7 +2,7 @@
 
 **What this is:** one plan, merged from DEV_PLAN.md, HANDOFF.md, REDESIGN.md, GO_TO_MARKET_BLUEPRINT.md, README.md and `ClassStackr_Product_Spec_v2.xlsx`. It supersedes the release planning in each of those individually. Where they disagreed, the disagreement is resolved here and recorded in §9.
 
-_Written 2026-08-02 against commit `f44f085` plus the uncommitted reporting-job and token-styling passes. Code claims re-checked directly, not inherited._
+_Written 2026-08-02 against commit `f44f085` plus the uncommitted reporting-job and token-styling passes. Code claims re-checked directly, not inherited. Amended 2026-08-06: B-02 and B-20 shipped (commit `64db1e7` plus an uncommitted pass), D-08 and D-01 decided by the founder — see §3, §4, §5, §10. [EXECUTION_PLAN.md](EXECUTION_PLAN.md) is the step-by-step, checkbox-trackable execution order derived from this plan's R1; start there for day-to-day work._
 
 ---
 
@@ -15,7 +15,8 @@ _Written 2026-08-02 against commit `f44f085` plus the uncommitted reporting-job 
 | **DEV_PLAN.md** | Tech-debt detail, testing strategy, what shipped when | Its stage numbering, replaced by R1 to R4 below |
 | **Spec v2 (xlsx)** | Role matrix, per-screen IA, marketplace spec, backlog scoring, open decisions | Nothing. It is the newest artifact. |
 | **GO_TO_MARKET_BLUEPRINT.md** | Market position, ICP, the wedge, monetization logic, launch-gate checklist | §2, §7, §8, §9, §10 entirely. Firestore-era history, the stack is now Supabase/Postgres. |
-| **README.md** | Nothing | Everything. It still describes Firestore, Firebase Auth, SQLite removal, `npm run test:rules`. Fix it (B-20). |
+| **README.md** | Setup, architecture summary, deployment, security invariants (rewritten 2026-08-06, B-20) | Nothing currently known |
+| **EXECUTION_PLAN.md** | Day-to-day execution order within R1 and progress tracking (checkboxes) | Anything beyond R1 — it does not yet cover R2-R4, which depend on undecided founder calls and staging |
 
 **The one-line product definition, updated by spec v2:** a platform connecting parents, students and tutors, where a tutor may be independent or part of an organisation, and the same person may be both. This is a widening from the blueprint's "the tuition center OS that collects your fees," and it is what makes R2 and R3 structural rather than optional.
 
@@ -25,7 +26,7 @@ _Written 2026-08-02 against commit `f44f085` plus the uncommitted reporting-job 
 
 **Shipped and verified live:** the whole management product. Six workspaces (Today, People, Student Story, Money, Inbox, Schedule), three-beat onboarding, server-authoritative money with `FOR UPDATE` locks and idempotency keys, invoices with GST snapshot and PDF and Razorpay links and webhook reconciliation, refunds against invoices, subscription billing with a DB-enforced student cap, super-admin console, org export and offboarding, audit log, staff/parent/student invite flows, mobile polish, the nightly `org_stats_daily` job.
 
-**Gates, all green:** tsc, 177 unit, 81 RLS, 195 contract, build, bundle 198.1KB against a 260KB budget, API-bundle route verification. All seven run in CI. None need Docker, Java or a live database.
+**Gates, all green:** tsc, 182 unit, 81 RLS, 197 contract, build, bundle 199.2KB against a 260KB budget, API-bundle route verification. All seven run in CI. None need Docker, Java or a live database.
 
 **Load:** k6 `attendance_burst` against live production, p95 79 to 101ms against a 400ms target, no duplicate invoice under 15 concurrent VUs.
 
@@ -49,15 +50,15 @@ Each release has a single thesis, a gate, and an effort total. Effort is in engi
 
 | ID | Item | ed | Notes |
 |---|---|---|---|
-| B-01 | Attendance reversal and wallet credit-back | 3 | The keystone. Un-mark a session, credit the wallet, void the accrued invoice, write a linked ledger entry and audit row. Needs D-08 decided first. |
-| B-02 | Fix per-user rate limiting | 1 | Verified real. `keyGenerator` reads `req.user?.id`, but `app.use("/api/", apiLimiter)` mounts before any route's `authenticateToken`, so it always falls through to IP. A centre behind one NAT shares 120 req/min. Also invalidates the k6 caveat in DEV_PLAN §2.1, which described the limiter as per-user. |
+| ~~B-01~~ | ~~Attendance reversal and wallet credit-back~~ | ~~3~~ | **Done 2026-08-06.** `POST /api/v1/billing/attendance/reverse` (`server/routes/billing.ts`), reading D-08's per-org policy via `getCancellationPolicy()`. Un-marks a billed attendance record, credits back the wallet (whole credit for a credit-charged session, policy-computed percentage for a currency-charged one), voids an unpaid accrued invoice or writes a partial `refunds` row for a paid one, and writes a linked `wallet_ledger` row plus an `attendance.reverse` audit event. Kept as a separate explicit per-student action from `/sessions/cancel`, as the item's own design note recommended. See EXECUTION_PLAN.md Step 2 for the full design log and browser-verification detail. |
+| ~~B-02~~ | ~~Fix per-user rate limiting~~ | ~~1~~ | **Done 2026-08-06.** `identifyUser` (`server/middleware/auth.ts`) now runs ahead of `apiLimiter` to populate `req.user.id` for the keyGenerator without doing the full membership lookup; real auth still enforced downstream by each route's `authenticateToken`. See HANDOFF.md §8. The k6 caveat in DEV_PLAN §2.1 was about the limiter's *effect*, not its config, and stands independent of this fix. |
 | B-03 | Wallet-to-ledger reconciliation job | 2 | Scheduled check that `balance_currency` equals the sum of `wallet_ledger`. Same `CRON_SECRET` pattern as `/api/cron/reporting-daily`. This is the check that finds the next B-01. |
 | B-04 | Credit expiry policy | 3 | Per-org window with warning notices before lapse. Needs D-07. Today credits are immortal, an unbounded liability with no revenue-recognition point. |
 | B-05 | Self-serve parent top-up | 4 | Top-up is staff-only today. Biggest labour saving for a centre and the fastest path to parent-side engagement. Degrades behind `gateway_not_connected` until Razorpay is live. |
 | B-09 | Bulk import (CSV/Excel, column mapping, dry run) | 3 | Every prospect runs on a spreadsheet. Manual entry of 200 students is the switching cost that loses the deal. |
 | B-10 | Staging environment | 2 | Recurring-cost decision, not an engineering one. It is the blocker on D-04 and the reason a dozen things in DEV_PLAN say "verified against production" or "never clicked in a browser." |
 | B-11 | DPDP consent centre and per-student erasure | 4 | Statutory. Org-level export exists, per-student erasure does not, and consent is currently implicit despite the portal stamping a `consentVersion`. The document that version points at must also exist (GTM legal). |
-| B-20 | Rewrite README | 0.5 | It describes an architecture that no longer exists. First thing anyone evaluating the repo reads. |
+| ~~B-20~~ | ~~Rewrite README~~ | ~~0.5~~ | **Done 2026-08-06.** Rewritten for the actual stack (Supabase/Postgres RLS, stateless Express, Vercel), correct commands, and a pointer to this document. |
 | — | Booking-request approval UI | ~1 | Carried from spec v2 Tutor tab. `session_requests` exists, the staff accept/decline/propose UI is thin. |
 | — | Cancellation-policy surface (parent-facing) | ~1 | Shows cutoff, late-cancellation cost, refund. Pairs with B-01. The clearest source of fee disputes. |
 
@@ -121,11 +122,11 @@ Score = Impact × Confidence ÷ Effort, effort floored at 0.5 ed. Highest score 
 
 | ID | Item | Rel | Impact | Conf | ed | Score |
 |---|---|---|---|---|---|---|
-| B-02 | Fix per-user rate limiting | R1 | 4 | 1.0 | 1 | 4.00 |
-| B-20 | Rewrite README | R1 | 2 | 1.0 | 0.5 | 4.00 |
+| ~~B-02~~ | ~~Fix per-user rate limiting~~ | R1 | 4 | 1.0 | 1 | **Done 2026-08-06** |
+| ~~B-20~~ | ~~Rewrite README~~ | R1 | 2 | 1.0 | 0.5 | **Done 2026-08-06** |
 | B-03 | Wallet-ledger reconciliation | R1 | 5 | 0.9 | 2 | 2.25 |
 | B-10 | Staging environment | R1 | 4 | 1.0 | 2 | 2.00 |
-| B-01 | Attendance reversal | R1 | 5 | 1.0 | 3 | 1.67 |
+| ~~B-01~~ | ~~Attendance reversal~~ | R1 | 5 | 1.0 | 3 | **Done 2026-08-06** |
 | B-09 | Bulk import | R1 | 5 | 0.9 | 3 | 1.50 |
 | B-05 | Self-serve parent top-up | R1 | 5 | 0.9 | 4 | 1.13 |
 | B-04 | Credit expiry | R1 | 4 | 0.8 | 3 | 1.07 |
@@ -142,7 +143,7 @@ Score = Impact × Confidence ÷ Effort, effort floored at 0.5 ed. Highest score 
 | B-16 | Escrow, take rate, reviews | R3 | 4 | 0.6 | 10 | 0.24 |
 | B-07 | Org switcher + cross-org conflicts | R2 | 4 | 0.9 | 5 | 0.72 |
 
-**Total: 90.5 ed** (R1 22.5, R2 26, R3 30, R4 12). At one engineer that is roughly 18 calendar weeks of pure build; budget 24 to 28 with review, migrations and the browser walkthroughs this stack demonstrably needs.
+**Total: 90.5 ed at plan-time** (R1 22.5, R2 26, R3 30, R4 12); **86 ed remaining** after B-02, B-20 (1.5 ed) and B-01 (3 ed) shipped as of 2026-08-06. At one engineer that is roughly 18 calendar weeks of pure build; budget 24 to 28 with review, migrations and the browser walkthroughs this stack demonstrably needs.
 
 Note the score ranking and the release ranking disagree on purpose. B-06 scores 0.56 but gates all of R3, and B-14/B-15/B-16 score low only because they are large. Score breaks ties inside a release; it does not reorder releases.
 
@@ -150,20 +151,18 @@ Note the score ranking and the release ranking disagree on purpose. B-06 scores 
 
 ## 5. Decisions only the founder can make
 
-These block real work. Each has a recommended option. Nothing in R1's money items or any of R3 should start before the ones that gate them are answered.
+Two have been answered (2026-08-06); the rest still gate the work in their Blocks column.
 
-| ID | Decision | Recommendation | Blocks |
+| ID | Decision | Status | Blocks |
 |---|---|---|---|
-| D-08 | Cancellation and no-show policy | Free cancellation over 24h, 50% inside 24h, no refund on no-show | **B-01.** The reversal engine has no defined behaviour without this. |
-| D-07 | Credit expiry period | Per-org configurable within a platform cap | **B-04** |
-| D-05 | Can a student transact without a parent? | Age threshold with parent approval below it | Student booking, consent, R2 approval routing |
-| D-06 | Adult-minor 1:1 messaging policy | Parent-visible by default | Inbox today, marketplace trust in R3 |
-| D-01 | Independent tutor: own org or org-less? | Single-member org, no schema fork | **B-06 and all of R3** |
+| D-08 | Cancellation and no-show policy | **Decided 2026-08-06 — per-org configurable, not fixed.** Three settings per org: `cancellation_free_hours` (default 24), `cancellation_late_fee_percent` (default 50, applies inside the free window), `no_show_forfeit_percent` (default 100). All three are founder-set defaults any org can override, including no-show — narrower than the original recommendation, which would have fixed no-show at a flat 100% platform-wide. B-01's design must read these three fields per org rather than hardcoding the 24h/50%/100% split. | **B-01**, done 2026-08-06 |
+| D-07 | Credit expiry period | Open. Recommendation: per-org configurable within a platform cap | **B-04** |
+| D-05 | Can a student transact without a parent? | Open. Recommendation: age threshold with parent approval below it | Student booking, consent, R2 approval routing |
+| D-06 | Adult-minor 1:1 messaging policy | Open. Recommendation: parent-visible by default | Inbox today, marketplace trust in R3 |
+| D-01 | Independent tutor: own org or org-less? | **Decided 2026-08-06 — single-member org, no schema fork.** Every tutor has an `organization_id`; an independent tutor is an org of one, no parallel org-less path. This decides only *how* an independent tutor's own membership looks — it does not by itself let one person hold multiple org memberships. That capability is B-06 (person-centric identity, R2, 8 ed) plus B-07 (org switcher, 5 ed); D-01 just makes that later migration land as "one shape, N memberships" instead of forking into an org and an org-less code path. | **B-06 and all of R3**, now unblocked |
 | D-02 | Who is the customer in a marketplace booking? | Open. Decides who holds the wallet, who is invoiced, who can refund, who owns the student record when a tutor leaves a centre | Escrow, take rate, disputes |
-| D-03 | Marketplace pricing model | Subscription for orgs, take rate for individuals | B-16, GTM |
-| D-04 | Drop the legacy rupee columns? | Migrate to paise-native after staging exists | Tech Debt #3 |
-
-**Two of these are urgent and cheap to answer: D-08 and D-01.** D-08 unblocks the highest-value item in the whole plan, and D-01 determines the shape of an 8-ed migration.
+| D-03 | Marketplace pricing model | Open. Recommendation: subscription for orgs, take rate for individuals | B-16, GTM |
+| D-04 | Drop the legacy rupee columns? | Open. Recommendation: migrate to paise-native after staging exists | Tech Debt #3 |
 
 ---
 
@@ -214,7 +213,7 @@ Per the founder's 2026-07-10 deferral, still in force, none of this is engineeri
 ## 9. Conflicts found while merging, and how they were resolved
 
 1. **DEV_PLAN's "only the pentest remains" versus spec v2's three structural gaps.** Spec v2 wins. DEV_PLAN was measuring completeness against its own Stage 0-to-4 plan, which never contained reversal, expiry, reconciliation, identity or the marketplace. The stage numbering is retired in favour of R1 to R4.
-2. **README versus reality.** README describes Firestore, Firebase Auth, custom claims, `npm run test:rules` and Cloud Run. None of that exists; the stack is Supabase, Postgres RLS, no custom claims, `npm run test:rls`, Vercel. Fixed by B-20, and until then treat README as a historical artifact.
+2. **README versus reality.** README described Firestore, Firebase Auth, custom claims, `npm run test:rules` and Cloud Run. None of that exists; the stack is Supabase, Postgres RLS, no custom claims, `npm run test:rls`, Vercel. Fixed by B-20 (2026-08-06) — README.md is now accurate.
 3. **The blueprint's architecture and security sections.** Both are Firestore-era. Its C1 to C5 vulnerabilities were real then and are fixed now under a different architecture. Keep the strategy sections (§1 wedge, §3 role gaps, §4 market position, §14 launch gates); discard §2, §7, §8, §9, §10.
 4. **DEV_PLAN §2.1's k6 caveat.** It attributed the throughput cap to "the per-user rate limiter (120 req/min)." The limiter is not per-user in effect, for the reason B-02 documents. The load-test conclusion (p95 well under target, no duplicate invoice) still stands; only the explanation of the cap was wrong.
 5. **REDESIGN §17's scalability note** claims a Firestore-plus-SQLite dual store stays backend-internal. That store is gone. Its actual conclusion (optimistic UI everywhere) survives on its own merits.
@@ -225,8 +224,8 @@ Per the founder's 2026-07-10 deferral, still in force, none of this is engineeri
 
 ## 10. What to do next week
 
-1. Answer **D-08** and **D-01**. Everything expensive downstream is waiting on those two sentences.
-2. Ship **B-02** and **B-20**. One day combined, both are pure wins, and B-02 is a live correctness bug affecting every centre behind a shared IP.
+1. ~~Ship **B-02** and **B-20**.~~ **Done 2026-08-06**, both pure wins, no founder decision needed.
+2. ~~Answer **D-08** and **D-01**.~~ **Done 2026-08-06** (§5) — both decided, both now unblock real work.
 3. Stand up **B-10 staging**. It is a spend decision, and it unblocks the rest of R1 being verifiable at all.
 4. Start the long-lead **GTM procurement** in parallel: WhatsApp templates, DLT, Razorpay KYC, Google OAuth verification.
-5. Then **B-01**, with a real browser walkthrough and RLS tests in the same PR.
+5. Then **B-01**, with a real browser walkthrough and RLS tests in the same PR. D-08's per-org settings need a place to live — either a new migration adding the three columns to `organizations`, or (if B-10 staging isn't up yet) rehearsed carefully against production, same caution as every other R1 migration.

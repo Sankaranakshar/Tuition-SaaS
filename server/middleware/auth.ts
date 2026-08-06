@@ -133,6 +133,33 @@ async function loadMembership(userId: string): Promise<Membership> {
   return value;
 }
 
+// Soft, non-enforcing auth used only to key the rate limiter (server/app.ts)
+// per-user instead of per-IP. It mounts before any route's authenticateToken,
+// so it does its own lightweight JWT verify (no membership lookup, no 401 on
+// failure) and silently leaves req.user unset for a missing/invalid token —
+// that request still gets rate-limited by IP, and the real auth enforcement
+// (and full req.user population) still happens downstream in each route's
+// authenticateToken.
+export const identifyUser = async (
+  req: AuthRequest,
+  _res: Response,
+  next: NextFunction
+) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
+
+  if (token && token !== "undefined" && token !== "null") {
+    try {
+      const { sub } = await verifyAccessToken(token);
+      req.user = { id: sub };
+    } catch {
+      // Invalid/expired token: fall through to IP-based limiting. The route's
+      // own authenticateToken will reject the request with 401 shortly after.
+    }
+  }
+  next();
+};
+
 export const authenticateToken = async (
   req: AuthRequest,
   res: Response,

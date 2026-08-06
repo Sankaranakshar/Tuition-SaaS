@@ -19,7 +19,7 @@ import subscriptionRoutes from "./routes/subscription.ts";
 import adminRoutes from "./routes/admin.ts";
 import orgExportRoutes from "./routes/orgExport.ts";
 import auditLogRoutes from "./routes/auditLog.ts";
-import type { AuthRequest } from "./middleware/auth.ts";
+import { identifyUser, type AuthRequest } from "./middleware/auth.ts";
 
 // Builds the configured Express app WITHOUT starting a listener or serving the
 // SPA. Two consumers:
@@ -76,7 +76,10 @@ export function createApp() {
   });
 
   app.use(express.json({ limit: "1mb" }));
-  app.use("/api/", apiLimiter);
+  // identifyUser runs first so apiLimiter's keyGenerator sees req.user.id for
+  // authenticated requests (see identifyUser's doc comment for why this is
+  // split from authenticateToken, which mounts per-route further down).
+  app.use("/api/", identifyUser, apiLimiter);
 
   // API v1
   app.use("/api/v1/settings", settingsRoutes);

@@ -123,6 +123,18 @@ async function loadMembership(userId) {
   }
   return value;
 }
+var identifyUser = async (req, _res, next) => {
+  const authHeader2 = req.headers["authorization"];
+  const token = authHeader2?.startsWith("Bearer ") ? authHeader2.slice(7) : void 0;
+  if (token && token !== "undefined" && token !== "null") {
+    try {
+      const { sub } = await verifyAccessToken(token);
+      req.user = { id: sub };
+    } catch {
+    }
+  }
+  next();
+};
 var authenticateToken = async (req, res, next) => {
   const authHeader2 = req.headers["authorization"];
   const token = authHeader2?.startsWith("Bearer ") ? authHeader2.slice(7) : void 0;
@@ -787,6 +799,17 @@ var markAttendanceResponseSchema = z2.object({
   billed: z2.array(z2.string()),
   invoiced: z2.array(z2.string())
 });
+var reverseAttendanceRequestSchema = z2.object({
+  sessionId: z2.string().uuid(),
+  studentId: z2.string().uuid(),
+  reason: z2.enum(["cancellation", "no_show"])
+});
+var reverseAttendanceResponseSchema = z2.object({
+  ok: z2.literal(true),
+  reversalPath: z2.enum(["credit", "currency", "invoice_voided", "invoice_refunded"]),
+  creditedCredits: z2.number().int(),
+  creditedPaise: z2.number().int()
+});
 var cancelSessionRequestSchema = z2.object({ sessionId: z2.string().uuid() });
 var cancelSessionResponseSchema = z2.object({ ok: z2.literal(true) });
 var recordManualPaymentRequestSchema = z2.object({
@@ -815,6 +838,29 @@ var refundResponseSchema = z2.object({
 var voidInvoiceResponseSchema = z2.object({ ok: z2.literal(true) });
 var finalizeInvoiceResponseSchema = z2.object({ ok: z2.literal(true), invoiceNumber: z2.string() });
 var paymentLinkResponseSchema = z2.object({ ok: z2.literal(true), shortUrl: z2.string(), reused: z2.boolean() });
+
+// server/utils/cancellationPolicy.ts
+var DEFAULT_CANCELLATION_POLICY = {
+  freeHours: 24,
+  lateFeePercent: 50,
+  noShowForfeitPercent: 100
+};
+function coerce(value, fallback) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+function resolveCancellationPolicy(cancellation) {
+  const raw = cancellation && typeof cancellation === "object" ? cancellation : {};
+  return {
+    freeHours: coerce(raw.freeHours, DEFAULT_CANCELLATION_POLICY.freeHours),
+    lateFeePercent: coerce(raw.lateFeePercent, DEFAULT_CANCELLATION_POLICY.lateFeePercent),
+    noShowForfeitPercent: coerce(raw.noShowForfeitPercent, DEFAULT_CANCELLATION_POLICY.noShowForfeitPercent)
+  };
+}
+async function getCancellationPolicy(orgId) {
+  const { data, error } = await supabaseAdmin.from("organizations").select("settings").eq("id", orgId).maybeSingle();
+  if (error) throw error;
+  return resolveCancellationPolicy(data?.settings?.cancellation);
+}
 
 // server/routes/billing.ts
 var router3 = express3.Router();
@@ -1048,6 +1094,128 @@ router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => 
       ...result
     });
     res.json({ ok: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+});
+router3.post("/attendance/reverse", requireRole(...CAN_MARK), async (req, res, next) => {
+  try {
+    const { sessionId, studentId, reason } = reverseAttendanceRequestSchema.parse(req.body);
+    const orgId = req.user.organizationId;
+    const actor = req.user.id;
+    const result = await withTransaction(async (client) => {
+      const arRes = await client.query(
+        `select organization_id, tutor_id, billed, reversed_at, session_start
+         from attendance_records where session_id = $1 and student_id = $2 for update`,
+        [sessionId, studentId]
+      );
+      if (arRes.rowCount === 0) {
+        throw Object.assign(new Error("Attendance record not found"), { status: 404, code: "not_found" });
+      }
+      const ar = arRes.rows[0];
+      if (ar.organization_id !== orgId) {
+        throw Object.assign(new Error("Attendance record belongs to another organization"), { status: 403, code: "forbidden" });
+      }
+      if (req.user.role === "tutor" && ar.tutor_id !== actor) {
+        throw Object.assign(new Error("Tutors can only reverse their own sessions"), { status: 403, code: "forbidden" });
+      }
+      if (ar.reversed_at) {
+        throw Object.assign(new Error("Attendance already reversed"), { status: 409, code: "already_reversed" });
+      }
+      if (!ar.billed) {
+        throw Object.assign(new Error("Nothing to reverse: this attendance record was never billed"), { status: 422, code: "not_billed" });
+      }
+      const policy = await getCancellationPolicy(orgId);
+      const hoursUntilSession = (new Date(ar.session_start).getTime() - Date.now()) / 36e5;
+      const creditBackPercent = reason === "no_show" ? 100 - policy.noShowForfeitPercent : hoursUntilSession >= policy.freeHours ? 100 : 100 - policy.lateFeePercent;
+      const ledgerRes = await client.query(
+        `select type, paise from wallet_ledger
+         where organization_id = $1 and session_id = $2 and student_id = $3
+           and type in ('debit_credit', 'debit_currency') and reason = 'attendance'
+         limit 1`,
+        [orgId, sessionId, studentId]
+      );
+      let reversalPath;
+      let creditedCredits = 0;
+      let creditedPaise = 0;
+      let invoiceId = null;
+      if ((ledgerRes.rowCount ?? 0) > 0) {
+        const debit = ledgerRes.rows[0];
+        if (debit.type === "debit_credit") {
+          reversalPath = "credit";
+          creditedCredits = 1;
+          await client.query(
+            `update wallets set balance_credits = balance_credits + 1 where organization_id = $1 and student_id = $2`,
+            [orgId, studentId]
+          );
+        } else {
+          reversalPath = "currency";
+          const feePaise = -debit.paise;
+          creditedPaise = Math.round(feePaise * creditBackPercent / 100);
+          await client.query(
+            `update wallets set balance_currency = balance_currency + $1 where organization_id = $2 and student_id = $3`,
+            [paiseToRupees(creditedPaise), orgId, studentId]
+          );
+        }
+        await client.query(
+          `insert into wallet_ledger (organization_id, student_id, type, credits, paise, reason, session_id, by, at)
+           values ($1, $2, 'credit_reversal', $3, $4, $5, $6, $7, now())`,
+          [orgId, studentId, creditedCredits, creditedPaise, reason, sessionId, actor]
+        );
+      } else {
+        const invRes = await client.query(
+          `select id, status, total_paise, paid_paise from invoices
+           where organization_id = $1 and student_id = $2
+             and source ->> 'kind' = 'attendance' and source ->> 'sessionId' = $3
+           order by created_at desc limit 1 for update`,
+          [orgId, studentId, sessionId]
+        );
+        if (invRes.rowCount === 0) {
+          throw Object.assign(new Error("Billed attendance has no matching wallet debit or invoice"), { status: 500, code: "billing_record_missing" });
+        }
+        const inv = invRes.rows[0];
+        invoiceId = inv.id;
+        if (inv.status === "paid") {
+          reversalPath = "invoice_refunded";
+          creditedPaise = Math.round(inv.total_paise * creditBackPercent / 100);
+          const newPaid = Math.max(0, inv.paid_paise - creditedPaise);
+          const newStatus = newPaid <= 0 ? "unpaid" : newPaid >= inv.total_paise ? "paid" : "partially_paid";
+          await client.query(
+            `insert into refunds (organization_id, invoice_id, student_id, amount_paise, reason, refunded_by, invoice_status, idempotency_key, at)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
+            [orgId, inv.id, studentId, creditedPaise, `attendance_reversal:${reason}`, actor, newStatus, `attendance_reversal_${sessionId}_${studentId}`]
+          );
+          await client.query(
+            `update invoices set paid_paise = $1, status = $2, last_refund_at = now() where id = $3`,
+            [newPaid, newStatus, inv.id]
+          );
+        } else {
+          reversalPath = "invoice_voided";
+          if (inv.status !== "void") {
+            await client.query(
+              `update invoices set status = 'void', voided_at = now(), voided_by = $1 where id = $2`,
+              [actor, inv.id]
+            );
+          }
+        }
+        await client.query(
+          `insert into wallet_ledger (organization_id, student_id, type, credits, paise, reason, session_id, invoice_id, by, at)
+           values ($1, $2, 'credit_reversal', 0, 0, $3, $4, $5, $6, now())`,
+          [orgId, studentId, reason, sessionId, inv.id, actor]
+        );
+      }
+      await client.query(
+        `update attendance_records set reversed_at = now(), reversed_by = $1 where session_id = $2 and student_id = $3`,
+        [actor, sessionId, studentId]
+      );
+      return { reversalPath, creditedCredits, creditedPaise, invoiceId };
+    });
+    await writeAudit(orgId, actor, "attendance.reverse", "attendance_records", sessionId, {
+      studentId,
+      reason,
+      ...result
+    });
+    res.status(201).json({ ok: true, reversalPath: result.reversalPath, creditedCredits: result.creditedCredits, creditedPaise: result.creditedPaise });
   } catch (err) {
     next(err);
   }
@@ -3161,7 +3329,7 @@ function createApp() {
     keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip || "")
   });
   app2.use(express16.json({ limit: "1mb" }));
-  app2.use("/api/", apiLimiter);
+  app2.use("/api/", identifyUser, apiLimiter);
   app2.use("/api/v1/settings", settings_default);
   app2.use("/api/v1/members", members_default);
   app2.use("/api/v1/billing", billing_default);

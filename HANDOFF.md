@@ -2,9 +2,9 @@
 
 **What this is:** everything you need to pick up this codebase and be productive, in one read. Current state, how the system works, how to run it, and the rules that must not be broken.
 
-**Companion docs:** [DEV_PLAN.md](DEV_PLAN.md) is what is left to build. [REDESIGN.md](REDESIGN.md) is the product-experience spec. [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) is strategy (its architecture and security sections are Firestore-era history). [docs/BUILD_LOG_ARCHIVE.md](docs/BUILD_LOG_ARCHIVE.md) is the old append-only build log, kept for narrative detail only. [docs/OPTIMIZATION_AUDIT.md](docs/OPTIMIZATION_AUDIT.md) is a 2026-07-26 performance/correctness audit; its fixes are applied (commit `b15f691`), see §8 for the two most consequential findings.
+**Companion docs:** [MASTER_PLAN.md](MASTER_PLAN.md) is the current release plan (R1-R4) and the one open founder decisions live in. [EXECUTION_PLAN.md](EXECUTION_PLAN.md) is the step-by-step, checkbox-trackable execution order for R1 — start there for day-to-day work. [DEV_PLAN.md](DEV_PLAN.md) is tech-debt detail and the shipped-when build log (its stage numbering is superseded by MASTER_PLAN.md). [REDESIGN.md](REDESIGN.md) is the product-experience spec. [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) is strategy (its architecture and security sections are Firestore-era history). [docs/BUILD_LOG_ARCHIVE.md](docs/BUILD_LOG_ARCHIVE.md) is the old append-only build log, kept for narrative detail only. [docs/OPTIMIZATION_AUDIT.md](docs/OPTIMIZATION_AUDIT.md) is a 2026-07-26 performance/correctness audit; its fixes are applied (commit `b15f691`), see §8 for the two most consequential findings.
 
-_Last verified 2026-08-02 against commit `f44f085` plus an uncommitted pass adding the DEV_PLAN §3.3 nightly reporting job and closing out Tech Debt #7's three flagged components (TeamSettings/SubscriptionSettings/OrgExportSettings token styling). Every number below was re-run, not inherited._
+_Last verified 2026-08-06 against commit `64db1e7` plus an uncommitted pass closing MASTER_PLAN.md's R1 items B-02 (rate limiter), B-20 (README rewrite), D-08 (cancellation-policy settings), and B-01 (attendance reversal). Every number below was re-run, not inherited._
 
 ---
 
@@ -24,16 +24,16 @@ Multi-tenant SaaS for Indian tuition centers: INR, GST invoices, UPI/Razorpay co
 | 4 | Mobile polish (done); growth-loop payment-link footer (done, not live-verified — no Razorpay creds locally); reporting (done, see DEV_PLAN §3.3); AI morning brief deferred by founder (2026-08-02); activation-funnel analytics not started | **Active**, see DEV_PLAN §3 |
 | External | Razorpay live keys, Google OAuth, phone OTP, Sentry, staging, legal, AI integrations | Deferred by founder, see §7 |
 
-**Gates, all re-run and green on 2026-08-02:**
+**Gates, all re-run and green on 2026-08-06:**
 
 | Gate | Command | Result |
 |---|---|---|
 | Typecheck | `npm run lint` | clean |
-| Unit | `npm test` | 177/177 (16 files) |
+| Unit | `npm test` | 182/182 (17 files) |
 | RLS / authorization | `npm run test:rls` | 81/81 (4 files) |
-| Route contracts | `npm run test:contract` | 195/195 (14 files) |
-| Build | `npm run build` | passes, server bundle 132.3 KB |
-| Bundle budget | `npm run check:bundle-size` | 198.1 KB gzip, budget 260 KB |
+| Route contracts | `npm run test:contract` | 206/206 (15 files) |
+| Build | `npm run build` | passes, server bundle 142.7 KB |
+| Bundle budget | `npm run check:bundle-size` | 199.2 KB gzip, budget 260 KB |
 | API bundle | `npm run build:api && npm run check:api-bundle` | all 15 route mounts present |
 
 Run all seven before every commit. None of them need Docker, Java, or a live database.
@@ -132,6 +132,8 @@ Each of these cost real debugging time. They are distilled here so they cost nob
 
 **Absolute paths must include the `/app` prefix.** Routes live nested under `/app`, so a `Link to="/students/:id"` resolves outside the router match and renders a blank page. This has caused dead ends on the payment path twice.
 
+**The rate limiter was IP-only for every authenticated request, silently (MASTER_PLAN.md B-02, fixed 2026-08-06).** `apiLimiter`'s `keyGenerator` reads `req.user?.id`, but `authenticateToken` — the thing that populates it — is mounted per-route, inside each route file, which runs *after* `app.use("/api/", apiLimiter)` in `server/app.ts`. So `req.user` was always undefined at limiter time and every request fell back to IP, meaning a coaching center behind one NAT shared a single 120 req/min bucket regardless of how many staff were logged in. Fixed with `identifyUser` (`server/middleware/auth.ts`), a soft, non-enforcing JWT decode that runs ahead of the limiter to populate `req.user.id` for valid tokens without doing the membership lookup or rejecting bad/missing ones — real auth enforcement still happens in each route's `authenticateToken` downstream. Covered by `tests/contract/rateLimiter.test.ts`, which asserts two different signed tokens from the same test process (same IP) get independent buckets.
+
 **Two more from the 2026-07-26 optimization audit (docs/OPTIMIZATION_AUDIT.md), both fixed:**
 
 - **CI validating a build artifact nobody deploys is worse than not validating one.** `npm run build` bundles `server.ts` to `dist/server.js`; Vercel's `buildCommand` bundles the different entry point `server/vercelHandler.ts` to `api/index.js`. For 15 days the committed `api/index.js` was stale and silently missing 7 of 14 route groups, and every other gate was green the whole time. CI now runs `npm run build:api` (the exact esbuild command Vercel runs) and `npm run check:api-bundle`, which fails if any `server/app.ts` route mount is missing from the built artifact.
@@ -140,6 +142,8 @@ Each of these cost real debugging time. They are distilled here so they cost nob
 ## 9. What is verified, and what is not
 
 **Verified live in a browser:** signup, onboarding (solo and center, CSV import, invite redeem), course and class creation, drag-reschedule with conflict rejection, attendance, invoice accrual and PDF download, manual payment, Money's Outstanding and insights, Inbox class channels and DM and archive, student-sees-own-session, Plan and Billing with the real student-cap trigger, the super-admin console including impersonation link generation, org export, and the audit log. **Also 2026-08-02:** generating a parent/student invite link from a student's row in People.tsx, and generating a staff invite link (with a role picker) from Settings → Team — both previously nonexistent UI (see DEV_PLAN's Tech Debt #1 closure note) — were clicked live against production and produced real tokens/rows. **Also 2026-08-02, Tech Debt #7's token-styling pass (including its two follow-on components closed the same day):** Courses, Documents (including the upload modal), Profile (view and edit mode), Preferences, all five originally-changed Settings tabs (General, Organization, Billing & Invoices, Availability, Tutor Profile), and Team/Plan & Billing/Data & Offboarding were all clicked live against the demo tutor account and render on the shared `var(--cs-*)` palette with no visual regressions.
+
+**Also 2026-08-06:** B-01's `POST /api/v1/billing/attendance/reverse` was verified end to end against production — a throwaway PER_SESSION session was marked present via the real Today-page roster popover (confirmed billed: a ₹500 unpaid invoice appeared in Money → Outstanding), reversed via the app's own authenticated `api()` client called from the browser console (no dedicated UI exists yet — that's Step 3), and Money → Outstanding and the Audit Log (`attendance.mark` → `attendance.reverse`) both confirmed the reversal in the running app before the throwaway data was deleted.
 
 **Also 2026-08-02:** `POST /api/cron/reporting-daily` (DEV_PLAN §3.3) was verified against the PGlite contract-test harness — correct aggregation values, idempotent rerun, 404 without the cron secret — via a throwaway test file written and then deleted (this endpoint isn't part of the permanent contract suite, same as `/materialize-sessions`). Never exercised in a real browser, since it has no UI; not run against production either, since Cloud Scheduler isn't wired up yet (see below).
 

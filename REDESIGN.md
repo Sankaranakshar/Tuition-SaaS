@@ -319,11 +319,13 @@ Mobile is not the desktop shrunk; it is the **between-classes companion**. Jobs 
 
 ## 17. Future scalability
 
+**Stale note (MASTER_PLAN.md §1, §9.5):** this section's closing point about the Firestore+SQLite dual store no longer applies — that store is gone; the stack is Supabase/Postgres with RLS (see HANDOFF.md §3). This section's other forward-looking points (multi-branch, payments, white-labeling, offline-tolerant mobile) still hold and are folded into MASTER_PLAN.md's R2-R4 releases.
+
 - **Multi-branch:** the org → branch → tutor hierarchy slots into the People and Schedule filters without new IA; Today's admin view gains a branch switcher. Because navigation is workspace-based rather than entity-based, adding a tier does not add nav items.
 - **Payments:** the Money surface is designed around a ledger, so adding Razorpay/UPI collection later changes row actions ([Collect via UPI]) without changing the surface.
 - **White-labeling for centers:** the token system (section 13) makes theming a data problem, not a redesign.
 - **Offline-tolerant mobile:** attendance marking queues locally and syncs; tuition centers have bad Wi-Fi.
-- **The dual-store architecture (Firestore + SQLite) stays backend-internal;** the redesign deliberately never exposes which store owns what, and the sync layer's latency characteristics push toward optimistic UI everywhere, which section 8 already mandates.
+- ~~**The dual-store architecture (Firestore + SQLite) stays backend-internal...**~~ **Stale as of the Supabase migration** — there is no dual store or sync layer anymore. The actual conclusion survives on its own merits regardless: optimistic UI everywhere, which section 8 already mandates.
 
 ---
 
@@ -390,6 +392,8 @@ Salvageable with restyling: Settings sections, Login, Onboarding steps (content,
 ---
 
 ## 23. Phased implementation roadmap
+
+**Delivered, kept for narrative record only (MASTER_PLAN.md §1).** Phases 0 through most of 5 below actually shipped — see HANDOFF.md §2 for the real status table and MASTER_PLAN.md §3 for what supersedes this phasing going forward (releases R1-R4) and [EXECUTION_PLAN.md](EXECUTION_PLAN.md) for the current step-by-step execution order. Do not use the week estimates or phase gates below as live planning input.
 
 **Phase 0 · Foundation (2–3 weeks).** Design tokens, type scale, color system, dark theme plumbing; delete duplicate ui tree; install Command/Popover/Toast/dnd-kit primitives; build the shell (rail + palette + topbar) with old pages mounted inside it; centralized date/₹ formatting utils (this alone fixes the $ bug everywhere); kill all alert/confirm call sites. *Exit criterion: the app looks and feels different before any workflow has changed.*
 
