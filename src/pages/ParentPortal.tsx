@@ -1,11 +1,14 @@
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { CalendarClock, Wallet as WalletIcon, Receipt, Share2, ExternalLink, Users, Download } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { EmptyState, Skeleton, SkeletonText, StatChip, StatusChip, type ChipTone } from "../components/kit";
-import { formatPaise, formatINR, formatDate, formatRelativeDays } from "../lib/format";
+import { formatPaise, formatINR, formatDate, formatTime, formatRelativeDays } from "../lib/format";
 import { rupeesToPaise } from "../../shared/money";
+import { cancellationCutoff, DEFAULT_CANCELLATION_POLICY, type CancellationPolicy } from "../../shared/cancellationPolicy";
+import { getOrgCancellationPolicy } from "../lib/cancellationPolicy";
 import { payInvoiceAsParent, downloadInvoicePdf } from "../lib/api";
 import { debounce } from "../lib/debounce";
 
@@ -73,6 +76,7 @@ function toDate(v: any): Date {
 }
 
 export default function ParentPortal() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [children, setChildren] = useState<Child[]>([]);
   const [loadingChildren, setLoadingChildren] = useState(true);
@@ -84,6 +88,20 @@ export default function ParentPortal() {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [wallet, setWallet] = useState<{ balanceCredits: number; balanceCurrency: number } | null>(null);
   const [payingId, setPayingId] = useState<string | null>(null);
+  // Step 3 (EXECUTION_PLAN.md): D-08's per-org policy, read once per org
+  // (not per selected child — cancellation policy is org-wide). Seeded with
+  // the coded defaults so the disclosure renders immediately, same pattern
+  // as OrganizationSettings.tsx's initial state, then corrected on fetch.
+  const [cancellationPolicy, setCancellationPolicy] = useState<CancellationPolicy>(DEFAULT_CANCELLATION_POLICY);
+
+  useEffect(() => {
+    if (!user?.organizationId) return;
+    let cancelled = false;
+    getOrgCancellationPolicy(user.organizationId)
+      .then((policy) => { if (!cancelled) setCancellationPolicy(policy); })
+      .catch(() => {}); // disclosure just keeps showing the coded defaults
+    return () => { cancelled = true; };
+  }, [user?.organizationId]);
 
   // Resolve linked children from parent_links, then hydrate each student row.
   useEffect(() => {
@@ -322,15 +340,26 @@ export default function ParentPortal() {
             <EmptyState icon={CalendarClock} title="No upcoming classes" description="Nothing scheduled right now." />
           ) : (
             <div className="divide-y divide-[var(--cs-border)] rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
-              {sessions.map((s) => (
-                <div key={s.id} className="flex items-center justify-between px-3 py-2.5">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-[var(--cs-text)]">{s.title || "Class session"}</p>
-                    <p className="text-xs text-[var(--cs-text-muted)]">{formatDate(toDate(s.startTime))} · {formatRelativeDays(toDate(s.startTime))}</p>
+              {sessions.map((s) => {
+                const cutoff = cancellationCutoff(toDate(s.startTime), cancellationPolicy.freeHours);
+                return (
+                  <div key={s.id} className="px-3 py-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-[var(--cs-text)]">{s.title || "Class session"}</p>
+                        <p className="text-xs text-[var(--cs-text-muted)]">{formatDate(toDate(s.startTime))} · {formatRelativeDays(toDate(s.startTime))}</p>
+                      </div>
+                      <StatusChip label={s.isOnline ? "Online" : "In-person"} tone="neutral" />
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--cs-text-muted)]">
+                      {t("schedule.cancellationDisclosure", {
+                        cutoff: `${formatDate(cutoff)}, ${formatTime(cutoff)}`,
+                        feePercent: cancellationPolicy.lateFeePercent,
+                      })}
+                    </p>
                   </div>
-                  <StatusChip label={s.isOnline ? "Online" : "In-person"} tone="neutral" />
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

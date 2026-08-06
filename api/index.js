@@ -839,7 +839,7 @@ var voidInvoiceResponseSchema = z2.object({ ok: z2.literal(true) });
 var finalizeInvoiceResponseSchema = z2.object({ ok: z2.literal(true), invoiceNumber: z2.string() });
 var paymentLinkResponseSchema = z2.object({ ok: z2.literal(true), shortUrl: z2.string(), reused: z2.boolean() });
 
-// server/utils/cancellationPolicy.ts
+// shared/cancellationPolicy.ts
 var DEFAULT_CANCELLATION_POLICY = {
   freeHours: 24,
   lateFeePercent: 50,
@@ -856,6 +856,8 @@ function resolveCancellationPolicy(cancellation) {
     noShowForfeitPercent: coerce(raw.noShowForfeitPercent, DEFAULT_CANCELLATION_POLICY.noShowForfeitPercent)
   };
 }
+
+// server/utils/cancellationPolicy.ts
 async function getCancellationPolicy(orgId) {
   const { data, error } = await supabaseAdmin.from("organizations").select("settings").eq("id", orgId).maybeSingle();
   if (error) throw error;

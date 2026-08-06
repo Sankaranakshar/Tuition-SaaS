@@ -27,7 +27,7 @@
 | 0d | D-01 decided (independent tutor identity) | — | ✅ Done 2026-08-06 |
 | 1 | Cancellation-policy settings (D-08 schema) | 0c | ✅ Done 2026-08-06 |
 | 2 | B-01 attendance reversal engine | 1 | ✅ Done 2026-08-06 |
-| 3 | Cancellation-policy surface (parent-facing) | 2 | ☐ Not started |
+| 3 | Cancellation-policy surface (parent-facing) | 2 | ✅ Done 2026-08-06 |
 | 4 | B-03 wallet-to-ledger reconciliation job | 2 | ☐ Not started |
 | 5 | Booking-request approval UI | — | ☐ Not started |
 | 6 | B-09 bulk import (CSV/Excel) | — | ☐ Not started |
@@ -101,6 +101,14 @@ cancellation: {
 
 ## Step 3 — Cancellation-policy surface (parent-facing)
 
+**Done 2026-08-06.** Cancellation is staff-only today — confirmed by reading `src/pages/Schedule.tsx`: `MyScheduleView` (the student self-view at `/app/my-schedule`) renders session cards with no cancel affordance at all, and the parent nav rail (`src/components/Layout.tsx:80-84`) has no schedule route reachable by a parent in the first place — `ParentPortal.tsx`'s Overview tab is the *only* surface a parent can reach that shows an upcoming session. So this step added a disclosure, not a new cancel action, exactly as the plan's scope note anticipated.
+
+The pure `resolveCancellationPolicy()`/`DEFAULT_CANCELLATION_POLICY` logic moved out of `server/utils/cancellationPolicy.ts` into a new `shared/cancellationPolicy.ts` (Zod-free, mirroring `shared/money.ts`'s existing convention) alongside a new `cancellationCutoff(sessionStart, freeHours)` helper, so the client and server resolve the exact same defaults instead of duplicating the merge logic; `server/utils/cancellationPolicy.ts` now just re-exports and adds the DB-touching `getCancellationPolicy(orgId)`. A new `src/lib/cancellationPolicy.ts` mirrors that server read through the client's own RLS-gated `organizations` select (`org_select`: any org member, parents included, per `supabase/migrations/20260709020200_rls.sql:59-60` — no policy change needed).
+
+The disclosure — `t("schedule.cancellationDisclosure")`, "Free cancellation until {{cutoff}}. After that, a {{feePercent}}% fee applies." — was added to `ParentPortal.tsx`'s Overview session list (the actual deliverable) and, since staff has no walkthrough path into a parent-only page without impersonation or a throwaway account, also to `Schedule.tsx`'s existing staff `SessionPopover` (same cancel affordance B-01 already uses), which doubles as this step's real browser-verification surface.
+
+Unit (182/182), RLS (81/81), and contract (206/206) suites all green — no RLS or contract changes were needed since this only added a client-side read against an already-open `org_select` policy. Browser-verified live against the demo tutor account: a throwaway same-day session (Aug 6, 4:00 PM, created and cancelled via the app's own UI afterward) showed "Free cancellation until 5 Aug 2026, 04:00 pm. After that, a 50% fee applies." — the outside-the-window state, cutoff already elapsed; an existing Aug 12 recurring batch session showed "Free cancellation until 11 Aug 2026, 06:30 pm. After that, a 50% fee applies." — the inside-the-window state, cutoff still upcoming. Both states render off the same coded defaults (24h/50%/100%) since the demo org has never overridden them. `ParentPortal.tsx`'s own render of the same disclosure is code-reviewed only, not live-clicked — reaching it requires a parent-role account, and no demo parent account exists (`scripts/seed.ts` seeds no `parent_links` row), matching this repo's established convention for role-gated surfaces unreachable from the single-role demo tutor account (HANDOFF.md §9).
+
 **Goal:** show a parent, before they cancel or after a no-show, what the cutoff/fee/refund actually is — currently invisible.
 
 **Why:** MASTER_PLAN.md §3 R1 table, "Cancellation-policy surface (parent-facing)," ~1 ed, paired explicitly with B-01: "the clearest source of fee disputes."
@@ -108,10 +116,10 @@ cancellation: {
 **Scope:** wherever a parent can currently cancel a session or view an upcoming one (check `src/pages/ParentPortal.tsx` and `src/pages/Schedule.tsx`'s session popover for the existing cancel affordance, if any — confirm during implementation whether parents can already trigger `/sessions/cancel` or whether this is staff-only today, since that changes whether this step needs a new parent-facing cancel action or just a policy disclosure on an existing one). Add a small inline disclosure using Step 1's org policy (fetched via a lightweight read — either a new unauthenticated-safe read since it's not sensitive, or reuse the existing `organizations.settings` client-side read pattern already in `OrganizationSettings.tsx`): "Free cancellation until {cutoff time}. After that, a {lateFeePercent}% fee applies." Uses `src/lib/format.ts` for time formatting per HANDOFF.md §6.
 
 **Definition of done:**
-- [ ] Disclosure renders correctly for a session inside and outside the free window (two states, verify both).
-- [ ] i18n: string goes through `t()` per HANDOFF.md §6, not hardcoded.
-- [ ] Browser-verified against the demo org (staff view at minimum; parent view if reachable without a throwaway production account, otherwise code-reviewed only — matches this repo's established convention for role-gated surfaces, see HANDOFF.md §9).
-- [ ] All seven gates green.
+- [x] Disclosure renders correctly for a session inside and outside the free window (two states, verify both).
+- [x] i18n: string goes through `t()` per HANDOFF.md §6, not hardcoded.
+- [x] Browser-verified against the demo org (staff view at minimum; parent view if reachable without a throwaway production account, otherwise code-reviewed only — matches this repo's established convention for role-gated surfaces, see HANDOFF.md §9).
+- [x] All seven gates green.
 
 ---
 

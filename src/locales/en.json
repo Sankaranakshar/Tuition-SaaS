@@ -231,7 +231,8 @@
     "sessionCancelled": "Session cancelled",
     "gapsFound": "{{count}} open slots found",
     "noGapsFound": "No gaps found in the next 14 days.",
-    "myWeek": "My Week"
+    "myWeek": "My Week",
+    "cancellationDisclosure": "Free cancellation until {{cutoff}}. After that, a {{feePercent}}% fee applies."
   },
   "inbox": {
     "segAll": "All",

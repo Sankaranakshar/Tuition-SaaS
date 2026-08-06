@@ -24,6 +24,9 @@ import {
 } from "../lib/schedule";
 import { EmptyState, Modal } from "../components/kit";
 import { supabase } from "../supabase";
+import { cancellationCutoff, DEFAULT_CANCELLATION_POLICY, type CancellationPolicy } from "../../shared/cancellationPolicy";
+import { getOrgCancellationPolicy } from "../lib/cancellationPolicy";
+import { formatDate, formatTime } from "../lib/format";
 
 // Schedule workspace (DEV_PLAN Stage 3 Epic 15, REDESIGN §6.1) — replaces
 // Calendar.tsx, Bookings.tsx, and Timetable.tsx. Week view is the default; a
@@ -156,6 +159,18 @@ function StaffSchedule() {
   const { data: sessions, loading, refetch } = useScheduleSessions(weekStart, weekEnd);
   const { data: templates } = useClassTemplates();
   const { data: availability } = useTutorAvailability(user?.role === "tutor" ? user.id : undefined);
+  // Step 3 (EXECUTION_PLAN.md): D-08's per-org policy, read once so the
+  // popover can disclose the cutoff/fee before staff clicks cancel — the
+  // same policy the parent-facing ParentPortal.tsx overview now surfaces.
+  const [cancellationPolicy, setCancellationPolicy] = useState<CancellationPolicy>(DEFAULT_CANCELLATION_POLICY);
+  React.useEffect(() => {
+    if (!user?.organizationId) return;
+    let cancelled = false;
+    getOrgCancellationPolicy(user.organizationId)
+      .then((policy) => { if (!cancelled) setCancellationPolicy(policy); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [user?.organizationId]);
 
   const [selectedSession, setSelectedSession] = useState<ScheduleSessionRow | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -590,6 +605,7 @@ function StaffSchedule() {
         <SessionPopover
           session={selectedSession}
           templateName={templateById.get(selectedSession.templateId || "")?.name}
+          cancellationPolicy={cancellationPolicy}
           onClose={() => setSelectedSession(null)}
           onCancel={() => handleCancelSession(selectedSession.id)}
         />
@@ -682,14 +698,16 @@ function MonthView({
 // ---- Session details popover ------------------------------------------------
 
 function SessionPopover({
-  session, templateName, onClose, onCancel,
+  session, templateName, cancellationPolicy, onClose, onCancel,
 }: {
   session: ScheduleSessionRow;
   templateName?: string;
+  cancellationPolicy: CancellationPolicy;
   onClose: () => void;
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
+  const cutoff = cancellationCutoff(session.startTime, cancellationPolicy.freeHours);
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <Modal onClose={onClose} labelledBy="session-popover-title" className="w-80 rounded-lg border border-[var(--cs-border)] bg-white p-4 shadow-xl">
@@ -707,6 +725,12 @@ function SessionPopover({
         </div>
         {session.status === "scheduled" && (
           <div className="mt-4 border-t border-[var(--cs-border)] pt-3">
+            <p className="mb-2 text-xs text-[var(--cs-text-muted)]">
+              {t("schedule.cancellationDisclosure", {
+                cutoff: `${formatDate(cutoff)}, ${formatTime(cutoff)}`,
+                feePercent: cancellationPolicy.lateFeePercent,
+              })}
+            </p>
             <button onClick={onCancel} className="w-full rounded bg-[var(--cs-danger)]/10 py-1.5 text-xs font-medium text-[var(--cs-danger)] hover:bg-[var(--cs-danger)]/20">
               {t("schedule.cancelSession")}
             </button>
