@@ -12,11 +12,11 @@ _Written 2026-08-02 against commit `f44f085` plus the uncommitted reporting-job 
 |---|---|---|
 | **HANDOFF.md** | Current state, architecture, runbook, security invariants, the trap list | Nothing. Keep it current. |
 | **REDESIGN.md** | Product experience, IA, motion, visual language, interaction vocabulary | §17 (dual-store), §23 phasing (delivered) |
-| **DEV_PLAN.md** | Tech-debt detail, testing strategy, what shipped when | Its stage numbering, replaced by R1 to R4 below |
+| **DEV_PLAN.md** | The Tech Debt #N backlog (§4, numbering frozen as a citation anchor), the testing-layer description (§5) | Its stage numbering, replaced by R1 to R4 below; old code comments citing `DEV_PLAN §2/§5/E16.x` point at a pre-2026-07-25 layout that no longer exists |
 | **Spec v2 (xlsx)** | Role matrix, per-screen IA, marketplace spec, backlog scoring, open decisions | Nothing. It is the newest artifact. |
 | **GO_TO_MARKET_BLUEPRINT.md** | Market position, ICP, the wedge, monetization logic, launch-gate checklist | §2, §7, §8, §9, §10 entirely. Firestore-era history, the stack is now Supabase/Postgres. |
 | **README.md** | Setup, architecture summary, deployment, security invariants (rewritten 2026-08-06, B-20) | Nothing currently known |
-| **EXECUTION_PLAN.md** | Day-to-day execution order within R1 (complete) and progress tracking (checkboxes); an R2 scaffold (backlog + blockers, not yet executable steps) | Executable R2-R4 detail — R2's numbered steps get written once staging exists and the R2-gating founder calls land; R3-R4 not started |
+| **EXECUTION_PLAN.md** | The R1 summary tracker and the R2 scaffold (backlog + blockers, not yet executable steps). R1's per-step detail is frozen at [docs/EXECUTION_PLAN_R1_ARCHIVE.md](docs/EXECUTION_PLAN_R1_ARCHIVE.md) — code comments cite its "Step N" anchors | Executable R2-R4 detail — R2's numbered steps get written once staging exists and the R2-gating founder calls land; R3-R4 not started |
 
 **The one-line product definition, updated by spec v2:** a platform connecting parents, students and tutors, where a tutor may be independent or part of an organisation, and the same person may be both. This is a widening from the blueprint's "the tuition center OS that collects your fees," and it is what makes R2 and R3 structural rather than optional.
 
