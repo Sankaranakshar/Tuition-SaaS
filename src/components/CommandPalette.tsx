@@ -57,6 +57,7 @@ export default function CommandPalette({ open, onOpenChange }: PaletteProps) {
         .from("students")
         .select("id, name")
         .eq("organization_id", user.organizationId)
+        .eq("is_deleted", false) // archived/erased students are not jump-to targets (matches usePeople's active-list filter)
         .limit(50);
       if (cancelled) return;
       if (error) {

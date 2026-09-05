@@ -40,6 +40,10 @@ export default function Documents() {
     let cancelled = false;
 
     const loadStudents = async () => {
+      // Not filtered on is_deleted here: getStudentName() still needs to resolve
+      // names for documents that belong to an archived student (archive keeps
+      // their records; erased students have no documents left). The upload
+      // picker below filters is_deleted at render instead.
       let studentsQuery = supabase
         .from("students")
         .select("*")
@@ -234,7 +238,7 @@ export default function Documents() {
                     <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Student</label>
                     <select required value={studentId} onChange={e => setStudentId(e.target.value)} className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]">
                       <option value="" disabled>Select a student</option>
-                      {students.map(s => (
+                      {students.filter(s => !s.is_deleted).map(s => (
                         <option key={s.id} value={s.id}>{s.name}</option>
                       ))}
                     </select>
