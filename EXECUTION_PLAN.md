@@ -348,7 +348,7 @@ Every number matches HANDOFF.md §2 except the server bundle (184.4 KB measured 
 
 **One issue found during the re-walk, flagged to the founder, not fixed (larger than a small fix):** `is_deleted = true` student rows — both archived students and B-11 erased stubs (name `"Erased student"`) — leak into ~10 client-side `from("students").select(...)` sites that don't filter them: `CommandPalette.tsx`, `Schedule.tsx`'s Add Class wizard, `useInbox.ts` (messageable contacts), `useMoney.ts` (invoice pickers), `Today.tsx`, `useStudentStory.ts`, `Documents.tsx`, `ParentPortal.tsx`, `Onboarding.tsx`. Only `usePeople.ts` and one `useInbox.ts` query filter `is_deleted`. Pre-dates B-11 (archive already had this) but B-11 makes it conspicuous. Not an R1-gate blocker — erasure itself is correct (PII wiped, financial trail intact); this is a stub leaking into secondary pickers, no PII exposed. Needs per-site product judgment (some sites legitimately load an erased row by id to render "this record was erased"), so not a blanket `.eq("is_deleted", false)`.
 
-**Merge of the four-branch stack to `main`: pending founder decision** (stack: `r1-step-10-dpdp-consent-erasure` → `r1-step-9-credit-expiry` → `r1-steps-6-7-bulk-import-parent-topup` → `main`, none merged).
+**Merge of the R1 branch stack to `main`: done 2026-09-05.** Founder chose "merge now, preserve per-step commits" and merged Steps 6-7 / 9 / 10 via GitHub PRs #2 and #3 (merge commits keep the per-step history); the Step 13 doc closure landed on `main` as `e92aa63`. All seven gates were re-run green on the merged `main`, and `api/index.js` rebuilt byte-identical. The three feature branches are fully merged; branch deletion left to the founder.
 
 ---
 
