@@ -1,8 +1,8 @@
-# ClassStackr Execution Plan — R1
+# ClassStackr Execution Plan — R1 (✅ complete 2026-09-05) + R2 scaffold
 
 **What this is:** [MASTER_PLAN.md](MASTER_PLAN.md) §3 R1 ("Money is correct") turned into an ordered sequence of steps small enough to execute one at a time, each with a concrete definition of done. Check a box, move to the next step. This is the doc to hand to a fresh Claude session with "do the next unchecked step."
 
-**Scope: R1 only.** R2 (person-centric identity) and R3 (marketplace) both depend on staging existing (Step 11) and on founder decisions not yet made (D-02, D-03, D-05, D-06, D-07 — see MASTER_PLAN.md §5). Planning their execution in this much detail now would be guessing. This document gets extended with R2's steps once R1's gate (MASTER_PLAN.md §3) is met.
+**R1 is complete** — all 13 steps done or explicitly founder-deferred, gate met at Step 13 (2026-09-05). An **R2 scaffold** (backlog + blockers) is at the bottom of this file; R2's numbered steps get written once staging (B-10) exists and the R2-gating founder decisions (D-02, D-03, D-05, D-06 — see MASTER_PLAN.md §5) land. Planning R2/R3 in executable detail before then would be guessing.
 
 ---
 
@@ -35,9 +35,9 @@
 | 8 | **Needs you** — D-07 credit expiry period | — | ✅ Decided 2026-09-05 |
 | 9 | B-04 credit expiry policy | 8 | ✅ Done 2026-09-05 (browser walkthrough deferred, see Step 9) |
 | 10 | B-11 DPDP consent centre + per-student erasure | — | ✅ Done 2026-09-05 (erasure UI browser-verified; DB-state assertions via PGlite contract suite, direct prod DB access blocked — see Step 10) |
-| 11 | **Needs you** — B-10 staging environment | — | ⏸️ Deferred 2026-09-05 (founder: hold) |
-| 12 | **Needs you** — external pentest + leaked-password toggle | — | ⏸️ Both deferred to pre-GTM 2026-09-05 |
-| 13 | R1 gate checkpoint (full re-verification) | 1–12 | ☐ Not started |
+| 11 | **Needs you** — B-10 staging environment | — | ⏸️ Deferred 2026-09-05 (founder: hold) — recorded as an explicit non-failing gate line at Step 13; hard trigger before R2/B-06 |
+| 12 | **Needs you** — external pentest + leaked-password toggle | — | ⏸️ Both deferred to pre-GTM 2026-09-05 — not R1-gate conditions |
+| 13 | R1 gate checkpoint (full re-verification) | 1–12 | ✅ Done 2026-09-05 — all 7 gates re-run clean (211/89/252, 200.7KB, 16 mounts); money flows re-walked live; Steps 11/12 recorded as deferrals; MASTER_PLAN R1 marked complete. **R1 COMPLETE.** |
 
 Steps 5, 6, 7, 10 have no hard dependency on 1-4 and can be picked up out of order if you want parallel progress — they're placed here in backlog-score order (MASTER_PLAN.md §4).
 
@@ -309,10 +309,69 @@ Two different asks bundled because they're both "needs you, not engineering," no
 
 Once Steps 1-12 are checked (or explicitly deferred with a reason, same discipline as every other deferral in this project's history — see MASTER_PLAN.md §3's "R1 gate" paragraph), re-verify the whole gate as one pass rather than trusting each step's individual green run in isolation:
 
-- [ ] A mis-marked attendance can be fully reversed by an owner, wallet/invoice/ledger all agreeing afterward (Step 2, re-walked end to end).
-- [ ] The reconciliation job (Step 4) runs clean against production.
-- [ ] A parent tops up their own wallet without a staff member (Step 7 — or confirmed still gated on Razorpay, which is fine, just confirm the degradation path is real).
-- [ ] A 200-student centre imports in one sitting (Step 6).
-- [ ] ~~Staging exists (Step 11) and every migration shipped in Steps 1-10 was rehearsed there first~~ — **explicitly deferred 2026-09-05 (founder: hold on B-10).** This gate line is not met and is not being met for R1. All Steps 1-10 migrations went to production unrehearsed. Record the deferral and its accepted consequences (Step 11) here; do not treat R1 as failing the gate on this line. Staging must be revisited before R2 starts (B-06 is a live-data migration).
-- [ ] External pentest and leaked-password protection — **both deferred to pre-GTM 2026-09-05 (Step 12).** Neither is a condition on the R1 gate; both tracked in MASTER_PLAN.md §8.
-- [ ] Update MASTER_PLAN.md: mark R1 complete, move its "What to do next week" (§10) to R2's opening moves, and start this document's R2 section.
+- [x] A mis-marked attendance can be fully reversed by an owner, wallet/invoice/ledger all agreeing afterward (Step 2, re-walked end to end). **Re-walked live against production 2026-09-05** — see the completion note below.
+- [x] The reconciliation job (Step 4) runs clean against production. **Re-run live 2026-09-05:** `200 {"ok":true,"walletsChecked":0,"mismatches":0}` with the configured `x-cron-secret`, `404` without it. Production still has 0 wallets, so still not exercised against real drift (Step 4's standing note holds).
+- [x] A parent tops up their own wallet without a staff member (Step 7 — or confirmed still gated on Razorpay, which is fine, just confirm the degradation path is real). **Degradation path re-confirmed live 2026-09-05:** `POST /api/v1/billing/wallets/topup-link` as a non-parent → `403 "This endpoint is for parent accounts"`. Full parent path still unexercisable (no demo parent account, no Razorpay creds); inbound webhook settlement is contract-tested. Step 7's notes remain honest.
+- [x] A 200-student centre imports in one sitting (Step 6). **UI re-confirmed 2026-09-05** (the 3-step Import Students wizard opens from People → Students); full CSV → dry-run → commit was live-walked 2026-09-05 with code byte-identical since, 12 contract cases green, and the 3 `students.bulk_import` audit rows from that walk still in the log.
+- [x] ~~Staging exists (Step 11) and every migration shipped in Steps 1-10 was rehearsed there first~~ — **explicitly deferred 2026-09-05 (founder: hold on B-10).** This gate line is **not met** and is not being met for R1; R1 is **not** treated as failing the gate on it. Accepted consequences carried forward from Step 11: (a) R1 migrations go straight to production unrehearsed (as Steps 1-10 did — 20260806100000, 20260905120000, 20260905130000, and the no-migration jsonb-key changes); (b) parent-facing surfaces (Step 3 `ParentPortal` disclosure, Step 5 requester counter-offer, Step 7 parent top-up) stay browser-unverifiable — no demo parent account on prod; (c) Supabase Storage upload/download stays untested anywhere; (d) the migration set has never been applied from zero against an empty DB; (e) no rehearsed rollback for a bad migration. **Hard trigger: staging must exist before R2 / B-06** (the live-data identity migration — MASTER_PLAN.md §3 R2 says do not start it before staging exists).
+- [x] External pentest and leaked-password protection — **both deferred to pre-GTM 2026-09-05 (Step 12).** Neither is a condition on the R1 gate. External pentest → pre-GTM procurement bucket (vendor shortlist in Step 12: Astra Security / SecureLayer7 / Indusface; reject any sub-₹40k / 1-2 day "scanner" quote; no automated-scanner substitute). Leaked-password toggle → one Supabase dashboard switch, no code, rides the MASTER_PLAN.md §8 "Auth" checklist; do not re-surface it as an action item. Both tracked in MASTER_PLAN.md §8.
+- [x] Update MASTER_PLAN.md: mark R1 complete, move its "What to do next week" (§10) to R2's opening moves, and start this document's R2 section. **Done 2026-09-05** — MASTER_PLAN.md §3 R1 marked complete, §10 rewritten as R2's opening moves, R2 scaffold added below (steps written once founder decisions D-02/D-03/D-05/D-06 and B-06/B-07 scoping land — not guessed ahead).
+
+---
+
+**Completed 2026-09-05 — R1 gate met (with the two founder-deferred lines recorded above, not counted as failures).**
+
+**All seven gates re-run clean off the top of the stack** (`r1-step-10-dpdp-consent-erasure`, working tree clean, commit `1817bc1`):
+
+| Gate | Command | Result |
+|---|---|---|
+| Typecheck | `npm run lint` | clean |
+| Unit | `npm test` | 211/211 (20 files) |
+| RLS / authorization | `npm run test:rls` | 89/89 (5 files) |
+| Route contracts | `npm run test:contract` | 252/252 (19 files) |
+| Build | `npm run build` | passes, `dist/server.js` 184.4 KB |
+| Bundle budget | `npm run check:bundle-size` | 200.7 KB gzip, budget 260 KB |
+| API bundle | `npm run build:api && npm run check:api-bundle` | 16/16 route mounts present |
+
+Every number matches HANDOFF.md §2 except the server bundle (184.4 KB measured vs 184.9 KB recorded — 0.5 KB / 0.3 %, a non-budgeted metric, code unchanged; measurement drift, HANDOFF.md updated to 184.4). The committed `api/index.js` rebuilt byte-identical (no stale-artifact drift).
+
+**Money-touching flows re-walked live against the production Supabase project (`cwugpiernnwrhcximjwh`) via `npm run dev:preview`, demo owner account:**
+
+1. **Attendance reversal, end to end.** Created a throwaway ONE_ON_ONE / PER_SESSION session for today (₹300, one student) through the Add Class wizard → marked the student present via the Today roster popover (`POST /api/v1/billing/attendance` → 200) → a ₹300 invoice (`INV-6F3055`) accrued, Money → Outstanding moved ₹100 → ₹400 → reversed through the app's own authenticated `api()` client (`POST /api/v1/billing/attendance/reverse`, `reason: "cancellation"` — no dedicated UI, same as the 2026-08-06 walk) → `{ reversalPath: "invoice_voided", creditedPaise: 0, creditedCredits: 0 }` → Money → Outstanding back to ₹100 → Audit log shows `attendance.mark` → `attendance.reverse` on session `c97f5651` → a second reverse call → `409 already_reversed` (idempotency guard holds). The wallet credit/currency paths were not re-exercised live (production has 0 wallets) but are covered by the 9 contract cases (green) and unchanged since 2026-08-06. Residue: the throwaway session remains as a `completed` session with a voided invoice — completed sessions have no cancel affordance and direct prod-DB deletes are blocked this session (same constraint as Steps 4/9/10); it is absent from every money surface.
+2. **`/api/cron/reconcile-wallets`** — `404` with no/wrong `x-cron-secret`; `200 {"ok":true,"walletsChecked":0,"mismatches":0}` with it. Clean against real infra; 0 wallets so no real-drift exercise (Step 4's note stands).
+3. **`/api/cron/expire-credits`** — `200 {"ok":true,"orgsProcessed":0,"walletsChecked":0,"lotsExpired":0,"creditsExpired":0,"paiseExpired":0,"warningsSent":0}`. 0 opted-in orgs, 0 wallets (Step 9's note stands).
+4. **Bulk import** — Import Students wizard opens from People → Students; full path live-walked 2026-09-05, code identical since, 12 contract cases green.
+5. **Parent top-up degradation** — `POST /api/v1/billing/wallets/topup-link` as a non-parent → `403 "This endpoint is for parent accounts"`. Route live and role-gated; full parent path still blocked on no-demo-parent + no-Razorpay exactly as Step 7 records.
+6. **Per-student erasure** — created a throwaway student through the Add-Student modal → "Erase student data" row action → type-to-confirm modal (correct DPDP copy) → `POST /api/v1/students/53e30338…/erase` → 200 → gone from the People list → Audit log `student.erased · students · 53e30338`. Row-level anonymize/hard-delete asserted only by `studentErasure.test.ts` (10 cases, green) — direct prod-DB read blocked this session, same as Step 10. The anonymized stub is the correct erasure end state, not residue.
+
+**Also re-checked live:** the Step 3 cancellation-policy disclosure renders in the staff `SessionPopover` ("Free cancellation until 30 Aug 2026, 06:30 pm. After that, a 50% fee applies." — coded defaults 24h / 50%). The `Layout` hook-order console warning (logged in the session memory) did **not** reproduce anywhere across a full click-through of Today, Schedule, People, Money, Audit log and their popovers/modals/wizards — consistent with the 2026-07-26 investigation; the only console errors were the placeholder Sentry DSN and the intentional 409 test.
+
+**One issue found during the re-walk, flagged to the founder, not fixed (larger than a small fix):** `is_deleted = true` student rows — both archived students and B-11 erased stubs (name `"Erased student"`) — leak into ~10 client-side `from("students").select(...)` sites that don't filter them: `CommandPalette.tsx`, `Schedule.tsx`'s Add Class wizard, `useInbox.ts` (messageable contacts), `useMoney.ts` (invoice pickers), `Today.tsx`, `useStudentStory.ts`, `Documents.tsx`, `ParentPortal.tsx`, `Onboarding.tsx`. Only `usePeople.ts` and one `useInbox.ts` query filter `is_deleted`. Pre-dates B-11 (archive already had this) but B-11 makes it conspicuous. Not an R1-gate blocker — erasure itself is correct (PII wiped, financial trail intact); this is a stub leaking into secondary pickers, no PII exposed. Needs per-site product judgment (some sites legitimately load an erased row by id to render "this record was erased"), so not a blanket `.eq("is_deleted", false)`.
+
+**Merge of the four-branch stack to `main`: pending founder decision** (stack: `r1-step-10-dpdp-consent-erasure` → `r1-step-9-credit-expiry` → `r1-steps-6-7-bulk-import-parent-topup` → `main`, none merged).
+
+---
+
+# ClassStackr Execution Plan — R2 (scaffold)
+
+**Status: not startable yet.** R1's gate is met (Step 13), which is the trigger to *begin* this section — but R2's steps cannot be written in executable detail until two things land, exactly as the top-of-document scope note says:
+
+1. **Staging (B-10) must exist.** MASTER_PLAN.md §3 R2 is explicit: B-06 is a real migration against live identity data, do not start it before staging. Step 11's deferral carried a hard trigger to here. Standing up staging is the first R2 work item regardless of the founder decisions below (it was ~1.5-2.5 eng-days when scoped: create the second Supabase project, `supabase db push` all migrations against an empty DB — itself the first from-zero test — seed it *including a demo parent account* prod lacks, a second Vercel env, re-verify the realtime-publication migrations, first Storage upload test, update `supabase/README.md` / `.env.example` / HANDOFF's "no staging" note).
+2. **Founder decisions D-02, D-03, D-05, D-06 (MASTER_PLAN.md §5) must be answered** where they touch R2 — D-05 (can a student transact without a parent?) directly gates R2's session-request → parent-approval routing; D-02/D-03 are mostly R3 but shape B-08's wallet/invoice ownership model. D-01 is decided (single-member org, no schema fork) and already unblocks B-06's shape.
+
+**R2 thesis (from MASTER_PLAN.md §3):** make identity org-independent — one login, many memberships. Gate: one human account teaches independently on Tuesdays and at a centre on Thursdays, switches context without logging out, neither org can book over the other; a parent with children at two centres sees one home screen; a centre runs a payout cycle in-product.
+
+**R2 backlog, in dependency order (to be turned into numbered steps once the two blockers above clear):**
+
+| ID | Item | ed | Blocked on |
+|---|---|---|---|
+| R2-0 | Staging environment (B-10) | 2 | founder go-ahead only |
+| B-06 | Person-centric identity: one login, many memberships; independent tutor as a single-member org (D-01 decided) | 8 | staging; needs its own scoping pass |
+| B-07 | Org switcher + cross-org conflict checking | 5 | B-06; needs its own scoping pass |
+| B-08 | Tutor payouts & earnings ledger (serves org payroll now, marketplace payouts in R3) | 6 | B-06; partly D-02 |
+| B-12 | Monthly progress-report PDF | 3 | — (could pull forward) |
+| B-13 | Substitute & leave management | 4 | B-06 |
+
+**Also in R2, from the spec v2 IA tabs:** the assignment-marking loop into the gradebook (upload works, marking doesn't, both sides); guardian records moving from student-owned to parent-owned; cross-org family view for parents; student session-requests routed to a parent for approval below the D-05 age threshold.
+
+Do not expand this into executable steps ahead of the blockers — that is the guessing the top-of-document scope note warns against. Next action when R2 starts: scope B-06 against the real `tutor_profiles`/`parent_profiles`/`student_profiles` schema (all PK'd on `user_id` with NOT NULL `organization_id` today) and write R2-0 + B-06 as full steps.

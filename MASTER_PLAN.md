@@ -16,7 +16,7 @@ _Written 2026-08-02 against commit `f44f085` plus the uncommitted reporting-job 
 | **Spec v2 (xlsx)** | Role matrix, per-screen IA, marketplace spec, backlog scoring, open decisions | Nothing. It is the newest artifact. |
 | **GO_TO_MARKET_BLUEPRINT.md** | Market position, ICP, the wedge, monetization logic, launch-gate checklist | §2, §7, §8, §9, §10 entirely. Firestore-era history, the stack is now Supabase/Postgres. |
 | **README.md** | Setup, architecture summary, deployment, security invariants (rewritten 2026-08-06, B-20) | Nothing currently known |
-| **EXECUTION_PLAN.md** | Day-to-day execution order within R1 and progress tracking (checkboxes) | Anything beyond R1 — it does not yet cover R2-R4, which depend on undecided founder calls and staging |
+| **EXECUTION_PLAN.md** | Day-to-day execution order within R1 (complete) and progress tracking (checkboxes); an R2 scaffold (backlog + blockers, not yet executable steps) | Executable R2-R4 detail — R2's numbered steps get written once staging exists and the R2-gating founder calls land; R3-R4 not started |
 
 **The one-line product definition, updated by spec v2:** a platform connecting parents, students and tutors, where a tutor may be independent or part of an organisation, and the same person may be both. This is a widening from the blueprint's "the tuition center OS that collects your fees," and it is what makes R2 and R3 structural rather than optional.
 
@@ -44,9 +44,11 @@ DEV_PLAN's remaining items (external pentest, tech debt #3, activation analytics
 
 Each release has a single thesis, a gate, and an effort total. Effort is in engineer-days (ed), founder-supplied estimates, not measured.
 
-### R1 — Money is correct (22.5 ed + carried items)
+### R1 — Money is correct (22.5 ed + carried items) — ✅ COMPLETE 2026-09-05
 
 **Thesis:** nothing else matters if a wallet balance can be wrong. Every item here either closes a correctness hole or removes a human from a loop that should be self-serve.
+
+**Status:** all R1 engineering shipped (B-01/B-02/B-03/B-04/B-05/B-09/B-11/B-20 + the two carried items). Step 13 (EXECUTION_PLAN.md), the R1 gate checkpoint, was completed 2026-09-05: seven gates re-run clean off the top of the branch stack (211 unit / 89 RLS / 252 contract / build / 200.7 KB bundle / 16 API mounts), and every money-touching flow re-walked live against production. The two founder-deferred items — **B-10 staging** (founder: hold) and **external pentest + leaked-password toggle** (deferred to pre-GTM) — are recorded as explicit non-failing deferrals; R1 is not treated as failing the gate on them. Staging is a hard prerequisite before R2/B-06. The four R1 branches are not yet merged to `main` (awaiting a merge-shape decision).
 
 | ID | Item | ed | Notes |
 |---|---|---|---|
@@ -64,7 +66,7 @@ Each release has a single thesis, a gate, and an effort total. Effort is in engi
 
 **Also folded into R1 from DEV_PLAN, no new estimate:** external pentest (a procurement task, not engineering; do not self-certify with a scanner), enabling leaked-password protection in Supabase Auth, and wiring Cloud Scheduler to `/api/cron/materialize-sessions` and `/api/cron/reporting-daily`, which are both built and both currently never fire in production.
 
-**R1 gate:** a mis-marked attendance can be fully reversed by an owner, with the wallet, the invoice and the ledger all agreeing afterwards; the reconciliation job runs clean against production; a parent tops up their own wallet without a staff member; a 200-student centre imports in one sitting; staging exists and the R1 migrations were rehearsed on it first.
+**R1 gate — met 2026-09-05 (EXECUTION_PLAN.md Step 13):** a mis-marked attendance can be fully reversed by an owner, with the wallet, the invoice and the ledger all agreeing afterwards ✅ (re-walked live: mark → ₹300 invoice accrued → reverse → invoice voided → Outstanding restored → `409` on double-reverse); the reconciliation job runs clean against production ✅ (`/reconcile-wallets` and `/expire-credits` both `200`, 0 wallets); a parent tops up their own wallet without a staff member ✅ (route live + role-gated; full path still blocked on no-demo-parent + no-Razorpay, degradation confirmed); a 200-student centre imports in one sitting ✅ (live-walked 2026-09-05, wizard re-confirmed); ~~staging exists and the R1 migrations were rehearsed on it first~~ — **deferred (founder: hold on B-10), recorded as a non-failing gate line; hard trigger before R2/B-06.** External pentest + leaked-password protection also deferred to pre-GTM (§8), not gate conditions.
 
 ### R2 — One person, many orgs (26 ed)
 
@@ -222,11 +224,15 @@ Per the founder's 2026-07-10 deferral, still in force, none of this is engineeri
 
 ---
 
-## 10. What to do next week
+## 10. What to do next — R2's opening moves
 
-1. ~~Ship **B-02** and **B-20**.~~ **Done 2026-08-06**, both pure wins, no founder decision needed.
-2. ~~Answer **D-08** and **D-01**.~~ **Done 2026-08-06** (§5) — both decided, both now unblock real work.
-3. ~~Stand up **B-10 staging**.~~ **Founder decision 2026-09-05: hold.** Not doing staging for now. Consequence accepted: R1 migrations keep going straight to production (as Steps 1-7 did), parent-facing surfaces stay unverifiable (no demo parent account), Storage upload stays untested, and the R1 gate's "staging exists and migrations were rehearsed there" line gets an explicit deferral at Step 13 rather than being met.
-4. Start the long-lead **GTM procurement** in parallel: WhatsApp templates, DLT, Razorpay KYC, Google OAuth verification. The external pentest belongs in this bucket too (founder decision 2026-09-05: it is a pre-GTM procurement item, not an R1 engineering blocker).
-5. ~~Then **B-01**~~ **Done 2026-08-06.** ~~Next engineering is **B-04**~~ **Done 2026-09-05** (Step 9). ~~Next engineering is **B-11**~~ **Done 2026-09-05** (Step 10 — DPDP consent record + per-student erasure). All R1 engineering is now complete (Steps 11/12 founder-deferred); the only thing left in R1 is the **Step 13 gate checkpoint** (full re-verification). See EXECUTION_PLAN.md Step 13.
-6. **Leaked-password protection:** deferred to pre-GTM (founder decision 2026-09-05), rides with the §8 "Auth" checklist items. DEV_PLAN §2.2 already flags it as "not a blocker today."
+**R1 closed 2026-09-05** (EXECUTION_PLAN.md Step 13). Prior weeks' list — ship B-02/B-20, answer D-08/D-01, then B-01 → B-03 → booking UI → B-06/B-07 → B-09 → B-05 → B-04 → B-11 → Step 13 — is all done or founder-deferred; history preserved in git and the EXECUTION_PLAN Step notes.
+
+Now, in order:
+
+1. **Merge the R1 branch stack to `main`** once the founder picks a shape (one squash of the whole R1 body of work vs. preserve the per-step commits). Stack: `r1-step-10-dpdp-consent-erasure` → `r1-step-9-credit-expiry` → `r1-steps-6-7-bulk-import-parent-topup` → `main`. Nothing merges until that decision.
+2. **Re-open B-10 staging** — this is the first R2 work item and a hard prerequisite for B-06 (R2's live-data identity migration; §3 R2 forbids starting it before staging). The founder's 2026-09-05 hold was for R1; R2 changes the calculus. ~1.5-2.5 eng-days: second Supabase project, `db push` all migrations from zero (first from-zero test), seed *with a demo parent account* prod lacks, second Vercel env, re-verify realtime-publication migrations, first Storage upload test, doc updates.
+3. **Answer the R2-gating founder decisions** (§5): D-05 (student transacting without a parent — gates R2 session-request → parent-approval routing), and D-02/D-03 far enough to shape B-08's wallet/invoice ownership. D-01 is already decided.
+4. **Scope B-06** against the real `tutor_profiles`/`parent_profiles`/`student_profiles` schema (all PK'd on `user_id`, NOT NULL `organization_id`) and write EXECUTION_PLAN.md's R2-0 + B-06 as full numbered steps. The R2 scaffold is already in EXECUTION_PLAN.md; do not expand it into executable steps ahead of items 2-3.
+5. **Continue the long-lead GTM procurement in parallel** (§8): WhatsApp templates, DLT, Razorpay KYC, Google OAuth verification, external pentest (pre-GTM bucket), leaked-password toggle (one Supabase switch, rides the §8 Auth items — not an action item to re-surface).
+6. **Small cleanup found at the R1 gate, needs a product call:** `is_deleted = true` students (archived + B-11 erased stubs) leak into ~10 client `from("students").select` sites. Not an R1 blocker; decide per-site whether to filter or to render an explicit "erased" state. Tracked in EXECUTION_PLAN.md Step 13's completion note.
