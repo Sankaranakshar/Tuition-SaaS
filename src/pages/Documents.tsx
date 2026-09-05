@@ -16,7 +16,7 @@ import { Modal } from "../components/kit";
 // the Firestore "documents" collection listeners below needed migrating.
 
 const DOCUMENT_SELECT =
-  "id, organizationId:organization_id, studentId:student_id, fileName:name, category, createdAt:created_at, uploadedByUserId:uploaded_by_user_id";
+  "id, organizationId:organization_id, studentId:student_id, fileName:file_name, category, createdAt:created_at, uploadedByUserId:uploaded_by_user_id";
 
 export default function Documents() {
   const { user } = useAuth();
@@ -49,23 +49,28 @@ export default function Documents() {
         .select("*")
         .eq("organization_id", user.organizationId)
         .limit(100);
-      if (user.role === 'tutor') studentsQuery = studentsQuery.eq("tutor_id", user.id);
+      // organizationRole (the real per-org authorization tier), not role (a
+      // person-type set once at signup — see AuthContext.tsx and HANDOFF.md §8).
+      // A solo tutor who owns their org has role:"tutor" and
+      // organizationRole:"owner" at once; checking role here wrongly narrowed
+      // an owner's own student list to just their assigned students.
+      if (user.organizationRole === 'tutor') studentsQuery = studentsQuery.eq("tutor_id", user.id);
       const { data, error } = await studentsQuery;
       if (cancelled) return;
       if (error) console.error("Supabase Error (Students): ", error);
       else setStudents(data || []);
     };
 
-    // documents has no tutor_id column; for a tutor we scope to documents
-    // they uploaded (uploaded_by_user_id) as the closest equivalent to the
-    // old Firestore tutorId filter.
+    // A non-owner tutor sees only documents they uploaded (uploaded_by_user_id),
+    // the closest equivalent to the old Firestore tutorId filter. Gate on
+    // organizationRole, not role — same distinction as loadStudents above.
     const loadDocs = async () => {
       let docsQuery = supabase
         .from("documents")
         .select(DOCUMENT_SELECT)
         .eq("organization_id", user.organizationId)
         .limit(100);
-      if (user.role === 'tutor') docsQuery = docsQuery.eq("uploaded_by_user_id", user.id);
+      if (user.organizationRole === 'tutor') docsQuery = docsQuery.eq("uploaded_by_user_id", user.id);
       const { data, error } = await docsQuery;
       if (cancelled) return;
       if (error) console.error("Supabase Error (Documents): ", error);
