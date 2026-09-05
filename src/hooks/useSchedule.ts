@@ -49,11 +49,18 @@ export function useScheduleSessions(weekStart: Date, weekEnd: Date) {
       .lt("start_time", weekEndIso)
       .order("start_time", { ascending: true })
       .limit(500);
-    if (user!.role === "tutor") q = q.eq("tutor_id", user!.id);
+    // organizationRole (the real per-org authorization tier), not role (a
+    // person-type set once at signup — AuthContext.tsx's own comment, and
+    // HANDOFF.md §8). A solo tutor who owns their org has role:"tutor" and
+    // organizationRole:"owner" at once; checking role here wrongly narrowed
+    // that owner's own Schedule view to only sessions tutor_id-tagged to
+    // them, hiding every other tutor's sessions in a multi-tutor centre the
+    // moment such an owner-tutor hires staff.
+    if (user!.organizationRole === "tutor") q = q.eq("tutor_id", user!.id);
     const { data, error } = await q;
     if (error) throw error;
     return (data || []).map(mapScheduleSessionRow);
-  }, [orgId, user?.role, user?.id, weekStartIso, weekEndIso]);
+  }, [orgId, user?.organizationRole, user?.id, weekStartIso, weekEndIso]);
 
   // Realtime filter stays org-scoped (postgres_changes filters can't express
   // a date range or the tutor_id.eq load() applies); belongsToView mirrors
@@ -68,10 +75,10 @@ export function useScheduleSessions(weekStart: Date, weekEnd: Date) {
       belongsToView: (raw: any) =>
         raw.start_time >= weekStartIso &&
         raw.start_time < weekEndIso &&
-        (user?.role !== "tutor" || raw.tutor_id === user?.id),
+        (user?.organizationRole !== "tutor" || raw.tutor_id === user?.id),
       compare: (a, b) => a.startTime.localeCompare(b.startTime),
     }),
-    [user?.role, user?.id, weekStartIso, weekEndIso]
+    [user?.organizationRole, user?.id, weekStartIso, weekEndIso]
   );
   const result = useRealtimeList<ScheduleSessionRow>("schedule", "class_sessions", orgId, load, undefined, merge);
   // useRealtimeList's own mount effect only reruns on [orgId, table], not on

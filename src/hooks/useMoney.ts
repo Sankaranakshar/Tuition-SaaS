@@ -53,26 +53,32 @@ export function useMoneyInvoices() {
       .eq("organization_id", orgId)
       .order("created_at", { ascending: false })
       .limit(500);
-    // tutor_id is null for invoices created by an account whose org-membership
-    // role isn't literally "tutor" (e.g. the owner who bootstrapped the org —
-    // DEV_PLAN Tech Debt #25's role_type/org-role split). Scoping strictly to
-    // `tutor_id = user.id` would hide those invoices from their own creator;
-    // include untagged ones too so a solo owner-tutor still sees their invoices.
-    if (user!.role === "tutor") q = q.or(`tutor_id.eq.${user!.id},tutor_id.is.null`);
+    // organizationRole (the real per-org authorization tier), not role (a
+    // person-type set once at signup — AuthContext.tsx's own comment on the
+    // distinction, HANDOFF.md §8). This used to check `role`, which is DEV_PLAN
+    // Tech Debt #25 exactly: a solo tutor who bootstrapped their own org has
+    // role:"tutor" and organizationRole:"owner" simultaneously, and checking
+    // the wrong one hid that owner's own invoices (docs/BUILD_LOG_ARCHIVE.md
+    // §20.7's original find). That session's fix was the tutor_id.is.null
+    // fallback below, the best available at the time; organizationRole exists
+    // now and is the real fix — the fallback stays anyway, since a genuine
+    // tutor-role viewer should still see any invoice staff created without
+    // assigning a specific tutor.
+    if (user!.organizationRole === "tutor") q = q.or(`tutor_id.eq.${user!.id},tutor_id.is.null`);
     const { data, error } = await q;
     if (error) throw error;
     return (data || []).map(mapMoneyInvoiceRow);
-  }, [orgId, user?.role, user?.id]);
+  }, [orgId, user?.organizationRole, user?.id]);
   // Mirrors the tutor_id.eq/is.null OR above — a Realtime payload for another
   // tutor's invoice must not get merged into a tutor-scoped view.
   const merge: RealtimeMergeConfig<MoneyInvoiceRow> = useMemo(
     () => ({
       mapRow: mapMoneyInvoiceRow,
       getId: (row) => row.id,
-      belongsToView: (raw: any) => user?.role !== "tutor" || raw.tutor_id === user?.id || raw.tutor_id == null,
+      belongsToView: (raw: any) => user?.organizationRole !== "tutor" || raw.tutor_id === user?.id || raw.tutor_id == null,
       compare: (a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") * -1,
     }),
-    [user?.role, user?.id]
+    [user?.organizationRole, user?.id]
   );
   return useRealtimeList<MoneyInvoiceRow>("money", "invoices", orgId, load, undefined, merge);
 }
