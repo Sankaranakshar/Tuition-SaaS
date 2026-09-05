@@ -15,7 +15,8 @@ export default function OrganizationSettings() {
     documents: { maxFileSizeMB: 10, allowedExtensions: ['pdf', 'doc', 'docx'] },
     messaging: { autoCreateBatchChannels: true, notifyOnNewSession: true, notifyOnNewMessage: true },
     cancellation: { freeHours: 24, lateFeePercent: 50, noShowForfeitPercent: 100 },
-    creditExpiry: { enabled: false, windowDays: 0 }
+    creditExpiry: { enabled: false, windowDays: 0 },
+    erasure: { walletPolicy: 'block' }
   });
 
   useEffect(() => {
@@ -310,6 +311,31 @@ export default function OrganizationSettings() {
                   onChange={(e) => updateSetting('creditExpiry', 'windowDays', Math.max(0, parseInt(e.target.value) || 0))}
                   className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)] disabled:opacity-50"
                 />
+              </div>
+            </div>
+          </section>
+
+          {/* Data Erasure (DPDP) */}
+          <section>
+            <h3 className="text-md font-semibold text-[var(--cs-text)] mb-4 border-b border-[var(--cs-border)] pb-2">8. Data Erasure (DPDP)</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Leftover wallet balance on erasure</label>
+                <p className="text-xs text-[var(--cs-text-muted)] mb-1">
+                  When an owner or admin erases a student who still has unused prepaid credit.
+                </p>
+                <select
+                  value={settings.erasure.walletPolicy}
+                  onChange={(e) => updateSetting('erasure', 'walletPolicy', e.target.value)}
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                >
+                  <option value="block">Block erasure until the balance is refunded or adjusted to zero</option>
+                  <option value="writeoff">Write the remaining balance off automatically</option>
+                </select>
+                <p className="text-xs text-[var(--cs-text-muted)] mt-2">
+                  Erasure permanently removes a student's personal and academic data. Invoices, payments and wallet
+                  history are kept as anonymised records for the 8-year retention period and are never deleted.
+                </p>
               </div>
             </div>
           </section>

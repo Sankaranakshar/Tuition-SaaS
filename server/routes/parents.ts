@@ -6,6 +6,7 @@ import { authenticateToken, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
 import { setMembership } from "./members.ts";
 import { parentInviteRequestSchema, parentRedeemRequestSchema } from "../../shared/schemas/parents.ts";
+import { CONSENT_VERSION } from "../../shared/consent.ts";
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -113,6 +114,15 @@ router.post("/redeem", async (req: AuthRequest, res, next) => {
       await client.query(
         `update parent_invites set used_at = now(), used_by = $1 where token = $2`,
         [uid, body.token]
+      );
+      // B-11 (EXECUTION_PLAN.md Step 10): persist the DPDP consent that
+      // `body.consent` (validated `z.literal(true)`) captures — previously it
+      // was checked and then dropped. Version-stamped; the document the
+      // version points at is a GTM-legal deliverable (MASTER_PLAN.md §8).
+      await client.query(
+        `insert into consent_records (organization_id, user_id, student_id, role, consent_version)
+         values ($1, $2, $3, 'parent', $4)`,
+        [invite.organization_id, uid, invite.student_id, CONSENT_VERSION]
       );
       // Same id-space backfill as students.ts redeem: sessions materialized
       // before this parent linked never had their user id in the array.

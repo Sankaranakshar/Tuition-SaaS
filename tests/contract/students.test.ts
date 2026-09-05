@@ -155,6 +155,15 @@ describe("POST /api/v1/students/redeem", () => {
 
     const membership = await db.query<any>(`select role from organization_members where user_id = $1`, [redeemerId]);
     expect(membership.rows[0].role).toBe("student");
+
+    // B-11 (EXECUTION_PLAN.md Step 10): redeem persists a DPDP consent record.
+    const consent = await db.query<any>(
+      `select role, consent_version from consent_records where user_id = $1 and student_id = $2`,
+      [redeemerId, bodyStudentId]
+    );
+    expect(consent.rows).toHaveLength(1);
+    expect(consent.rows[0].role).toBe("student");
+    expect(consent.rows[0].consent_version).toBeTruthy();
   });
 
   it("409s redeeming an invite for a student that got linked by someone else in the meantime", async () => {

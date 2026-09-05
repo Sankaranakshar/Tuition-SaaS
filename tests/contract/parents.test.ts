@@ -205,6 +205,16 @@ describe("POST /api/v1/parents/redeem", () => {
     const inviteRow = await db.query<any>(`select used_at, used_by from parent_invites where token = $1`, [invite]);
     expect(inviteRow.rows[0].used_at).not.toBeNull();
     expect(inviteRow.rows[0].used_by).toBe(redeemerId);
+
+    // B-11 (EXECUTION_PLAN.md Step 10): the consent literal is now persisted,
+    // not just validated and dropped.
+    const consent = await db.query<any>(
+      `select role, consent_version from consent_records where user_id = $1 and student_id = $2`,
+      [redeemerId, bodyStudentId]
+    );
+    expect(consent.rows).toHaveLength(1);
+    expect(consent.rows[0].role).toBe("parent");
+    expect(consent.rows[0].consent_version).toBeTruthy();
   });
 
   it("410s redeeming the same invite a second time", async () => {

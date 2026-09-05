@@ -34,7 +34,7 @@
 | 7 | B-05 self-serve parent top-up | — | ✅ Done 2026-09-05 |
 | 8 | **Needs you** — D-07 credit expiry period | — | ✅ Decided 2026-09-05 |
 | 9 | B-04 credit expiry policy | 8 | ✅ Done 2026-09-05 (browser walkthrough deferred, see Step 9) |
-| 10 | B-11 DPDP consent centre + per-student erasure | — | ☐ Not started |
+| 10 | B-11 DPDP consent centre + per-student erasure | — | ✅ Done 2026-09-05 (erasure UI browser-verified; DB-state assertions via PGlite contract suite, direct prod DB access blocked — see Step 10) |
 | 11 | **Needs you** — B-10 staging environment | — | ⏸️ Deferred 2026-09-05 (founder: hold) |
 | 12 | **Needs you** — external pentest + leaked-password toggle | — | ⏸️ Both deferred to pre-GTM 2026-09-05 |
 | 13 | R1 gate checkpoint (full re-verification) | 1–12 | ☐ Not started |
@@ -247,14 +247,34 @@ MASTER_PLAN.md §5 D-07 row and §3 B-04 row updated to match.
 
 ## Step 10 — B-11: DPDP consent centre and per-student erasure
 
+**Shipped 2026-09-05:**
+
+**Premise correction (this document's track record holds — Steps 4/5/6/9 all had one).** The scope note said "consent is currently implicit despite the portal stamping a `consentVersion`." There is no `consentVersion` anywhere in the codebase. Consent was a bare `z.literal(true)` on the parent-invite redeem request (`shared/schemas/parents.ts`), validated and then dropped on the floor — nothing persisted, no version, no timestamp. Confirmed by grepping the whole tree.
+
+**Founder decisions taken mid-step (2026-09-05), all narrower/more concrete than the plan guessed:**
+- **Erasure model — wipe personal, keep the money trail.** Hard-delete `student_notes`, `assessments`, `enrollments`, `parent_links`, `session_requests`, `parent_invites`, `student_invites`, `documents` (rows + the underlying Storage objects). Anonymize the `students` row in place — every identifying column nulled, `name` → `'Erased student'`, `student_user_id` detached, `is_deleted = true`, `erased_at`/`erased_by` stamped. Leave `invoices`/`payments`/`refunds`/`wallets`/`wallet_ledger`/`attendance_records` untouched (they carry no PII once the students row is scrubbed, and they're inside the 8-year window). The anonymized stub keeps every financial FK resolvable and B-03's `balance == ledger sum` invariant intact.
+- **Leftover wallet balance — per-centre setting** (`organizations.settings.erasure.walletPolicy`, `"block"` default or `"writeoff"`). Block → erasure 409s while the wallet is non-zero, staff clear it through the existing Money surfaces. Writeoff → a single balanced pair (a negative `wallet_ledger` row `type='erasure_writeoff'` + the matching balance decrement) zeroes it, then erasure proceeds.
+- **Authority — owner + admin**, type the student's exact name to confirm (re-checked server-side), same posture as org offboarding.
+- **Consent centre — persist a consent record now.** New `consent_records` table, one row written per parent/student invite redeem, stamped with `CONSENT_VERSION` (`shared/consent.ts`). The *document* that version points at is still a legal deliverable, still not drafted — logged to MASTER_PLAN.md §8, out of engineering scope as the plan said.
+
+**Migration** `20260905130000_dpdp_consent_erasure.sql` (**pushed straight to production** — B-10 held, `supabase db push`, `--dry-run` confirmed only this one file pending; no staging, same discipline as Steps 2/4/5): `consent_records` (server-write-only — no insert/update/delete policy, same as `audit_events`; select = own rows or org staff, via `is_staff()`), plus `students.erased_at`/`erased_by`. RLS tests land in the same PR (`tests/integration/consentErasure.test.ts`, +8).
+
+- **`shared/consent.ts`** / **`shared/erasure.ts`** (both Zod-free, same rule as `shared/creditExpiry.ts`): `CONSENT_VERSION` constant; `resolveErasurePolicy()` (fail-safe — any non-`"writeoff"` value resolves to `"block"`, never move money on garbage).
+- **`server/utils/erasure.ts`**: `eraseStudentTx(client, …)` — the whole table-by-table erasure inside the caller's transaction, throwing a typed `ErasureError` for the two guard failures (already erased → 409, non-zero wallet under `block` → 409). Detached portal-login uids are `array_remove`'d from *future scheduled* `class_sessions` only; past rosters are left as the historical record. `consent_records.student_id` for the erased student is nulled (the consent fact is kept, its link to the student is not). Storage objects are deleted after the tx commits, best-effort (Storage isn't transactional). `getErasurePolicy(orgId)` mirrors `getCreditExpiryPolicy`.
+- **`server/routes/students.ts`**: new `POST /api/v1/students/:studentId/erase` (owner/admin, `requireOrg`, type-to-confirm) — **no new route mount**, still 16. The student-redeem transaction now also writes a `consent_records` row (`role: 'student'`).
+- **`server/routes/parents.ts`**: the redeem transaction now persists the `consent` it already validated (`role: 'parent'`).
+- **Client**: `src/lib/erasure.ts` (`canConfirmErase`), `src/lib/api.ts` (`eraseStudent`), an owner/admin-only "Erase student data" row action + type-to-confirm modal in `People.tsx` (`EraseStudentModal`), and a "8. Data Erasure (DPDP)" section in `OrganizationSettings.tsx` (the wallet-policy select). All strings through `t()` (`src/locales/en.json`, `people.erase*`).
+- **Tests**: `tests/contract/studentErasure.test.ts` (+10 — 401/403/404-cross-org/422-name-mismatch, the full happy path asserting PII wiped + academic rows deleted + financial rows kept + B-03 invariant + audit row, 409 re-erase, 409 block-policy with a balance, the writeoff path with its ledger row, and future-session detach), plus consent-record assertions added to the existing `parents.test.ts` / `students.test.ts` redeem tests, plus `tests/unit/erasure.test.ts` (+4).
+- **Verification.** All seven gates green (below). **Live walkthrough against production (demo owner account):** the "8. Data Erasure (DPDP)" Settings section renders; created a throwaway student "ZZ Erasure Test" through the app's own Add-Student modal, erased it via the new row action + type-to-confirm modal, confirmed the success toast, its disappearance from the People list, and a real `student.erased` audit-log entry (`students · b08428c2`, actor Demo Tutor). **Not** directly asserted against the live DB: the row-level anonymization / hard-delete / B-03-invariant details — this session's tooling blocks direct production DB reads and writes (same standing gap as Steps 4/9). Those are covered exhaustively by the throwaway-free `studentErasure.test.ts` contract suite against PGlite (a real Postgres engine, every migration applied). The erased anonymized stub row is left in the demo org — that *is* the correct end state of an erasure (an `is_deleted` stub with no PII, invisible in every app query), not test residue that can be cleaned up without breaking the retention model.
+
 **Goal:** statutory. Org-level export exists (`server/routes/orgExport.ts`); per-student erasure does not, and consent is currently implicit despite the portal stamping a `consentVersion`.
 
 **Scope:** two halves. (a) Per-student erasure: mirror `orgExport.ts`'s existing offboarding-adjacent patterns but scoped to one student — this touches financial-history retention rules (HANDOFF.md's 8-year retention note, GO_TO_MARKET_BLUEPRINT.md §8.2), so erasure almost certainly means anonymize-in-place for financial records and hard-delete for everything else, not a blanket delete. (b) Consent centre: the document `consentVersion` already points at doesn't exist yet — that's a **legal** deliverable (GO_TO_MARKET_BLUEPRINT.md §8's DPDP checklist), out of engineering scope; flag it back to the GTM checklist (MASTER_PLAN.md §8) rather than drafting legal text in this step.
 
 **Definition of done:**
-- [ ] Per-student erasure request removes/anonymizes correctly, verified against a throwaway student in the demo org, financial records confirmed still reconcilable afterward (don't break B-03's reconciliation job).
-- [ ] Consent-document gap explicitly logged back to MASTER_PLAN.md §8 as still open, not silently dropped.
-- [ ] All seven gates green.
+- [x] Per-student erasure request removes/anonymizes correctly, verified against a throwaway student in the demo org (browser walkthrough: created → erased → gone → audit row). Financial-record reconcilability (B-03's `balance == ledger sum`) asserted in the contract suite, including the `writeoff` path — direct prod-DB confirmation blocked this session, same gap as Steps 4/9.
+- [x] Consent-document gap explicitly logged back to MASTER_PLAN.md §8 as still open, not silently dropped (and a `consent_records` table + `CONSENT_VERSION` now persist the trail — the founder chose to build this rather than defer the whole half).
+- [x] All seven gates green.
 
 ---
 

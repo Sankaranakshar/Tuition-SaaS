@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   Plus, Search, Trash2, FileText, MessageSquare, Receipt, Download, Upload,
-  CheckCircle, XCircle, Users, TrendingUp, UserCircle, GraduationCap, UserPlus, Copy,
+  CheckCircle, XCircle, Users, TrendingUp, UserCircle, GraduationCap, UserPlus, Copy, ShieldAlert,
 } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
@@ -18,7 +18,8 @@ import {
   rankStudentsByAttention, buildLeadFunnel, rankLeadsByGoingCold,
   LEAD_FUNNEL_STAGES, type AttentionReason,
 } from "../lib/people";
-import { uploadDocument, getDocumentUrl, deleteDocument, createParentInvite, createStudentInvite } from "../lib/api";
+import { uploadDocument, getDocumentUrl, deleteDocument, createParentInvite, createStudentInvite, eraseStudent } from "../lib/api";
+import { canConfirmErase } from "../lib/erasure";
 import { planLimitErrorMessage } from "../lib/subscription";
 import { debounce } from "../lib/debounce";
 
@@ -108,7 +109,10 @@ function StudentsLens({ search, user, navigate, t }: any) {
   const [docsStudent, setDocsStudent] = useState<StudentRow | null>(null);
   const [inviteStudent, setInviteStudent] = useState<StudentRow | null>(null);
   const [toArchive, setToArchive] = useState<string | null>(null);
+  const [toErase, setToErase] = useState<StudentRow | null>(null);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
+
+  const canErase = user?.organizationRole === "owner" || user?.organizationRole === "admin";
 
   const ranked = useMemo(() => {
     const now = new Date();
@@ -241,6 +245,11 @@ function StudentsLens({ search, user, navigate, t }: any) {
                         <button onClick={(e) => { e.stopPropagation(); setToArchive(student.id); }} title="Archive" className="p-1.5 text-[var(--cs-text-muted)] hover:text-red-600">
                           <Trash2 className="h-4 w-4" />
                         </button>
+                        {canErase && (
+                          <button onClick={(e) => { e.stopPropagation(); setToErase(student); }} title={t("people.eraseTitle")} className="p-1.5 text-[var(--cs-text-muted)] hover:text-red-600">
+                            <ShieldAlert className="h-4 w-4" />
+                          </button>
+                        )}
                       </>
                     }
                   />
@@ -271,7 +280,73 @@ function StudentsLens({ search, user, navigate, t }: any) {
           onClose={() => setToArchive(null)}
         />
       )}
+      {toErase && (
+        <EraseStudentModal
+          student={toErase}
+          onClose={() => setToErase(null)}
+          onErased={() => { setToErase(null); refetch(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// B-11 / EXECUTION_PLAN.md Step 10: per-student erasure (DPDP). Owner/admin
+// only (gated by the caller), type-to-confirm the student's exact name —
+// re-checked server-side. Mirrors OrgExportSettings' offboard confirm.
+function EraseStudentModal({ student, onClose, onErased }: { student: StudentRow; onClose: () => void; onErased: () => void }) {
+  const { t } = useTranslation();
+  const [confirmText, setConfirmText] = useState("");
+  const [erasing, setErasing] = useState(false);
+
+  const handleErase = async () => {
+    if (!canConfirmErase(student.name, confirmText)) return;
+    setErasing(true);
+    try {
+      const res = await eraseStudent(student.id, confirmText.trim());
+      const wo = res.walletWriteOff;
+      toast.success(
+        wo && (wo.credits || wo.paise)
+          ? t("people.eraseDoneWriteoff", { credits: wo.credits, rupees: (wo.paise / 100).toLocaleString("en-IN") })
+          : t("people.eraseDone")
+      );
+      onErased();
+    } catch (err: any) {
+      toast.error(err?.message || t("people.eraseFailed"));
+      setErasing(false);
+    }
+  };
+
+  return (
+    <Modal title={t("people.eraseTitle")} onClose={onClose}>
+      <div className="space-y-3">
+        <p className="text-sm text-gray-600">{t("people.eraseBody")}</p>
+        <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1">
+          <li>{t("people.eraseBulletDeleted")}</li>
+          <li>{t("people.eraseBulletKept")}</li>
+        </ul>
+        <label className="block text-sm font-medium text-gray-700">
+          {t("people.eraseConfirmLabel")} <span className="font-mono bg-gray-100 px-1 rounded">{student.name}</span>
+        </label>
+        <input
+          type="text"
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          placeholder={student.name}
+          className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm"
+        />
+        <div className="flex justify-end gap-3 pt-1">
+          <button onClick={onClose} className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">{t("people.cancel")}</button>
+          <button
+            onClick={handleErase}
+            disabled={erasing || !canConfirmErase(student.name, confirmText)}
+            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {erasing ? t("people.erasing") : t("people.eraseConfirm")}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

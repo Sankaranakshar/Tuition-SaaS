@@ -8,6 +8,31 @@ export type StudentInviteRequest = z.infer<typeof studentInviteRequestSchema>;
 export const studentRedeemRequestSchema = z.object({ token: z.string().min(10) });
 export type StudentRedeemRequest = z.infer<typeof studentRedeemRequestSchema>;
 
+// B-11 / EXECUTION_PLAN.md Step 10: per-student erasure (DPDP right to
+// erasure). Type-to-confirm the student's exact current name, re-checked
+// server-side — same "confirm to destroy" pattern as org offboarding
+// (shared/schemas/orgExport.ts). Irreversible.
+export const eraseStudentRequestSchema = z.object({
+  confirmName: z.string().min(1),
+});
+export type EraseStudentRequest = z.infer<typeof eraseStudentRequestSchema>;
+
+export interface EraseStudentResponse {
+  ok: true;
+  // Non-null only when the org's erasure policy is "writeoff" and the wallet
+  // actually held a balance — the magnitude that was written off.
+  walletWriteOff: { credits: number; paise: number } | null;
+  deleted: {
+    studentNotes: number;
+    assessments: number;
+    enrollments: number;
+    parentLinks: number;
+    sessionRequests: number;
+    documents: number;
+    invites: number;
+  };
+}
+
 // B-09 bulk import (EXECUTION_PLAN.md Step 6). The pure row-shaping/dedup
 // logic lives in server/utils/bulkImport.ts; these are just the request/
 // response shapes for POST /api/v1/students/import{,/inspect}. Multer puts
