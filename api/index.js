@@ -2105,31 +2105,20 @@ async function eraseStudentTx(client, opts) {
     `update consent_records set student_id = null where organization_id = $1 and student_id = $2`,
     [orgId, studentId]
   );
-  const detachedUids = [];
-  if (student.student_user_id) detachedUids.push(student.student_user_id);
-  const parentUidRows = await client.query(
-    `select parent_user_id from parent_links where student_id = $1`,
-    [studentId]
-  );
-  for (const r of parentUidRows.rows) detachedUids.push(r.parent_user_id);
-  if (detachedUids.length > 0) {
+  if (student.student_user_id) {
     await client.query(
       `update class_sessions
          set student_user_ids = (
                select coalesce(array_agg(u), '{}'::uuid[])
                from unnest(student_user_ids) u
-               where not (u = any($3::uuid[]))
-             ),
-             parent_user_ids = (
-               select coalesce(array_agg(u), '{}'::uuid[])
-               from unnest(parent_user_ids) u
-               where not (u = any($3::uuid[]))
+               where u <> $3
              )
        where organization_id = $1
          and start_time > now()
          and status = 'scheduled'
-         and ($2 = any(student_ids))`,
-      [orgId, studentId, detachedUids]
+         and ($2 = any(student_ids))
+         and ($3 = any(student_user_ids))`,
+      [orgId, studentId, student.student_user_id]
     );
   }
   const setClause = STUDENT_PII_COLUMNS.map((c) => `${c} = null`).join(",\n       ");
