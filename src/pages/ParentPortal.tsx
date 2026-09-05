@@ -9,7 +9,7 @@ import { formatPaise, formatINR, formatDate, formatTime, formatRelativeDays } fr
 import { rupeesToPaise } from "../../shared/money";
 import { cancellationCutoff, DEFAULT_CANCELLATION_POLICY, type CancellationPolicy } from "../../shared/cancellationPolicy";
 import { getOrgCancellationPolicy } from "../lib/cancellationPolicy";
-import { payInvoiceAsParent, downloadInvoicePdf } from "../lib/api";
+import { payInvoiceAsParent, downloadInvoicePdf, topUpWalletAsParent } from "../lib/api";
 import { debounce } from "../lib/debounce";
 
 // Epic 10 (parent portal v1, mobile-web-first). One page, three tabs, no new
@@ -88,6 +88,8 @@ export default function ParentPortal() {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [wallet, setWallet] = useState<{ balanceCredits: number; balanceCurrency: number } | null>(null);
   const [payingId, setPayingId] = useState<string | null>(null);
+  const [topupAmount, setTopupAmount] = useState("");
+  const [toppingUp, setToppingUp] = useState(false);
   // Step 3 (EXECUTION_PLAN.md): D-08's per-org policy, read once per org
   // (not per selected child — cancellation policy is org-wide). Seeded with
   // the coded defaults so the disclosure renders immediately, same pattern
@@ -266,6 +268,27 @@ export default function ParentPortal() {
     }
   }
 
+  // B-05 self-serve parent top-up (EXECUTION_PLAN.md Step 7). No manual/cash
+  // variant — always a real Razorpay charge, same reason recordManualPayment
+  // has no parent-facing equivalent either.
+  async function handleTopup() {
+    if (!selectedId) return;
+    const rupees = Number(topupAmount);
+    if (!rupees || rupees <= 0) {
+      toast.error(t("parentPortal.topupInvalidAmount"));
+      return;
+    }
+    setToppingUp(true);
+    try {
+      const { shortUrl } = await topUpWalletAsParent(selectedId, rupeesToPaise(rupees));
+      window.location.href = shortUrl;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("parentPortal.topupFailed"));
+    } finally {
+      setToppingUp(false);
+    }
+  }
+
   if (loadingChildren) {
     return (
       <div className="mx-auto max-w-md space-y-4 p-1">
@@ -432,6 +455,32 @@ export default function ParentPortal() {
               {wallet?.balanceCredits || 0} credits
             </p>
             <p className="text-sm text-[var(--cs-text-muted)]">{formatINR(wallet?.balanceCurrency || 0)}</p>
+          </div>
+
+          <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4">
+            <p className="mb-2 text-sm font-medium text-[var(--cs-text)]">{t("parentPortal.topupTitle")}</p>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[var(--cs-text-muted)]">₹</span>
+                <input
+                  type="number"
+                  min="1"
+                  inputMode="decimal"
+                  value={topupAmount}
+                  onChange={(e) => setTopupAmount(e.target.value)}
+                  placeholder={t("parentPortal.topupAmountLabel")}
+                  aria-label={t("parentPortal.topupAmountLabel")}
+                  className="w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] py-2 pl-7 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--cs-accent)]"
+                />
+              </div>
+              <button
+                onClick={handleTopup}
+                disabled={toppingUp || !topupAmount}
+                className="shrink-0 rounded-[6px] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                {toppingUp ? t("parentPortal.topupOpening") : t("parentPortal.topupButton")}
+              </button>
+            </div>
           </div>
 
           <h2 className="px-1 text-sm font-semibold text-[var(--cs-text)]">Payment history</h2>

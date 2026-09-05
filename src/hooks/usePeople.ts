@@ -45,11 +45,19 @@ export function useStudentsList() {
       .eq("organization_id", orgId)
       .eq("is_deleted", false)
       .limit(200);
-    if (user!.role === "tutor") q = q.eq("tutor_id", user!.id);
+    // organizationRole (the real per-org authorization tier), not role (a
+    // person-type set once at signup — see AuthContext.tsx's own comment,
+    // and HANDOFF.md §8's trap entry on exactly this file). Was the root
+    // cause of a real bug (EXECUTION_PLAN.md Step 6): an owner-run bulk
+    // import created students that then vanished from that owner's own
+    // list, because their person-type happened to be "tutor" even though
+    // their org role was "owner". Step 6 only patched the symptom
+    // (server-side tutor_id assignment); this is the actual fix.
+    if (user!.organizationRole === "tutor") q = q.eq("tutor_id", user!.id);
     const { data, error } = await q;
     if (error) throw error;
     return (data || []).map(mapStudentRow);
-  }, [orgId, user?.role, user?.id]);
+  }, [orgId, user?.organizationRole, user?.id]);
   // is_deleted and (for a tutor) tutor_id both narrow load()'s query beyond
   // what the Realtime filter (org-scoped only) can express, so a merged row
   // has to be checked against them explicitly or a soft-deleted/reassigned
@@ -58,9 +66,9 @@ export function useStudentsList() {
     () => ({
       mapRow: mapStudentRow,
       getId: (row) => row.id,
-      belongsToView: (raw: any) => raw.is_deleted !== true && (user?.role !== "tutor" || raw.tutor_id === user?.id),
+      belongsToView: (raw: any) => raw.is_deleted !== true && (user?.organizationRole !== "tutor" || raw.tutor_id === user?.id),
     }),
-    [user?.role, user?.id]
+    [user?.organizationRole, user?.id]
   );
   return useRealtimeList<StudentRow>("people", "students", orgId, load, undefined, merge);
 }

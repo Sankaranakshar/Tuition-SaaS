@@ -6,6 +6,7 @@ import { applyPayment, type InvoiceStatus } from "../utils/invoiceStatus.ts";
 import { writeAudit, type AuditActor } from "../utils/audit.ts";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { PLAN_CATALOG, isPlanId } from "../../shared/plans.ts";
+import { paiseToRupees } from "../../shared/money.ts";
 
 // Razorpay webhook receiver (DEV_PLAN E6.2). Public but signature-gated: the
 // body is HMAC-verified against the org's stored webhook secret before we
@@ -143,6 +144,15 @@ async function handleEvent(orgId: string, event: any) {
   }
   if (!paymentEntity?.id) return { ignored: true, reason: "no_payment" };
 
+  // Wallet top-up links (B-05, EXECUTION_PLAN.md Step 7) carry a synthetic
+  // `wallet_topup_<studentId>_<ts>` reference_id, not an invoiceId — this
+  // must branch before the invoiceId lookup below, which would otherwise
+  // try to query `invoices` with that string and error, not just miss.
+  const notes = linkEntity?.notes || paymentEntity?.notes || {};
+  if (notes.type === "wallet_topup" && notes.studentId) {
+    return handleWalletTopupPayment(orgId, notes.studentId as string, paymentEntity);
+  }
+
   const invoiceId =
     linkEntity?.reference_id ||
     linkEntity?.notes?.invoiceId ||
@@ -206,6 +216,58 @@ async function handleEvent(orgId: string, event: any) {
     });
   }
   return result;
+}
+
+// B-05 self-serve parent top-up (EXECUTION_PLAN.md Step 7): a wallet-topup
+// payment link's captured payment credits the wallet directly rather than
+// settling an invoice. Same idempotency shape as the invoice path
+// (`rzp_<paymentId>`), but keyed against wallet_ledger's own unique
+// (organization_id, idempotency_key) index (20260709020900_rls_fixes.sql)
+// rather than payments' — a wallet top-up was never recorded in `payments`
+// even for the staff/manual path (POST /wallets/topup), so this doesn't
+// start now.
+async function handleWalletTopupPayment(orgId: string, studentId: string, paymentEntity: any) {
+  const amountPaise = Number(paymentEntity.amount);
+  const paymentId = String(paymentEntity.id);
+  const idempotencyKey = `rzp_${paymentId}`;
+
+  const result = await withTransaction(async (client: PoolClient) => {
+    const existing = await client.query(
+      `select 1 from wallet_ledger where organization_id = $1 and idempotency_key = $2`,
+      [orgId, idempotencyKey]
+    );
+    if ((existing.rowCount ?? 0) > 0) return { duplicate: true };
+
+    const studentRes = await client.query(`select organization_id from students where id = $1`, [studentId]);
+    if (studentRes.rowCount === 0 || studentRes.rows[0].organization_id !== orgId) {
+      return { orphan: true };
+    }
+
+    const walletRes = await client.query(
+      `insert into wallets (organization_id, student_id) values ($1, $2)
+       on conflict (organization_id, student_id) do update set student_id = excluded.student_id
+       returning id`,
+      [orgId, studentId]
+    );
+    await client.query(
+      `update wallets set balance_currency = balance_currency + $1 where id = $2`,
+      [paiseToRupees(amountPaise), walletRes.rows[0].id]
+    );
+    await client.query(
+      `insert into wallet_ledger (organization_id, student_id, type, credits, paise, reason, gateway_payment_id, by, idempotency_key, at)
+       values ($1, $2, 'credit_currency', 0, $3, 'topup', $4, 'razorpay_webhook', $5, now())`,
+      [orgId, studentId, amountPaise, paymentId, idempotencyKey]
+    );
+    return { duplicate: false };
+  });
+
+  if (result.orphan) return { ignored: true, reason: "student_not_found" };
+  if (!result.duplicate) {
+    await writeAudit(orgId, RAZORPAY_WEBHOOK, "wallet.topup.gateway_captured", "wallets", studentId, {
+      gatewayPaymentId: paymentId, amountPaise,
+    });
+  }
+  return { duplicate: result.duplicate ?? false };
 }
 
 export default router;

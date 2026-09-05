@@ -305,7 +305,13 @@ export function useMessageableContacts() {
         .eq("is_deleted", false)
         .not("student_user_id", "is", null)
         .limit(200);
-      if (user.role === "tutor") studentsQuery = studentsQuery.eq("tutor_id", user.id);
+      // organizationRole (the real per-org authorization tier), not role
+      // (a person-type set once at signup — see AuthContext.tsx's own
+      // comment on the distinction, and HANDOFF.md §8). A solo tutor who
+      // owns their org has role:"tutor" and organizationRole:"owner"
+      // simultaneously; checking role here wrongly narrowed an owner's own
+      // contact list to just their own assigned students.
+      if (user.organizationRole === "tutor") studentsQuery = studentsQuery.eq("tutor_id", user.id);
 
       const [{ data: students, error: sErr }, { data: links, error: lErr }] = await Promise.all([
         studentsQuery,

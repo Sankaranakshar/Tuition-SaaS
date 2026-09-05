@@ -1,8 +1,9 @@
 import express from "express";
-import { pool } from "../db.ts";
+import { pool, withTransaction } from "../db.ts";
 import { materializeTemplate, TEMPLATE_SELECT, MATERIALIZABLE, type Template } from "./scheduling.ts";
 import { writeAudit } from "../utils/audit.ts";
 import { paiseToRupees } from "../../shared/money.ts";
+import { resolveCreditExpiryPolicy, computeCreditExpiry, type ExpiryWarning } from "../../shared/creditExpiry.ts";
 
 // Machine-to-machine endpoint for Cloud Scheduler. No Supabase user session
 // exists for a scheduler invocation, so this is gated by a shared secret
@@ -170,5 +171,170 @@ router.post("/reconcile-wallets", async (_req, res, next) => {
     res.json({ ok: true, walletsChecked: totalRes.rows[0].total, mismatches: mismatches.rowCount });
   } catch (err) { next(err); }
 });
+
+// Credit expiry (B-04, D-07 — EXECUTION_PLAN.md Step 9). Per-org opt-in: a
+// center sets { enabled, windowDays } at organizations.settings.creditExpiry
+// (Settings → Organization). There is no platform default — an org that
+// never configures this keeps immortal credits, today's behaviour, and this
+// job skips it entirely. Expiry runs from each top-up / purchase DATE, not
+// last activity, so it can't work off the scalar wallet balance: it walks
+// wallet_ledger FIFO (shared/creditExpiry.ts), attributing every debit to
+// the oldest open lot, and breaks the unspent remainder of any lot older
+// than the window. Computed on the fly each run — no wallet_credit_lots
+// table — matching B-03's "re-derive from the ledger" instinct; production
+// wallets are tiny. For each broken lot a credit_expiry ledger row (negative
+// delta, reason 'credit_expiry') is written, keyed idempotent on the source
+// lot's ledger id, and the wallet balance is decremented to match so B-03's
+// reconciliation still holds (balance == ledger sum). Nothing is deleted.
+// 30-day and 7-day warning notifications fire once per lot via the existing
+// notifications surface, deduped against notifications already written.
+router.post("/expire-credits", async (_req, res, next) => {
+  try {
+    const orgsRes = await pool.query(
+      `select id, settings from organizations
+       where status = 'active' and settings -> 'creditExpiry' ->> 'enabled' = 'true'`
+    );
+
+    let walletsChecked = 0;
+    let lotsExpired = 0;
+    let creditsExpired = 0;
+    let paiseExpired = 0;
+    let warningsSent = 0;
+
+    for (const org of orgsRes.rows) {
+      const policy = resolveCreditExpiryPolicy((org.settings as Record<string, unknown> | null)?.creditExpiry);
+      if (!policy.enabled) continue; // toggle on but window unset/zero — treat as not configured
+
+      const walletsRes = await pool.query(
+        `select id, student_id, balance_credits, balance_currency
+         from wallets where organization_id = $1`,
+        [org.id]
+      );
+
+      for (const wallet of walletsRes.rows) {
+        walletsChecked++;
+
+        const ledgerRes = await pool.query(
+          `select id, credits, paise, at from wallet_ledger
+           where organization_id = $1 and student_id = $2
+           order by at asc, id asc`,
+          [org.id, wallet.student_id]
+        );
+
+        const { expired, warnings } = computeCreditExpiry(ledgerRes.rows, policy.windowDays, new Date());
+
+        if (expired.length > 0) {
+          await withTransaction(async (client) => {
+            let dCredits = 0;
+            let dPaise = 0;
+            for (const lot of expired) {
+              const key = `credit_expiry_${lot.lotLedgerId}_${lot.denom === "credits" ? "c" : "p"}`;
+              const dup = await client.query(
+                `select 1 from wallet_ledger where organization_id = $1 and idempotency_key = $2`,
+                [org.id, key]
+              );
+              if ((dup.rowCount ?? 0) > 0) continue;
+
+              const credits = lot.denom === "credits" ? -lot.amount : 0;
+              const paise = lot.denom === "paise" ? -lot.amount : 0;
+              await client.query(
+                `insert into wallet_ledger
+                   (organization_id, student_id, type, credits, paise, reason, by, idempotency_key, at)
+                 values ($1, $2, 'credit_expiry', $3, $4, 'credit_expiry', 'credit_expiry_cron', $5, now())`,
+                [org.id, wallet.student_id, credits, paise, key]
+              );
+              dCredits += credits;
+              dPaise += paise;
+              lotsExpired++;
+              if (lot.denom === "credits") creditsExpired += lot.amount;
+              else paiseExpired += lot.amount;
+            }
+
+            if (dCredits !== 0 || dPaise !== 0) {
+              await client.query(
+                `update wallets
+                   set balance_credits = balance_credits + $1,
+                       balance_currency = balance_currency + $2
+                 where id = $3`,
+                [dCredits, paiseToRupees(dPaise), wallet.id]
+              );
+              await writeAudit(
+                org.id,
+                { system: "credit_expiry_cron" },
+                "wallet.credit_expiry",
+                "wallets",
+                wallet.id,
+                { studentId: wallet.student_id, creditsExpired: -dCredits, paiseExpired: -dPaise }
+              );
+            }
+          });
+        }
+
+        for (const warn of warnings) {
+          if (await sendExpiryWarning(org.id, wallet.student_id, warn)) warningsSent++;
+        }
+      }
+    }
+
+    res.json({
+      ok: true,
+      orgsProcessed: orgsRes.rowCount,
+      walletsChecked,
+      lotsExpired,
+      creditsExpired,
+      paiseExpired,
+      warningsSent,
+    });
+  } catch (err) { next(err); }
+});
+
+// One 30-day and one 7-day notification per lapsing lot, to every parent
+// linked to the student plus the student's own login. Deduped on
+// (lotLedgerId, stage, denom) against notifications already written, so a
+// daily cadence doesn't re-notify. A parent linked after the warning fired
+// won't be backfilled — these are time-sensitive nudges, not guaranteed
+// delivery. Returns whether a new notification was written.
+async function sendExpiryWarning(orgId: string, studentId: string, warn: ExpiryWarning): Promise<boolean> {
+  const existing = await pool.query(
+    `select 1 from notifications
+     where organization_id = $1 and type = 'wallet_credit_expiring'
+       and payload ->> 'lotLedgerId' = $2 and payload ->> 'stage' = $3 and payload ->> 'denom' = $4
+     limit 1`,
+    [orgId, warn.lotLedgerId, String(warn.stage), warn.denom]
+  );
+  if ((existing.rowCount ?? 0) > 0) return false;
+
+  const recipientsRes = await pool.query(
+    `select parent_user_id as uid from parent_links where student_id = $1
+     union
+     select student_user_id as uid from students where id = $1 and student_user_id is not null`,
+    [studentId]
+  );
+  if (recipientsRes.rowCount === 0) return false;
+
+  const amountLabel =
+    warn.denom === "credits"
+      ? `${warn.remaining} credit${warn.remaining === 1 ? "" : "s"}`
+      : `₹${(warn.remaining / 100).toLocaleString("en-IN")}`;
+  const title = `${amountLabel} of wallet credit expires in ${warn.stage} days`;
+  const payload = JSON.stringify({
+    title,
+    studentId,
+    denom: warn.denom,
+    stage: warn.stage,
+    remaining: warn.remaining,
+    lotLedgerId: warn.lotLedgerId,
+    expiresAt: warn.expiresAt,
+  });
+
+  for (const row of recipientsRes.rows) {
+    await pool.query(
+      `insert into notifications (organization_id, user_id, type, payload)
+       values ($1, $2, 'wallet_credit_expiring', $3::jsonb)`,
+      [orgId, row.uid, payload]
+    );
+  }
+  return true;
+}
 
 export default router;

@@ -838,6 +838,11 @@ var refundResponseSchema = z2.object({
 var voidInvoiceResponseSchema = z2.object({ ok: z2.literal(true) });
 var finalizeInvoiceResponseSchema = z2.object({ ok: z2.literal(true), invoiceNumber: z2.string() });
 var paymentLinkResponseSchema = z2.object({ ok: z2.literal(true), shortUrl: z2.string(), reused: z2.boolean() });
+var walletTopupLinkRequestSchema = z2.object({
+  studentId: z2.string().uuid(),
+  amountPaise: z2.number().int().positive()
+});
+var walletTopupLinkResponseSchema = z2.object({ ok: z2.literal(true), shortUrl: z2.string() });
 
 // shared/cancellationPolicy.ts
 var DEFAULT_CANCELLATION_POLICY = {
@@ -1442,6 +1447,49 @@ router3.post("/invoices/:invoiceId/pay", async (req, res, next) => {
     next(err);
   }
 });
+async function resolveWalletTopupPaymentLink(orgId, studentId, amountPaise) {
+  const { data: student, error } = await supabaseAdmin.from("students").select("organization_id, name, parent_phone, phone, parent_email, email").eq("id", studentId).maybeSingle();
+  if (error) throw error;
+  if (!student || student.organization_id !== orgId) {
+    throw Object.assign(new Error("Student not found"), { status: 404, code: "not_found" });
+  }
+  const creds = await getGatewayCreds(orgId);
+  if (!creds) {
+    throw Object.assign(new Error("Connect Razorpay in settings first"), { status: 422, code: "gateway_not_connected" });
+  }
+  const link = await createPaymentLink(creds, {
+    amountPaise,
+    // Must be unique per Razorpay account, unlike an invoice's stable id —
+    // a parent can top up the same student's wallet any number of times.
+    referenceId: `wallet_topup_${studentId}_${Date.now()}`,
+    description: `Wallet top-up \xB7 ${student.name || "Student"}`.slice(0, 2048),
+    customer: { name: student.name || void 0, contact: student.parent_phone || student.phone || void 0, email: student.parent_email || student.email || void 0 },
+    notes: { organizationId: orgId, studentId, type: "wallet_topup" },
+    callbackUrl: process.env.APP_URL ? `${process.env.APP_URL}/app/money` : void 0
+  });
+  return { shortUrl: link.shortUrl, linkId: link.id };
+}
+router3.post("/wallets/topup-link", async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    if (req.user.role !== "parent") {
+      return res.status(403).json({ error: { code: "forbidden", message: "This endpoint is for parent accounts" } });
+    }
+    const body = walletTopupLinkRequestSchema.parse(req.body);
+    const { data: link } = await supabaseAdmin.from("parent_links").select("parent_user_id").eq("parent_user_id", req.user.id).eq("student_id", body.studentId).maybeSingle();
+    if (!link) {
+      return res.status(403).json({ error: { code: "forbidden", message: "Not linked to this student" } });
+    }
+    const result = await resolveWalletTopupPaymentLink(orgId, body.studentId, body.amountPaise);
+    await writeAudit(orgId, req.user.id, "wallet.topup_link.parent", "wallets", body.studentId, {
+      linkId: result.linkId,
+      amountPaise: body.amountPaise
+    });
+    res.json({ ok: true, shortUrl: result.shortUrl });
+  } catch (err) {
+    next(err);
+  }
+});
 router3.get("/invoices/:invoiceId/pdf", async (req, res, next) => {
   try {
     const orgId = req.user.organizationId;
@@ -1836,11 +1884,109 @@ var parents_default = router5;
 // server/routes/students.ts
 import express6 from "express";
 import crypto5 from "node:crypto";
+import multer from "multer";
+import ExcelJS from "exceljs";
+import Papa from "papaparse";
 
 // shared/schemas/students.ts
 import { z as z5 } from "zod";
 var studentInviteRequestSchema = z5.object({ studentId: z5.string().uuid() });
 var studentRedeemRequestSchema = z5.object({ token: z5.string().min(10) });
+var IMPORT_FIELDS = ["name", "phone", "parentName", "parentPhone", "grade", "subject"];
+var bulkImportMappingSchema = z5.array(z5.enum(IMPORT_FIELDS).nullable());
+var bulkImportResolutionsSchema = z5.record(z5.string(), z5.enum(["skip", "import"]));
+
+// server/utils/bulkImport.ts
+var HEADER_ALIASES = {
+  name: "name",
+  studentname: "name",
+  student: "name",
+  fullname: "name",
+  phone: "phone",
+  studentphone: "phone",
+  mobile: "phone",
+  studentmobile: "phone",
+  contactnumber: "phone",
+  parent: "parentName",
+  parentname: "parentName",
+  guardian: "parentName",
+  guardianname: "parentName",
+  parentphone: "parentPhone",
+  guardianphone: "parentPhone",
+  parentmobile: "parentPhone",
+  guardianmobile: "parentPhone",
+  grade: "grade",
+  class: "grade",
+  standard: "grade",
+  level: "grade",
+  subject: "subject",
+  subjects: "subject"
+};
+function normalizeHeader(h) {
+  return h.trim().toLowerCase().replace(/[^a-z]/g, "");
+}
+function suggestColumnMapping(headers) {
+  return headers.map((h) => HEADER_ALIASES[normalizeHeader(h)] ?? null);
+}
+function parseImportRows(dataRows, mapping) {
+  const rows = [];
+  const errors = [];
+  dataRows.forEach((row, i) => {
+    const rowIndex = i + 2;
+    if (row.every((cell) => !cell?.trim())) return;
+    const record = {};
+    mapping.forEach((field, colIndex) => {
+      if (!field) return;
+      const value = row[colIndex]?.trim();
+      if (value) record[field] = value;
+    });
+    if (!record.name) {
+      errors.push({ rowIndex, message: "Missing a name." });
+      return;
+    }
+    rows.push({ rowIndex, record });
+  });
+  return { rows, errors };
+}
+function normalizeName(name) {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+function normalizePhone(phone) {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  if (!digits) return null;
+  return digits.slice(-10);
+}
+function dedupeKey(record) {
+  const phone = normalizePhone(record.phone);
+  if (!record.name || !phone) return null;
+  return `${normalizeName(record.name)}|${phone}`;
+}
+function detectDuplicates(rows, existingStudents) {
+  const existingByKey = /* @__PURE__ */ new Map();
+  for (const s of existingStudents) {
+    const key = dedupeKey({ name: s.name, phone: s.phone ?? void 0 });
+    if (key) existingByKey.set(key, s);
+  }
+  const duplicates = [];
+  const seenInFile = /* @__PURE__ */ new Map();
+  for (const { rowIndex, record } of rows) {
+    const key = dedupeKey(record);
+    if (!key) continue;
+    const existing = existingByKey.get(key);
+    if (existing) {
+      duplicates.push({ rowIndex, name: record.name, phone: record.phone ?? null, matchedStudentId: existing.id, matchedStudentName: existing.name });
+      continue;
+    }
+    const earlierRow = seenInFile.get(key);
+    if (earlierRow !== void 0) {
+      duplicates.push({ rowIndex, name: record.name, phone: record.phone ?? null, matchedRowIndex: earlierRow });
+      continue;
+    }
+    seenInFile.set(key, rowIndex);
+  }
+  return duplicates;
+}
 
 // server/routes/students.ts
 var router6 = express6.Router();
@@ -1944,6 +2090,140 @@ router6.post("/redeem", async (req, res, next) => {
     await setMembership(invite.organization_id, uid, "student", uid);
     await writeAudit(invite.organization_id, uid, "student_invite.redeem", "students", invite.student_id, {});
     res.json({ ok: true, organizationId: invite.organization_id, studentId: invite.student_id });
+  } catch (err) {
+    next(err);
+  }
+});
+var CAN_IMPORT = ["owner", "admin", "tutor", "frontdesk"];
+var importUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+async function parseSpreadsheet(buffer) {
+  const isXlsx = buffer.length >= 4 && buffer[0] === 80 && buffer[1] === 75;
+  if (isXlsx) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer);
+    const sheet = workbook.worksheets[0];
+    if (!sheet) return [];
+    const rows = [];
+    sheet.eachRow({ includeEmpty: false }, (row) => {
+      const values = row.values.slice(1);
+      rows.push(values.map((v) => v === null || v === void 0 ? "" : String(v)));
+    });
+    return rows;
+  }
+  const parsed = Papa.parse(buffer.toString("utf-8"), { skipEmptyLines: true });
+  return parsed.data;
+}
+function friendlyRowError(err) {
+  if (typeof err?.message === "string" && err.message.includes("plan_limit_exceeded")) {
+    return "Your plan's active-student limit was reached \u2014 remaining rows were not created. Upgrade in Settings \u2192 Plan & Billing to add more.";
+  }
+  return err?.message || "Failed to create this row.";
+}
+router6.post("/import/inspect", requireOrg, requireRole(...CAN_IMPORT), importUpload.single("file"), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: { code: "no_file", message: "No file uploaded" } });
+    const rows = await parseSpreadsheet(req.file.buffer);
+    if (rows.length === 0) {
+      return res.status(422).json({ error: { code: "empty_file", message: "The file has no rows" } });
+    }
+    const [headerRow, ...dataRows] = rows;
+    const body = {
+      ok: true,
+      headers: headerRow,
+      sampleRows: dataRows.slice(0, 5),
+      totalRows: dataRows.length,
+      suggestedMapping: suggestColumnMapping(headerRow)
+    };
+    res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+router6.post("/import", requireOrg, requireRole(...CAN_IMPORT), importUpload.single("file"), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: { code: "no_file", message: "No file uploaded" } });
+    const orgId = req.user.organizationId;
+    let mappingRaw;
+    let resolutionsRaw = {};
+    try {
+      mappingRaw = JSON.parse(req.body.mapping ?? "[]");
+      if (req.body.resolutions) resolutionsRaw = JSON.parse(req.body.resolutions);
+    } catch {
+      return res.status(422).json({ error: { code: "validation", message: "mapping/resolutions must be valid JSON" } });
+    }
+    const mapping = bulkImportMappingSchema.parse(mappingRaw);
+    const resolutions = bulkImportResolutionsSchema.parse(resolutionsRaw);
+    const commit = req.body.commit === "true";
+    const rows = await parseSpreadsheet(req.file.buffer);
+    if (rows.length === 0) {
+      return res.status(422).json({ error: { code: "empty_file", message: "The file has no rows" } });
+    }
+    const [, ...dataRows] = rows;
+    const { rows: parsedRows, errors } = parseImportRows(dataRows, mapping);
+    const { data: existingRaw, error: existingErr } = await supabaseAdmin.from("students").select("id, name, phone").eq("organization_id", orgId).eq("is_deleted", false);
+    if (existingErr) throw existingErr;
+    const existing = (existingRaw || []).map((s) => ({ id: s.id, name: s.name, phone: s.phone }));
+    const duplicates = detectDuplicates(parsedRows, existing);
+    const duplicateRowIndexes = new Set(duplicates.map((d) => d.rowIndex));
+    if (!commit) {
+      const toCreate = parsedRows.filter((r) => !duplicateRowIndexes.has(r.rowIndex)).map((r) => ({
+        rowIndex: r.rowIndex,
+        name: r.record.name,
+        phone: r.record.phone,
+        parentName: r.record.parentName,
+        parentPhone: r.record.parentPhone,
+        grade: r.record.grade,
+        subject: r.record.subject
+      }));
+      const body2 = { ok: true, dryRun: true, totalRows: dataRows.length, toCreate, duplicates, errors };
+      return res.json(body2);
+    }
+    const created = [];
+    const skippedDuplicates = [];
+    const commitErrors = [...errors];
+    for (const row of parsedRows) {
+      if (duplicateRowIndexes.has(row.rowIndex)) {
+        if (resolutions[String(row.rowIndex)] !== "import") {
+          skippedDuplicates.push(duplicates.find((d) => d.rowIndex === row.rowIndex));
+          continue;
+        }
+      }
+      try {
+        const { data: inserted, error: insertErr } = await supabaseAdmin.from("students").insert({
+          organization_id: orgId,
+          // Unconditional, matching People.tsx's StudentModal (the manual
+          // add-one-student path): tutor_id is set to whoever created the
+          // row regardless of their org role. Conditioning this on
+          // req.user!.role === "tutor" (the org authorization role) left a
+          // bulk-imported row with tutor_id null whenever an owner/admin ran
+          // the import — invisible to that person's own People list, since
+          // useStudentsList() scopes a tutor-*person* (role_type, a
+          // different field entirely — see AuthContext.tsx) to only
+          // students whose tutor_id is their own id. Found live: a real
+          // import created 3 students that vanished from the demo owner's
+          // own list until this was fixed.
+          tutor_id: req.user.id,
+          status: "active",
+          name: row.record.name,
+          phone: row.record.phone ?? null,
+          parent_name: row.record.parentName ?? null,
+          parent_phone: row.record.parentPhone ?? null,
+          grade: row.record.grade ?? null,
+          subject: row.record.subject ?? null
+        }).select("id").single();
+        if (insertErr) throw insertErr;
+        created.push({ rowIndex: row.rowIndex, studentId: inserted.id, name: row.record.name });
+      } catch (err) {
+        commitErrors.push({ rowIndex: row.rowIndex, message: friendlyRowError(err) });
+      }
+    }
+    await writeAudit(orgId, req.user.id, "students.bulk_import", "students", orgId, {
+      createdCount: created.length,
+      skippedDuplicateCount: skippedDuplicates.length,
+      errorCount: commitErrors.length
+    });
+    const body = { ok: true, dryRun: false, createdCount: created.length, created, skippedDuplicates, errors: commitErrors };
+    res.json(body);
   } catch (err) {
     next(err);
   }
@@ -2071,6 +2351,10 @@ async function handleEvent(orgId, event) {
     return { ignored: true, type };
   }
   if (!paymentEntity?.id) return { ignored: true, reason: "no_payment" };
+  const notes = linkEntity?.notes || paymentEntity?.notes || {};
+  if (notes.type === "wallet_topup" && notes.studentId) {
+    return handleWalletTopupPayment(orgId, notes.studentId, paymentEntity);
+  }
   const invoiceId = linkEntity?.reference_id || linkEntity?.notes?.invoiceId || paymentEntity?.notes?.invoiceId;
   if (!invoiceId) return { ignored: true, reason: "no_invoice_ref" };
   const amountPaise = Number(paymentEntity.amount);
@@ -2124,6 +2408,46 @@ async function handleEvent(orgId, event) {
     });
   }
   return result;
+}
+async function handleWalletTopupPayment(orgId, studentId, paymentEntity) {
+  const amountPaise = Number(paymentEntity.amount);
+  const paymentId = String(paymentEntity.id);
+  const idempotencyKey = `rzp_${paymentId}`;
+  const result = await withTransaction(async (client) => {
+    const existing = await client.query(
+      `select 1 from wallet_ledger where organization_id = $1 and idempotency_key = $2`,
+      [orgId, idempotencyKey]
+    );
+    if ((existing.rowCount ?? 0) > 0) return { duplicate: true };
+    const studentRes = await client.query(`select organization_id from students where id = $1`, [studentId]);
+    if (studentRes.rowCount === 0 || studentRes.rows[0].organization_id !== orgId) {
+      return { orphan: true };
+    }
+    const walletRes = await client.query(
+      `insert into wallets (organization_id, student_id) values ($1, $2)
+       on conflict (organization_id, student_id) do update set student_id = excluded.student_id
+       returning id`,
+      [orgId, studentId]
+    );
+    await client.query(
+      `update wallets set balance_currency = balance_currency + $1 where id = $2`,
+      [paiseToRupees(amountPaise), walletRes.rows[0].id]
+    );
+    await client.query(
+      `insert into wallet_ledger (organization_id, student_id, type, credits, paise, reason, gateway_payment_id, by, idempotency_key, at)
+       values ($1, $2, 'credit_currency', 0, $3, 'topup', $4, 'razorpay_webhook', $5, now())`,
+      [orgId, studentId, amountPaise, paymentId, idempotencyKey]
+    );
+    return { duplicate: false };
+  });
+  if (result.orphan) return { ignored: true, reason: "student_not_found" };
+  if (!result.duplicate) {
+    await writeAudit(orgId, RAZORPAY_WEBHOOK, "wallet.topup.gateway_captured", "wallets", studentId, {
+      gatewayPaymentId: paymentId,
+      amountPaise
+    });
+  }
+  return { duplicate: result.duplicate ?? false };
 }
 var webhooks_default = router7;
 
@@ -2537,6 +2861,80 @@ var scheduling_default = router8;
 
 // server/routes/cron.ts
 import express9 from "express";
+
+// shared/creditExpiry.ts
+function resolveCreditExpiryPolicy(raw) {
+  const obj = raw && typeof raw === "object" ? raw : {};
+  const windowDays = typeof obj.windowDays === "number" && Number.isFinite(obj.windowDays) && obj.windowDays > 0 ? Math.floor(obj.windowDays) : 0;
+  const enabled = obj.enabled === true && windowDays > 0;
+  return { enabled, windowDays };
+}
+var DAY_MS = 864e5;
+function runDenom(deltas, windowMs, nowMs, denom) {
+  const lots = [];
+  for (const d of deltas) {
+    if (d.amount > 0) {
+      lots.push({ id: d.id, at: d.at, remaining: d.amount });
+    } else if (d.amount < 0) {
+      let need = -d.amount;
+      for (const lot of lots) {
+        if (need <= 0) break;
+        const take = Math.min(lot.remaining, need);
+        lot.remaining -= take;
+        need -= take;
+      }
+    }
+  }
+  const expired = [];
+  const warnings = [];
+  for (const lot of lots) {
+    if (lot.remaining <= 0) continue;
+    const expiresAtMs = lot.at + windowMs;
+    if (expiresAtMs <= nowMs) {
+      expired.push({
+        lotLedgerId: lot.id,
+        denom,
+        amount: lot.remaining,
+        lotDate: new Date(lot.at).toISOString()
+      });
+      continue;
+    }
+    const msLeft = expiresAtMs - nowMs;
+    if (msLeft <= 7 * DAY_MS) {
+      warnings.push({ lotLedgerId: lot.id, denom, stage: 7, remaining: lot.remaining, expiresAt: new Date(expiresAtMs).toISOString() });
+    } else if (msLeft <= 30 * DAY_MS) {
+      warnings.push({ lotLedgerId: lot.id, denom, stage: 30, remaining: lot.remaining, expiresAt: new Date(expiresAtMs).toISOString() });
+    }
+  }
+  return { expired, warnings };
+}
+function computeCreditExpiry(rows, windowDays, now) {
+  const sorted = [...rows].sort((a, b) => {
+    const at = new Date(a.at).getTime() - new Date(b.at).getTime();
+    if (at !== 0) return at;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  const windowMs = windowDays * DAY_MS;
+  const nowMs = now.getTime();
+  const credits = runDenom(
+    sorted.map((r) => ({ id: r.id, amount: r.credits, at: new Date(r.at).getTime() })),
+    windowMs,
+    nowMs,
+    "credits"
+  );
+  const paise2 = runDenom(
+    sorted.map((r) => ({ id: r.id, amount: r.paise, at: new Date(r.at).getTime() })),
+    windowMs,
+    nowMs,
+    "paise"
+  );
+  return {
+    expired: [...credits.expired, ...paise2.expired],
+    warnings: [...credits.warnings, ...paise2.warnings]
+  };
+}
+
+// server/routes/cron.ts
 var router9 = express9.Router();
 router9.use((req, res, next) => {
   const secret = process.env.CRON_SECRET;
@@ -2668,11 +3066,137 @@ router9.post("/reconcile-wallets", async (_req, res, next) => {
     next(err);
   }
 });
+router9.post("/expire-credits", async (_req, res, next) => {
+  try {
+    const orgsRes = await pool.query(
+      `select id, settings from organizations
+       where status = 'active' and settings -> 'creditExpiry' ->> 'enabled' = 'true'`
+    );
+    let walletsChecked = 0;
+    let lotsExpired = 0;
+    let creditsExpired = 0;
+    let paiseExpired = 0;
+    let warningsSent = 0;
+    for (const org of orgsRes.rows) {
+      const policy = resolveCreditExpiryPolicy(org.settings?.creditExpiry);
+      if (!policy.enabled) continue;
+      const walletsRes = await pool.query(
+        `select id, student_id, balance_credits, balance_currency
+         from wallets where organization_id = $1`,
+        [org.id]
+      );
+      for (const wallet of walletsRes.rows) {
+        walletsChecked++;
+        const ledgerRes = await pool.query(
+          `select id, credits, paise, at from wallet_ledger
+           where organization_id = $1 and student_id = $2
+           order by at asc, id asc`,
+          [org.id, wallet.student_id]
+        );
+        const { expired, warnings } = computeCreditExpiry(ledgerRes.rows, policy.windowDays, /* @__PURE__ */ new Date());
+        if (expired.length > 0) {
+          await withTransaction(async (client) => {
+            let dCredits = 0;
+            let dPaise = 0;
+            for (const lot of expired) {
+              const key = `credit_expiry_${lot.lotLedgerId}_${lot.denom === "credits" ? "c" : "p"}`;
+              const dup = await client.query(
+                `select 1 from wallet_ledger where organization_id = $1 and idempotency_key = $2`,
+                [org.id, key]
+              );
+              if ((dup.rowCount ?? 0) > 0) continue;
+              const credits = lot.denom === "credits" ? -lot.amount : 0;
+              const paise2 = lot.denom === "paise" ? -lot.amount : 0;
+              await client.query(
+                `insert into wallet_ledger
+                   (organization_id, student_id, type, credits, paise, reason, by, idempotency_key, at)
+                 values ($1, $2, 'credit_expiry', $3, $4, 'credit_expiry', 'credit_expiry_cron', $5, now())`,
+                [org.id, wallet.student_id, credits, paise2, key]
+              );
+              dCredits += credits;
+              dPaise += paise2;
+              lotsExpired++;
+              if (lot.denom === "credits") creditsExpired += lot.amount;
+              else paiseExpired += lot.amount;
+            }
+            if (dCredits !== 0 || dPaise !== 0) {
+              await client.query(
+                `update wallets
+                   set balance_credits = balance_credits + $1,
+                       balance_currency = balance_currency + $2
+                 where id = $3`,
+                [dCredits, paiseToRupees(dPaise), wallet.id]
+              );
+              await writeAudit(
+                org.id,
+                { system: "credit_expiry_cron" },
+                "wallet.credit_expiry",
+                "wallets",
+                wallet.id,
+                { studentId: wallet.student_id, creditsExpired: -dCredits, paiseExpired: -dPaise }
+              );
+            }
+          });
+        }
+        for (const warn of warnings) {
+          if (await sendExpiryWarning(org.id, wallet.student_id, warn)) warningsSent++;
+        }
+      }
+    }
+    res.json({
+      ok: true,
+      orgsProcessed: orgsRes.rowCount,
+      walletsChecked,
+      lotsExpired,
+      creditsExpired,
+      paiseExpired,
+      warningsSent
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+async function sendExpiryWarning(orgId, studentId, warn) {
+  const existing = await pool.query(
+    `select 1 from notifications
+     where organization_id = $1 and type = 'wallet_credit_expiring'
+       and payload ->> 'lotLedgerId' = $2 and payload ->> 'stage' = $3 and payload ->> 'denom' = $4
+     limit 1`,
+    [orgId, warn.lotLedgerId, String(warn.stage), warn.denom]
+  );
+  if ((existing.rowCount ?? 0) > 0) return false;
+  const recipientsRes = await pool.query(
+    `select parent_user_id as uid from parent_links where student_id = $1
+     union
+     select student_user_id as uid from students where id = $1 and student_user_id is not null`,
+    [studentId]
+  );
+  if (recipientsRes.rowCount === 0) return false;
+  const amountLabel = warn.denom === "credits" ? `${warn.remaining} credit${warn.remaining === 1 ? "" : "s"}` : `\u20B9${(warn.remaining / 100).toLocaleString("en-IN")}`;
+  const title = `${amountLabel} of wallet credit expires in ${warn.stage} days`;
+  const payload = JSON.stringify({
+    title,
+    studentId,
+    denom: warn.denom,
+    stage: warn.stage,
+    remaining: warn.remaining,
+    lotLedgerId: warn.lotLedgerId,
+    expiresAt: warn.expiresAt
+  });
+  for (const row of recipientsRes.rows) {
+    await pool.query(
+      `insert into notifications (organization_id, user_id, type, payload)
+       values ($1, $2, 'wallet_credit_expiring', $3::jsonb)`,
+      [orgId, row.uid, payload]
+    );
+  }
+  return true;
+}
 var cron_default = router9;
 
 // server/routes/documents.ts
 import express10 from "express";
-import multer from "multer";
+import multer2 from "multer";
 import { randomUUID } from "crypto";
 
 // shared/schemas/documents.ts
@@ -2688,7 +3212,7 @@ var router10 = express10.Router();
 router10.use(authenticateToken, requireOrg);
 var BUCKET = "documents";
 var CAN_UPLOAD = ["owner", "admin", "tutor", "frontdesk"];
-var upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+var upload = multer2({ storage: multer2.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 var MAGIC_BYTES = [
   { contentType: "application/pdf", signatures: [[37, 80, 68, 70]] },
   // %PDF
@@ -3098,7 +3622,7 @@ var admin_default = router13;
 
 // server/routes/orgExport.ts
 import express14 from "express";
-import ExcelJS from "exceljs";
+import ExcelJS2 from "exceljs";
 
 // server/utils/orgExport.ts
 var EXPORT_TABLES = [
@@ -3162,7 +3686,7 @@ router14.get("/xlsx", requireRole("owner", "admin"), async (req, res, next) => {
   try {
     const orgId = req.user.organizationId;
     const tables = await fetchOrgExportData(orgId);
-    const workbook = new ExcelJS.Workbook();
+    const workbook = new ExcelJS2.Workbook();
     workbook.creator = "ClassStackr";
     workbook.created = /* @__PURE__ */ new Date();
     for (const t of tables) {

@@ -1,11 +1,20 @@
 import express from "express";
 import crypto from "node:crypto";
+import multer from "multer";
+import ExcelJS from "exceljs";
+import Papa from "papaparse";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { withTransaction } from "../db.ts";
-import { authenticateToken, type AuthRequest } from "../middleware/auth.ts";
+import { authenticateToken, requireOrg, requireRole, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
 import { setMembership } from "./members.ts";
-import { studentInviteRequestSchema, studentRedeemRequestSchema } from "../../shared/schemas/students.ts";
+import {
+  studentInviteRequestSchema, studentRedeemRequestSchema,
+  bulkImportMappingSchema, bulkImportResolutionsSchema,
+  type ImportField, type BulkImportInspectResponse, type BulkImportPreviewResponse,
+  type BulkImportCommitResponse, type BulkImportCandidate, type BulkImportDuplicate,
+} from "../../shared/schemas/students.ts";
+import { suggestColumnMapping, parseImportRows, detectDuplicates, type ExistingStudent } from "../utils/bulkImport.ts";
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -136,6 +145,173 @@ router.post("/redeem", async (req: AuthRequest, res, next) => {
     await writeAudit(invite.organization_id, uid, "student_invite.redeem", "students", invite.student_id, {});
 
     res.json({ ok: true, organizationId: invite.organization_id, studentId: invite.student_id });
+  } catch (err) { next(err); }
+});
+
+// B-09 bulk import (EXECUTION_PLAN.md Step 6). Same staff set as
+// documents.ts's CAN_UPLOAD / billing.ts's CAN_MARK — anyone who can create
+// a student one at a time via People.tsx can also bulk-import them.
+const CAN_IMPORT = ["owner", "admin", "tutor", "frontdesk"] as const;
+const importUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+/** Parses an uploaded CSV or XLSX buffer into header + data rows. Format is
+ *  sniffed from real content (zip magic bytes), never trusted from the
+ *  client-declared filename/mimetype — same posture as documents.ts. */
+async function parseSpreadsheet(buffer: Buffer): Promise<string[][]> {
+  const isXlsx = buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
+  if (isXlsx) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as any);
+    const sheet = workbook.worksheets[0];
+    if (!sheet) return [];
+    const rows: string[][] = [];
+    sheet.eachRow({ includeEmpty: false }, (row) => {
+      // exceljs 1-indexes row.values and always leaves index 0 empty.
+      const values = (row.values as unknown[]).slice(1);
+      rows.push(values.map((v) => (v === null || v === undefined ? "" : String(v))));
+    });
+    return rows;
+  }
+  const parsed = Papa.parse<string[]>(buffer.toString("utf-8"), { skipEmptyLines: true });
+  return parsed.data;
+}
+
+function friendlyRowError(err: any): string {
+  if (typeof err?.message === "string" && err.message.includes("plan_limit_exceeded")) {
+    return "Your plan's active-student limit was reached — remaining rows were not created. Upgrade in Settings → Plan & Billing to add more.";
+  }
+  return err?.message || "Failed to create this row.";
+}
+
+// Column headers detected from the raw file plus a best-guess mapping, so
+// the client can render the column-mapping UI without shipping its own
+// CSV/XLSX parser (papaparse is a client dependency already, but only for
+// Onboarding's simpler fixed-alias CSV path — exceljs's browser cost is too
+// high for the bundle budget, so XLSX header detection stays server-side).
+router.post("/import/inspect", requireOrg, requireRole(...CAN_IMPORT), importUpload.single("file"), async (req: AuthRequest, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: { code: "no_file", message: "No file uploaded" } });
+    const rows = await parseSpreadsheet(req.file.buffer);
+    if (rows.length === 0) {
+      return res.status(422).json({ error: { code: "empty_file", message: "The file has no rows" } });
+    }
+    const [headerRow, ...dataRows] = rows;
+    const body: BulkImportInspectResponse = {
+      ok: true,
+      headers: headerRow,
+      sampleRows: dataRows.slice(0, 5),
+      totalRows: dataRows.length,
+      suggestedMapping: suggestColumnMapping(headerRow),
+    };
+    res.json(body);
+  } catch (err) { next(err); }
+});
+
+// Single endpoint for both dry-run and commit (mirrors billing.ts's
+// reason-enum-controls-behavior convention rather than splitting into two
+// URLs): the client resubmits the same file + mapping with `commit: "true"`
+// once staff have reviewed the dry-run preview and resolved every flagged
+// duplicate. The server is stateless between calls — nothing about the
+// upload is cached — so the full file goes over the wire each time; for a
+// few-hundred-row roster this is negligible.
+router.post("/import", requireOrg, requireRole(...CAN_IMPORT), importUpload.single("file"), async (req: AuthRequest, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: { code: "no_file", message: "No file uploaded" } });
+    const orgId = req.user!.organizationId!;
+
+    let mappingRaw: unknown;
+    let resolutionsRaw: unknown = {};
+    try {
+      mappingRaw = JSON.parse(req.body.mapping ?? "[]");
+      if (req.body.resolutions) resolutionsRaw = JSON.parse(req.body.resolutions);
+    } catch {
+      return res.status(422).json({ error: { code: "validation", message: "mapping/resolutions must be valid JSON" } });
+    }
+    const mapping = bulkImportMappingSchema.parse(mappingRaw) as (ImportField | null)[];
+    const resolutions = bulkImportResolutionsSchema.parse(resolutionsRaw);
+    const commit = req.body.commit === "true";
+
+    const rows = await parseSpreadsheet(req.file.buffer);
+    if (rows.length === 0) {
+      return res.status(422).json({ error: { code: "empty_file", message: "The file has no rows" } });
+    }
+    const [, ...dataRows] = rows;
+    const { rows: parsedRows, errors } = parseImportRows(dataRows, mapping);
+
+    // Dedup rule (server/utils/bulkImport.ts's header has the full log):
+    // name AND phone must both match, either an existing active student or
+    // an earlier row in this same file. Duplicates never write on a dry run
+    // and never auto-commit — every one needs an explicit per-row
+    // resolution, keyed by rowIndex, in the commit request.
+    const { data: existingRaw, error: existingErr } = await supabaseAdmin
+      .from("students").select("id, name, phone").eq("organization_id", orgId).eq("is_deleted", false);
+    if (existingErr) throw existingErr;
+    const existing: ExistingStudent[] = (existingRaw || []).map((s: any) => ({ id: s.id, name: s.name, phone: s.phone }));
+
+    const duplicates: BulkImportDuplicate[] = detectDuplicates(parsedRows, existing);
+    const duplicateRowIndexes = new Set(duplicates.map((d) => d.rowIndex));
+
+    if (!commit) {
+      const toCreate: BulkImportCandidate[] = parsedRows
+        .filter((r) => !duplicateRowIndexes.has(r.rowIndex))
+        .map((r) => ({
+          rowIndex: r.rowIndex, name: r.record.name!, phone: r.record.phone,
+          parentName: r.record.parentName, parentPhone: r.record.parentPhone,
+          grade: r.record.grade, subject: r.record.subject,
+        }));
+      const body: BulkImportPreviewResponse = { ok: true, dryRun: true, totalRows: dataRows.length, toCreate, duplicates, errors };
+      return res.json(body);
+    }
+
+    const created: BulkImportCommitResponse["created"] = [];
+    const skippedDuplicates: BulkImportDuplicate[] = [];
+    const commitErrors = [...errors];
+
+    // Row-by-row, not a single batch insert: a bad or capped-out row must
+    // report on itself, never fail the rest of the file (Step 6's DoD).
+    for (const row of parsedRows) {
+      if (duplicateRowIndexes.has(row.rowIndex)) {
+        if (resolutions[String(row.rowIndex)] !== "import") {
+          skippedDuplicates.push(duplicates.find((d) => d.rowIndex === row.rowIndex)!);
+          continue;
+        }
+      }
+      try {
+        const { data: inserted, error: insertErr } = await supabaseAdmin.from("students").insert({
+          organization_id: orgId,
+          // Unconditional, matching People.tsx's StudentModal (the manual
+          // add-one-student path): tutor_id is set to whoever created the
+          // row regardless of their org role. Conditioning this on
+          // req.user!.role === "tutor" (the org authorization role) left a
+          // bulk-imported row with tutor_id null whenever an owner/admin ran
+          // the import — invisible to that person's own People list, since
+          // useStudentsList() scopes a tutor-*person* (role_type, a
+          // different field entirely — see AuthContext.tsx) to only
+          // students whose tutor_id is their own id. Found live: a real
+          // import created 3 students that vanished from the demo owner's
+          // own list until this was fixed.
+          tutor_id: req.user!.id,
+          status: "active",
+          name: row.record.name,
+          phone: row.record.phone ?? null,
+          parent_name: row.record.parentName ?? null,
+          parent_phone: row.record.parentPhone ?? null,
+          grade: row.record.grade ?? null,
+          subject: row.record.subject ?? null,
+        }).select("id").single();
+        if (insertErr) throw insertErr;
+        created.push({ rowIndex: row.rowIndex, studentId: inserted.id, name: row.record.name! });
+      } catch (err: any) {
+        commitErrors.push({ rowIndex: row.rowIndex, message: friendlyRowError(err) });
+      }
+    }
+
+    await writeAudit(orgId, req.user!.id, "students.bulk_import", "students", orgId, {
+      createdCount: created.length, skippedDuplicateCount: skippedDuplicates.length, errorCount: commitErrors.length,
+    });
+
+    const body: BulkImportCommitResponse = { ok: true, dryRun: false, createdCount: created.length, created, skippedDuplicates, errors: commitErrors };
+    res.json(body);
   } catch (err) { next(err); }
 });
 
