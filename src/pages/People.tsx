@@ -3,12 +3,13 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
-  Plus, Search, Trash2, FileText, MessageSquare, Receipt, Download,
+  Plus, Search, Trash2, FileText, MessageSquare, Receipt, Download, Upload,
   CheckCircle, XCircle, Users, TrendingUp, UserCircle, GraduationCap, UserPlus, Copy,
 } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { PersonRow, EmptyState, SkeletonRow, type ChipTone } from "../components/kit";
+import { BulkImportModal } from "../components/BulkImportModal";
 import {
   useStudentsList, useStudentInvoices, useStudentAttendance,
   useLeadsList, useParentsList, useTutorsList, type StudentRow,
@@ -107,6 +108,7 @@ function StudentsLens({ search, user, navigate, t }: any) {
   const [docsStudent, setDocsStudent] = useState<StudentRow | null>(null);
   const [inviteStudent, setInviteStudent] = useState<StudentRow | null>(null);
   const [toArchive, setToArchive] = useState<string | null>(null);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
 
   const ranked = useMemo(() => {
     const now = new Date();
@@ -184,12 +186,20 @@ function StudentsLens({ search, user, navigate, t }: any) {
             </button>
           </div>
         ) : <span />}
-        <button
-          onClick={() => setModalStudent("new")}
-          className="flex items-center gap-1.5 rounded-[6px] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-        >
-          <Plus className="h-4 w-4" /> {t("people.addStudent")}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setBulkImportOpen(true)}
+            className="flex items-center gap-1.5 rounded-[6px] border border-[var(--cs-border)] px-3 py-1.5 text-sm font-medium text-[var(--cs-text)] hover:bg-[var(--cs-bg)]"
+          >
+            <Upload className="h-4 w-4" /> {t("people.bulkImport")}
+          </button>
+          <button
+            onClick={() => setModalStudent("new")}
+            className="flex items-center gap-1.5 rounded-[6px] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+          >
+            <Plus className="h-4 w-4" /> {t("people.addStudent")}
+          </button>
+        </div>
       </div>
 
       <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
@@ -251,6 +261,7 @@ function StudentsLens({ search, user, navigate, t }: any) {
       )}
       {docsStudent && <DocumentsModal student={docsStudent} onClose={() => setDocsStudent(null)} />}
       {inviteStudent && <InviteModal student={inviteStudent} onClose={() => setInviteStudent(null)} />}
+      {bulkImportOpen && <BulkImportModal onClose={() => setBulkImportOpen(false)} onImported={refetch} />}
       {toArchive && (
         <ConfirmModal
           title={t("people.archiveTitle")}

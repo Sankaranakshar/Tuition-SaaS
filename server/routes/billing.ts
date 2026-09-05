@@ -16,6 +16,7 @@ import {
   cancelSessionRequestSchema as cancelSchema,
   recordManualPaymentRequestSchema as paymentSchema,
   refundRequestSchema as refundSchema,
+  walletTopupLinkRequestSchema as walletTopupLinkSchema,
 } from "../../shared/schemas/billing.ts";
 import { rupeesToPaise, paiseToRupees } from "../../shared/money.ts";
 import { getCancellationPolicy } from "../utils/cancellationPolicy.ts";
@@ -679,6 +680,64 @@ router.post("/invoices/:invoiceId/pay", async (req: AuthRequest, res, next) => {
       });
     }
     res.json({ ok: true, shortUrl: result.shortUrl, reused: result.reused });
+  } catch (err) { next(err); }
+});
+
+// B-05 self-serve parent top-up (EXECUTION_PLAN.md Step 7). Unlike
+// /wallets/topup above, there is deliberately no manual/cash variant here:
+// a parent choosing their own top-up amount must always go through a real
+// gateway charge, never a self-reported credit straight into their balance.
+// The link carries `notes.type = "wallet_topup"` (rather than an invoiceId)
+// so the webhook (server/routes/webhooks.ts) can tell it apart from an
+// invoice payment and credit the wallet instead of settling an invoice.
+async function resolveWalletTopupPaymentLink(orgId: string, studentId: string, amountPaise: number) {
+  const { data: student, error } = await supabaseAdmin
+    .from("students").select("organization_id, name, parent_phone, phone, parent_email, email")
+    .eq("id", studentId).maybeSingle();
+  if (error) throw error;
+  if (!student || student.organization_id !== orgId) {
+    throw Object.assign(new Error("Student not found"), { status: 404, code: "not_found" });
+  }
+
+  const creds = await getGatewayCreds(orgId);
+  if (!creds) {
+    throw Object.assign(new Error("Connect Razorpay in settings first"), { status: 422, code: "gateway_not_connected" });
+  }
+
+  const link = await createPaymentLink(creds, {
+    amountPaise,
+    // Must be unique per Razorpay account, unlike an invoice's stable id —
+    // a parent can top up the same student's wallet any number of times.
+    referenceId: `wallet_topup_${studentId}_${Date.now()}`,
+    description: `Wallet top-up · ${student.name || "Student"}`.slice(0, 2048),
+    customer: { name: student.name || undefined, contact: student.parent_phone || student.phone || undefined, email: student.parent_email || student.email || undefined },
+    notes: { organizationId: orgId, studentId, type: "wallet_topup" },
+    callbackUrl: process.env.APP_URL ? `${process.env.APP_URL}/app/money` : undefined,
+  });
+
+  return { shortUrl: link.shortUrl as string, linkId: link.id as string };
+}
+
+router.post("/wallets/topup-link", async (req: AuthRequest, res, next) => {
+  try {
+    const orgId = req.user!.organizationId!;
+    if (req.user!.role !== "parent") {
+      return res.status(403).json({ error: { code: "forbidden", message: "This endpoint is for parent accounts" } });
+    }
+    const body = walletTopupLinkSchema.parse(req.body);
+
+    const { data: link } = await supabaseAdmin
+      .from("parent_links").select("parent_user_id")
+      .eq("parent_user_id", req.user!.id).eq("student_id", body.studentId).maybeSingle();
+    if (!link) {
+      return res.status(403).json({ error: { code: "forbidden", message: "Not linked to this student" } });
+    }
+
+    const result = await resolveWalletTopupPaymentLink(orgId, body.studentId, body.amountPaise);
+    await writeAudit(orgId, req.user!.id, "wallet.topup_link.parent", "wallets", body.studentId, {
+      linkId: result.linkId, amountPaise: body.amountPaise,
+    });
+    res.json({ ok: true, shortUrl: result.shortUrl });
   } catch (err) { next(err); }
 });
 

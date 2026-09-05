@@ -14,6 +14,7 @@ import type {
   PaymentLinkResponse,
   RefundRequest,
   RefundResponse,
+  WalletTopupLinkResponse,
 } from "../../shared/schemas/billing";
 import type { EnsureClassChannelResponse } from "../../shared/schemas/inbox";
 import type {
@@ -27,6 +28,7 @@ import type { PlanId } from "../../shared/plans";
 import type { ListOrgsResponse, ImpersonateResponse } from "../../shared/schemas/admin";
 import type { OffboardResponse } from "../../shared/schemas/orgExport";
 import type { ListAuditEventsResponse } from "../../shared/schemas/auditLog";
+import type { BulkImportInspectResponse, BulkImportPreviewResponse, BulkImportCommitResponse, ImportField, BulkImportResolutions } from "../../shared/schemas/students";
 
 // Thin authenticated client for the privileged API (/api/v1).
 // Money and attendance mutations must go through here; they have no
@@ -319,6 +321,14 @@ export function payInvoiceAsParent(invoiceId: string) {
   });
 }
 
+/** Parent-authorized Razorpay payment link to top up a linked child's own wallet (B-05, EXECUTION_PLAN.md Step 7). No manual/self-reported variant exists — see shared/schemas/billing.ts's comment on why. 422s `gateway_not_connected` until the org's Razorpay is live. */
+export function topUpWalletAsParent(studentId: string, amountPaise: number) {
+  return api<WalletTopupLinkResponse>("/billing/wallets/topup-link", {
+    method: "POST",
+    body: { studentId, amountPaise },
+  });
+}
+
 /** Ensures a class channel conversation exists for this batch and refreshes it to the current enrolled roster (server-side — needs the student/parent-link lookup RLS doesn't grant clients). */
 export function ensureClassChannel(templateId: string) {
   return api<EnsureClassChannelResponse>(`/inbox/class-channels/${templateId}/ensure`, { method: "POST" });
@@ -480,4 +490,44 @@ export function downloadOrgExportXlsx() {
 
 export function offboardOrganization(confirmOrgName: string) {
   return api<OffboardResponse>("/org-export/offboard", { method: "POST", body: { confirmOrgName } });
+}
+
+// Bulk import (EXECUTION_PLAN.md Step 6, B-09). Both calls are multipart
+// (a real file, not JSON), same reason uploadDocument() can't use api().
+async function multipartRequest<T>(path: string, form: FormData): Promise<T> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Not signed in");
+  const resp = await fetch(`/api/v1${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw Object.assign(new Error((data as any)?.error?.message || `Request failed (${resp.status})`), { status: resp.status, code: (data as any)?.error?.code });
+  }
+  return data as T;
+}
+
+/** Uploads a file and gets back its detected headers, a small sample, and a best-guess column mapping — no rows are parsed against student fields yet. */
+export function inspectStudentImport(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return multipartRequest<BulkImportInspectResponse>("/students/import/inspect", form);
+}
+
+/** Dry-run (commit=false) or actually create students (commit=true). The same file is resent both times — the server keeps no state between calls. `resolutions` is only meaningful on commit: keyed by rowIndex, "import" to create a flagged duplicate anyway. */
+export function runStudentImport(input: {
+  file: File;
+  mapping: (ImportField | null)[];
+  commit: boolean;
+  resolutions?: BulkImportResolutions;
+}) {
+  const form = new FormData();
+  form.append("file", input.file);
+  form.append("mapping", JSON.stringify(input.mapping));
+  form.append("commit", String(input.commit));
+  if (input.resolutions) form.append("resolutions", JSON.stringify(input.resolutions));
+  return multipartRequest<BulkImportPreviewResponse | BulkImportCommitResponse>("/students/import", form);
 }

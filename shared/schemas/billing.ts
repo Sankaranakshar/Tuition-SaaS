@@ -107,3 +107,16 @@ export type FinalizeInvoiceResponse = z.infer<typeof finalizeInvoiceResponseSche
 
 export const paymentLinkResponseSchema = z.object({ ok: z.literal(true), shortUrl: z.string(), reused: z.boolean() });
 export type PaymentLinkResponse = z.infer<typeof paymentLinkResponseSchema>;
+
+// B-05 self-serve parent top-up (EXECUTION_PLAN.md Step 7). Unlike
+// topupRequestSchema above (a staff-recorded offline/cash credit), a parent
+// can never self-report an amount straight into their own balance — that's
+// a fraud vector, per the comment on POST /wallets/topup. This always goes
+// through a real Razorpay payment link instead; there is no manual variant.
+export const walletTopupLinkRequestSchema = z.object({
+  studentId: z.string().uuid(),
+  amountPaise: z.number().int().positive(),
+});
+export type WalletTopupLinkRequest = z.infer<typeof walletTopupLinkRequestSchema>;
+export const walletTopupLinkResponseSchema = z.object({ ok: z.literal(true), shortUrl: z.string() });
+export type WalletTopupLinkResponse = z.infer<typeof walletTopupLinkResponseSchema>;

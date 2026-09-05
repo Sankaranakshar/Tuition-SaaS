@@ -60,6 +60,18 @@ function capturedEvent(invoiceId: string, amountPaise: number, paymentId: string
   };
 }
 
+// B-05 self-serve parent top-up (EXECUTION_PLAN.md Step 7): a wallet-topup
+// link's notes carry `type: "wallet_topup"` + `studentId` instead of an
+// invoiceId — this is what tells handleEvent() apart from the invoice path.
+function walletTopupCapturedEvent(orgId: string, studentId: string, amountPaise: number, paymentId: string) {
+  return {
+    event: "payment.captured",
+    payload: {
+      payment: { entity: { id: paymentId, amount: amountPaise, notes: { organizationId: orgId, studentId, type: "wallet_topup" } } },
+    },
+  };
+}
+
 beforeAll(async () => {
   ({ app, db } = await createTestApp());
 
@@ -164,6 +176,76 @@ describe("POST /api/webhooks/razorpay/:orgId", () => {
 
     const after = await db.query(`select count(*)::int as n from audit_events where organization_id = $1`, [ORG]);
     expect((after.rows[0] as any).n).toBe((before.rows[0] as any).n);
+  });
+});
+
+describe("POST /api/webhooks/razorpay/:orgId (wallet top-up, B-05)", () => {
+  it("credits the wallet and writes a wallet_ledger row", async () => {
+    const before = await db.query<any>(`select balance_currency from wallets where organization_id = $1 and student_id = $2`, [ORG, studentId]);
+    const startingBalance = Number(before.rows[0]?.balance_currency ?? 0);
+
+    const paymentId = `pay_${crypto.randomUUID()}`;
+    const res = await postSigned(ORG, walletTopupCapturedEvent(ORG, studentId, 20000, paymentId));
+    expectStatus(res, 200);
+
+    const wallet = await db.query<any>(`select balance_currency from wallets where organization_id = $1 and student_id = $2`, [ORG, studentId]);
+    expect(Number(wallet.rows[0].balance_currency)).toBe(startingBalance + 200);
+
+    const ledger = await db.query<any>(
+      `select type, paise, reason, by, idempotency_key from wallet_ledger where organization_id = $1 and gateway_payment_id = $2`,
+      [ORG, paymentId]
+    );
+    expect(ledger.rows).toHaveLength(1);
+    expect(ledger.rows[0].type).toBe("credit_currency");
+    expect(ledger.rows[0].paise).toBe(20000);
+    expect(ledger.rows[0].reason).toBe("topup");
+    expect(ledger.rows[0].by).toBe("razorpay_webhook");
+    expect(ledger.rows[0].idempotency_key).toBe(`rzp_${paymentId}`);
+  });
+
+  it("never touches invoices or the payments table — this is not an invoice settlement", async () => {
+    const paymentsBefore = await db.query<any>(`select count(*)::int as n from payments where organization_id = $1`, [ORG]);
+    const paymentId = `pay_${crypto.randomUUID()}`;
+    expectStatus(await postSigned(ORG, walletTopupCapturedEvent(ORG, studentId, 10000, paymentId)), 200);
+    const paymentsAfter = await db.query<any>(`select count(*)::int as n from payments where organization_id = $1`, [ORG]);
+    expect(paymentsAfter.rows[0].n).toBe(paymentsBefore.rows[0].n);
+  });
+
+  it("is idempotent — a redelivered wallet-topup payment credits exactly once", async () => {
+    const before = await db.query<any>(`select balance_currency from wallets where organization_id = $1 and student_id = $2`, [ORG, studentId]);
+    const startingBalance = Number(before.rows[0]?.balance_currency ?? 0);
+    const paymentId = `pay_${crypto.randomUUID()}`;
+    const event = walletTopupCapturedEvent(ORG, studentId, 15000, paymentId);
+
+    expectStatus(await postSigned(ORG, event), 200);
+    const second = await postSigned(ORG, event);
+    expectStatus(second, 200);
+    expect(second.body.duplicate).toBe(true);
+
+    const wallet = await db.query<any>(`select balance_currency from wallets where organization_id = $1 and student_id = $2`, [ORG, studentId]);
+    expect(Number(wallet.rows[0].balance_currency)).toBe(startingBalance + 150);
+  });
+
+  it("writes a wallet.topup.gateway_captured audit row with the system actor", async () => {
+    const paymentId = `pay_${crypto.randomUUID()}`;
+    expectStatus(await postSigned(ORG, walletTopupCapturedEvent(ORG, studentId, 5000, paymentId)), 200);
+
+    const audit = await db.query<any>(
+      `select actor_id, payload from audit_events where organization_id = $1 and action = 'wallet.topup.gateway_captured' and payload ->> 'gatewayPaymentId' = $2`,
+      [ORG, paymentId]
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0].actor_id).toBeNull();
+    expect(audit.rows[0].payload.systemActor).toBe("razorpay_webhook");
+  });
+
+  it("ignores a wallet-topup event for a student that doesn't belong to this org", async () => {
+    const foreignStudentId = crypto.randomUUID();
+    const paymentId = `pay_${crypto.randomUUID()}`;
+    const res = await postSigned(ORG, walletTopupCapturedEvent(ORG, foreignStudentId, 5000, paymentId));
+    expectStatus(res, 200);
+    expect(res.body.ignored).toBe(true);
+    expect(res.body.reason).toBe("student_not_found");
   });
 });
 
