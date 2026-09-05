@@ -14,7 +14,8 @@ export default function OrganizationSettings() {
     calendar: { preventConflicts: true },
     documents: { maxFileSizeMB: 10, allowedExtensions: ['pdf', 'doc', 'docx'] },
     messaging: { autoCreateBatchChannels: true, notifyOnNewSession: true, notifyOnNewMessage: true },
-    cancellation: { freeHours: 24, lateFeePercent: 50, noShowForfeitPercent: 100 }
+    cancellation: { freeHours: 24, lateFeePercent: 50, noShowForfeitPercent: 100 },
+    creditExpiry: { enabled: false, windowDays: 0 }
   });
 
   useEffect(() => {
@@ -273,6 +274,41 @@ export default function OrganizationSettings() {
                   value={settings.cancellation.noShowForfeitPercent}
                   onChange={(e) => updateSetting('cancellation', 'noShowForfeitPercent', clampPercent(parseInt(e.target.value) || 0))}
                   className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* Credit Expiry */}
+          <section>
+            <h3 className="text-md font-semibold text-[var(--cs-text)] mb-4 border-b border-[var(--cs-border)] pb-2">7. Credit Expiry</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="creditExpiryEnabled"
+                  checked={settings.creditExpiry.enabled}
+                  onChange={(e) => updateSetting('creditExpiry', 'enabled', e.target.checked)}
+                  className="h-4 w-4 text-[var(--cs-accent)] focus:ring-[var(--cs-accent)] border-[var(--cs-border)] rounded"
+                />
+                <label htmlFor="creditExpiryEnabled" className="ml-2 block text-sm text-[var(--cs-text)]">
+                  Expire unused prepaid credit after a fixed window
+                </label>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Expiry Window (Days)</label>
+                <p className="text-xs text-[var(--cs-text-muted)] mb-1">
+                  {settings.creditExpiry.enabled
+                    ? 'Counted from each top-up date. Unused credit older than this is written off, with 30-day and 7-day warnings first.'
+                    : 'Off — prepaid credit never expires for this center.'}
+                </p>
+                <input
+                  type="number"
+                  min={0}
+                  disabled={!settings.creditExpiry.enabled}
+                  value={settings.creditExpiry.windowDays}
+                  onChange={(e) => updateSetting('creditExpiry', 'windowDays', Math.max(0, parseInt(e.target.value) || 0))}
+                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)] disabled:opacity-50"
                 />
               </div>
             </div>

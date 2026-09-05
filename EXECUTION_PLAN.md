@@ -32,11 +32,11 @@
 | 5 | Booking-request approval UI | — | ✅ Done 2026-09-05 |
 | 6 | B-09 bulk import (CSV/Excel) | — | ✅ Done 2026-09-05 |
 | 7 | B-05 self-serve parent top-up | — | ✅ Done 2026-09-05 |
-| 8 | **Needs you** — D-07 credit expiry period | — | ☐ Not started |
-| 9 | B-04 credit expiry policy | 8 | ☐ Not started |
+| 8 | **Needs you** — D-07 credit expiry period | — | ✅ Decided 2026-09-05 |
+| 9 | B-04 credit expiry policy | 8 | ✅ Done 2026-09-05 (browser walkthrough deferred, see Step 9) |
 | 10 | B-11 DPDP consent centre + per-student erasure | — | ☐ Not started |
-| 11 | **Needs you** — B-10 staging environment | — | ☐ Not started |
-| 12 | **Needs you** — external pentest + leaked-password toggle | — | ☐ Not started |
+| 11 | **Needs you** — B-10 staging environment | — | ⏸️ Deferred 2026-09-05 (founder: hold) |
+| 12 | **Needs you** — external pentest + leaked-password toggle | — | ⏸️ Both deferred to pre-GTM 2026-09-05 |
 | 13 | R1 gate checkpoint (full re-verification) | 1–12 | ☐ Not started |
 
 Steps 5, 6, 7, 10 have no hard dependency on 1-4 and can be picked up out of order if you want parallel progress — they're placed here in backlog-score order (MASTER_PLAN.md §4).
@@ -206,17 +206,42 @@ Unit (182/182), RLS (81/81), and contract (206/206) suites all green — no RLS 
 
 ## Step 8 — Needs you: D-07, credit expiry period
 
-Per-org configurable within a platform cap is MASTER_PLAN.md's recommendation, mirroring how D-08 landed (Step 1) — but confirm the actual numbers with you before Step 9 builds against them, the same way D-08's specifics (24h/50%/100%, all overridable) came from a real conversation rather than the plan's original recommendation. Suggested question to answer: what's the default expiry window, and what's the platform-wide maximum an org can extend it to?
+**Decided 2026-09-05 (founder), via a decision-prep session.** The plan's original recommendation was "per-org configurable within a platform cap," mirroring D-08. The founder went narrower on both ends:
+
+- **Per-org, set by the center.** Each org sets its own credit-expiry window in Settings.
+- **No platform default.** Until a center configures a window, its credits never expire (today's behaviour). Expiry is an opt-in per org, not a number the platform imposes on everyone. Most orgs never touch Settings (see Step 1's note), so in practice most credits stay immortal until a center makes a deliberate choice.
+- **No floor and no cap.** A center can set any window it wants. The founder explicitly declined a minimum (e.g. a 90-day floor to stop a predatory-short expiry) and a maximum.
+- **Clock runs from each top-up / purchase date, not from last activity.** This is the load-bearing detail for Step 9: a single scalar balance plus one jsonb settings key (D-08's shape) is not enough. Step 9 needs per-lot tracking, walking `wallet_ledger` credit-lots FIFO and expiring the unconsumed remainder of any lot past its window.
+
+MASTER_PLAN.md §5 D-07 row and §3 B-04 row updated to match.
 
 ---
 
 ## Step 9 — B-04: credit expiry policy
 
+**Shipped 2026-09-05:**
+- **No migration.** Same outcome as Step 1: `organizations.settings` is already client-writable jsonb through the owner/admin-gated `org_update` RLS policy, so `creditExpiry` is just a new top-level key (`{ enabled, windowDays }`); `wallet_ledger.type` has no CHECK constraint so the new `credit_expiry` literal needs none (same as Step 2's `credit_reversal`); the idempotency guard is `wallet_ledger`'s existing partial-unique `(organization_id, idempotency_key)` index (`20260709020900_rls_fixes.sql`), keyed `credit_expiry_<lotLedgerId>_<c|p>`; warning-notification dedup rides the existing `notifications` table. Nothing to push to production.
+- **`shared/creditExpiry.ts`** (new, Zod-free — same rule as `shared/cancellationPolicy.ts`/`shared/money.ts`): `resolveCreditExpiryPolicy()` (enabled only when `enabled === true` AND a positive whole-day window; no floor, no cap, per the founder) and `computeCreditExpiry(ledgerRows, windowDays, now)` — the pure **on-the-fly FIFO lot walk**, chosen over a `wallet_credit_lots` table (option (a) in the plan): every positive `wallet_ledger` delta is a dated lot, every negative delta (including a prior run's own `credit_expiry` row) draws down the oldest open lots first, and any lot still holding an unspent remainder past `lot.at + windowDays` is broken. `credits` and `paise` are tracked as independent queues since a ledger row only ever carries one. An attendance reversal's credited-back currency starts a *new* lot dated at reversal time — the conservative choice (never expires money the center just returned).
+- **`server/utils/creditExpiry.ts`** (new): re-exports the shared logic + the server-only `getCreditExpiryPolicy(orgId)` DB read, mirroring `server/utils/cancellationPolicy.ts` exactly.
+- **`server/routes/cron.ts`**: new `POST /api/cron/expire-credits`, same `CRON_SECRET` gate as Step 4's `/reconcile-wallets` and `/reporting-daily` (no new route mount — still 16/16). Selects only orgs with `settings -> 'creditExpiry' ->> 'enabled' = 'true'`, re-resolves the policy per org (skips a toggled-on org with a zero/garbage window), walks each wallet's ledger, and in a per-wallet `withTransaction`: writes a negative-delta `credit_expiry` row per broken lot (idempotency pre-check like `/wallets/topup`), decrements `balance_credits`/`balance_currency` to match so B-03's `balance == ledger sum` invariant still holds, and writes one `wallet.credit_expiry` audit row per affected wallet. Then fires 30-day / 7-day warning notifications (`type: "wallet_credit_expiring"`, `payload.title` set server-side since cron can't reach `t()`) to every linked parent + the student's own login, deduped on `(lotLedgerId, stage, denom)` against notifications already written so a daily cadence never re-notifies. Never deletes.
+- **`src/components/OrganizationSettings.tsx`**: new "7. Credit Expiry" section (checkbox + days input, input disabled and helper text switches to "prepaid credit never expires" when off), mirroring section 6's pattern. `src/locales/en.json` gained `inbox.notificationType.wallet_credit_expiring` (the notification also always carries `payload.title`, which `Inbox.tsx`'s `NotificationRow` prefers anyway).
+- **Verification.** All seven gates green (see below). A throwaway `tests/contract/expireCredits.test.ts` drove the real HTTP route through the real Express app against PGlite (real Postgres, every migration applied) — 7 cases: no-config untouched, toggled-on-zero-window untouched, partial-lot remainder expiry (₹500 lot, ₹300 spent → ₹200 broken) with the `credit_expiry` row + idempotency key + wallet decrement + `balance == ledger sum` + audit row all asserted, idempotent re-run writes nothing further, 7-day warning fires once to parent+student then not again, cross-org isolation — then deleted (cron routes are outside the permanent contract suite, same as Step 4; copy retained in the session scratchpad). Live end-to-end against the production Supabase project via `npm run dev:preview` + `curl`: 404 with no / wrong `x-cron-secret`, `200 {"ok":true,"orgsProcessed":0,"walletsChecked":0,...}` with the configured secret — confirms auth-gating, query execution and response shape against real infra, exactly as far as Step 4's `/reconcile-wallets` got (production has 0 wallets and 0 opted-in orgs). The live seed-an-old-lot-and-watch-it-expire walkthrough against the demo org was **not** done: it needs a direct production DB write (the demo org has no wallet and no browser surface mints wallet credit — `/wallets/topup` is staff-only and Razorpay is deferred), which this session's tooling blocks. Same standing gap Step 4 flagged ("Worth re-running once a real org has wallet activity"); the PGlite pass covers the money math against a real Postgres engine in the meantime.
+
 **Goal:** per-org window with warning notices before lapse. Today credits are immortal — MASTER_PLAN.md calls this "an unbounded liability with no revenue-recognition point."
 
-**Scope:** depends entirely on Step 8's answer. Likely shape once decided: extend Step 1's `organizations.settings.cancellation`-style pattern with a new `creditExpiry` key; a scheduled job (same `cron.ts` pattern as Steps 4's reconciliation and the existing `/reporting-daily`) that flags/expires credits and fires a warning notification (via the existing `notifications` surface) before lapse, not silently.
+**Scope (Step 8 now decided — 2026-09-05):**
+- **Settings:** a new `creditExpiry` key on `organizations.settings` (same client-writable jsonb pattern as D-08's `cancellation`). Shape roughly `{ enabled: boolean, windowDays: number }`. When absent or `enabled: false`, the org's credits never expire. No clamp on `windowDays` (founder chose no floor, no cap).
+- **Per-lot tracking:** the founder's "expiry runs from each top-up date" means you cannot expire against a single scalar balance. Credits arrive as `wallet_ledger` rows; consumption must be attributed FIFO to specific lots so the job knows how much of each dated lot is still unspent. Decide during implementation whether to (a) compute this on the fly from the full ledger each run, or (b) add a lightweight `wallet_credit_lots` table maintained alongside the ledger. (a) is less schema surface and matches B-03's "diagnostic reads the ledger" instinct; (b) is cheaper per run once wallets have long histories. Lean (a) unless the ledger walk is provably too slow.
+- **Cron job:** new endpoint in `server/routes/cron.ts`, same `CRON_SECRET` pattern as Step 4's reconciliation and `/reporting-daily`. Skips any org with no `creditExpiry` or `enabled: false` entirely. For opted-in orgs: find lots past `windowDays` from their top-up date, expire the unspent remainder by writing a `wallet_ledger` row (type `credit_expiry`, a breakage entry) and decrementing the wallet balance. Never silently deletes.
+- **Warnings:** fire a notification via the existing `notifications` surface at 30 days and 7 days before a lot lapses, per org. Not silent.
+- **Migration:** goes straight to production (no staging, per Step 11's deferral) — same caution as every other R1 migration.
 
-**Definition of done:** (fill in once Step 8 lands and the real shape is known — don't guess the warning-window UX ahead of the decision.)
+**Definition of done:**
+- [x] An org with no `creditExpiry` set has its wallets untouched by the job — throwaway contract test (cron routes are outside the permanent suite, same as Step 4).
+- [x] An opted-in org: a lot past its window is expired down to its unspent remainder (not the whole lot if partly consumed), a `credit_expiry` ledger row is written, the wallet balance matches the ledger sum afterward (don't break B-03's reconciliation) — throwaway contract test.
+- [x] The 30/7-day warning notifications fire once each, not on every run — throwaway contract test (7-day case; 30-day path is the same code, unit-tested in `tests/unit/creditExpiry.test.ts`).
+- [~] Browser-verified against the demo org — **not done, same blocker as Step 4.** The route was invoked live against production (secret-gating + response shape confirmed, 0 wallets / 0 opted-in orgs); a live expire-an-old-lot walkthrough needs a direct production DB write this session's tooling blocks and no browser surface mints wallet credit. Money math verified against a real Postgres engine via the throwaway PGlite pass. Revisit once a real org has wallet activity.
+- [x] All seven gates green.
 
 ---
 
@@ -235,15 +260,28 @@ Per-org configurable within a platform cap is MASTER_PLAN.md's recommendation, m
 
 ## Step 11 — Needs you: B-10, staging environment
 
-A spend decision (new Supabase project, ~2 ed of engineering to wire it up once approved), not something to provision unilaterally. Once you approve the spend, the engineering part (separate Supabase project, `supabase db push` against it, a second Vercel preview environment or branch deploy pointed at it, updated `.env.example` guidance) can be picked up as its own step here. This is what unblocks R1's full gate (a real environment to rehearse migrations on before they hit production) and all of R2.
+**Deferred 2026-09-05 (founder: hold), via a decision-prep session.**
+
+The spend was never the blocker: a second Supabase project is $0/mo if the org stays on the Free plan (Free allows 2 projects/org) or ~$10/mo (~₹850) if on Pro, and a second Vercel preview environment is included at no extra cost on any Vercel plan. The real cost is ~1.5-2.5 engineering days to wire it up (create the project, `supabase db push` all 32 migrations against an empty DB — itself the first test that the set applies clean from zero — seed it including a demo parent account that prod deliberately lacks, a second Vercel env pointed at it, re-verify the realtime-publication migrations, first-ever Storage upload test, update `supabase/README.md` / `.env.example` / HANDOFF's "no staging" note).
+
+The founder chose to hold. **Consequences carried forward, to be logged as an explicit deferral at Step 13:**
+- R1 migrations keep going straight to production (as Steps 1-7 did).
+- Parent-facing surfaces (Step 3's `ParentPortal` disclosure, Step 5's requester counter-offer, Step 7's parent top-up) stay unverifiable in a browser — no demo parent account exists on prod.
+- Supabase Storage upload/download stays untested anywhere.
+- The migration set has never been applied from zero.
+- No rehearsed rollback for a bad migration, and R1/R2 both keep shipping them.
+
+Revisit before starting R2 (B-06 is a real migration against live identity data and MASTER_PLAN.md §3 R2 says do not start it before staging exists).
 
 ---
 
 ## Step 12 — Needs you: external pentest + leaked-password protection
 
-Two different asks bundled because they're both "needs you, not engineering," not because they're related:
-- **External pentest:** a real third-party engagement (HANDOFF.md §2.2 / MASTER_PLAN.md §3) — a procurement task, budget it and pick a vendor; do not accept an automated-scanner substitute.
-- **Leaked-password protection:** a one-click toggle in the Supabase Auth dashboard (HANDOFF.md §2.2 calls this out as the one open gap in an otherwise-closed security posture) — this one takes two minutes once you're logged into the Supabase dashboard; flag it here so it doesn't get lost among the bigger items.
+Two different asks bundled because they're both "needs you, not engineering," not because they're related.
+
+**External pentest — deferred to pre-GTM procurement (founder decision 2026-09-05).** Not an R1 engineering blocker; it moves into the same long-lead GTM-procurement bucket as WhatsApp templates, DLT, Razorpay KYC and Google OAuth verification (MASTER_PLAN.md §8, §10). Still a real third-party manual engagement — do not accept an automated-scanner substitute (DEV_PLAN.md §2.2 is explicit). Vendor shortlist from the decision-prep session, for when quotes are wanted: **Astra Security** (Bengaluru, CERT-In empanelled, PCI-DSS/ISO27001/SOC2 aligned, ~₹1.5-4L for a real manual web+API test, ~2-3 wks, free retest + public certificate), **SecureLayer7** (Pune, researcher-led, business-logic/API/auth focus, strong fintech track record, ~₹2-5L on quote, ~2-4 wks, video evidence + retest), **Indusface** (Bengaluru, manual pentest layered on the AppTrana scanner platform, good if ongoing WAF/monitoring is also wanted). Reject any quote under ~₹40k with a 1-2 day turnaround: that is a relabelled scanner.
+
+**Leaked-password protection — deferred to pre-GTM (founder decision 2026-09-05).** A one-toggle change in the Supabase dashboard (project `cwugpiernnwrhcximjwh` → Authentication → Sign In / Providers → Password → "Prevent use of leaked passwords" / HaveIBeenPwned check). DEV_PLAN.md §2.2 calls this the one open gap in an otherwise-closed security posture, and it is explicitly "not a blocker today." The founder chose not to action it now; it rides along with the auth items on the GTM checklist (MASTER_PLAN.md §8 "Auth"). No code, no engineering session, does not block anything in R1.
 
 ---
 
@@ -255,5 +293,6 @@ Once Steps 1-12 are checked (or explicitly deferred with a reason, same discipli
 - [ ] The reconciliation job (Step 4) runs clean against production.
 - [ ] A parent tops up their own wallet without a staff member (Step 7 — or confirmed still gated on Razorpay, which is fine, just confirm the degradation path is real).
 - [ ] A 200-student centre imports in one sitting (Step 6).
-- [ ] Staging exists (Step 11) and every migration shipped in Steps 1-10 was rehearsed there first, retroactively if it wasn't rehearsed at the time.
+- [ ] ~~Staging exists (Step 11) and every migration shipped in Steps 1-10 was rehearsed there first~~ — **explicitly deferred 2026-09-05 (founder: hold on B-10).** This gate line is not met and is not being met for R1. All Steps 1-10 migrations went to production unrehearsed. Record the deferral and its accepted consequences (Step 11) here; do not treat R1 as failing the gate on this line. Staging must be revisited before R2 starts (B-06 is a live-data migration).
+- [ ] External pentest and leaked-password protection — **both deferred to pre-GTM 2026-09-05 (Step 12).** Neither is a condition on the R1 gate; both tracked in MASTER_PLAN.md §8.
 - [ ] Update MASTER_PLAN.md: mark R1 complete, move its "What to do next week" (§10) to R2's opening moves, and start this document's R2 section.

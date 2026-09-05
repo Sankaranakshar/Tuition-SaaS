@@ -298,7 +298,8 @@
       "invoice_overdue": "Invoice overdue",
       "payment_due": "Payment due",
       "session_reminder": "Upcoming session",
-      "session_conflict": "Scheduling conflict"
+      "session_conflict": "Scheduling conflict",
+      "wallet_credit_expiring": "Wallet credit expiring"
     },
     "requestsEmpty": "No pending requests",
     "requestsEmptyHint": "Booking requests from parents and students will show up here.",

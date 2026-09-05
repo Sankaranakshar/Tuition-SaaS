@@ -2861,6 +2861,80 @@ var scheduling_default = router8;
 
 // server/routes/cron.ts
 import express9 from "express";
+
+// shared/creditExpiry.ts
+function resolveCreditExpiryPolicy(raw) {
+  const obj = raw && typeof raw === "object" ? raw : {};
+  const windowDays = typeof obj.windowDays === "number" && Number.isFinite(obj.windowDays) && obj.windowDays > 0 ? Math.floor(obj.windowDays) : 0;
+  const enabled = obj.enabled === true && windowDays > 0;
+  return { enabled, windowDays };
+}
+var DAY_MS = 864e5;
+function runDenom(deltas, windowMs, nowMs, denom) {
+  const lots = [];
+  for (const d of deltas) {
+    if (d.amount > 0) {
+      lots.push({ id: d.id, at: d.at, remaining: d.amount });
+    } else if (d.amount < 0) {
+      let need = -d.amount;
+      for (const lot of lots) {
+        if (need <= 0) break;
+        const take = Math.min(lot.remaining, need);
+        lot.remaining -= take;
+        need -= take;
+      }
+    }
+  }
+  const expired = [];
+  const warnings = [];
+  for (const lot of lots) {
+    if (lot.remaining <= 0) continue;
+    const expiresAtMs = lot.at + windowMs;
+    if (expiresAtMs <= nowMs) {
+      expired.push({
+        lotLedgerId: lot.id,
+        denom,
+        amount: lot.remaining,
+        lotDate: new Date(lot.at).toISOString()
+      });
+      continue;
+    }
+    const msLeft = expiresAtMs - nowMs;
+    if (msLeft <= 7 * DAY_MS) {
+      warnings.push({ lotLedgerId: lot.id, denom, stage: 7, remaining: lot.remaining, expiresAt: new Date(expiresAtMs).toISOString() });
+    } else if (msLeft <= 30 * DAY_MS) {
+      warnings.push({ lotLedgerId: lot.id, denom, stage: 30, remaining: lot.remaining, expiresAt: new Date(expiresAtMs).toISOString() });
+    }
+  }
+  return { expired, warnings };
+}
+function computeCreditExpiry(rows, windowDays, now) {
+  const sorted = [...rows].sort((a, b) => {
+    const at = new Date(a.at).getTime() - new Date(b.at).getTime();
+    if (at !== 0) return at;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  const windowMs = windowDays * DAY_MS;
+  const nowMs = now.getTime();
+  const credits = runDenom(
+    sorted.map((r) => ({ id: r.id, amount: r.credits, at: new Date(r.at).getTime() })),
+    windowMs,
+    nowMs,
+    "credits"
+  );
+  const paise2 = runDenom(
+    sorted.map((r) => ({ id: r.id, amount: r.paise, at: new Date(r.at).getTime() })),
+    windowMs,
+    nowMs,
+    "paise"
+  );
+  return {
+    expired: [...credits.expired, ...paise2.expired],
+    warnings: [...credits.warnings, ...paise2.warnings]
+  };
+}
+
+// server/routes/cron.ts
 var router9 = express9.Router();
 router9.use((req, res, next) => {
   const secret = process.env.CRON_SECRET;
@@ -2992,6 +3066,132 @@ router9.post("/reconcile-wallets", async (_req, res, next) => {
     next(err);
   }
 });
+router9.post("/expire-credits", async (_req, res, next) => {
+  try {
+    const orgsRes = await pool.query(
+      `select id, settings from organizations
+       where status = 'active' and settings -> 'creditExpiry' ->> 'enabled' = 'true'`
+    );
+    let walletsChecked = 0;
+    let lotsExpired = 0;
+    let creditsExpired = 0;
+    let paiseExpired = 0;
+    let warningsSent = 0;
+    for (const org of orgsRes.rows) {
+      const policy = resolveCreditExpiryPolicy(org.settings?.creditExpiry);
+      if (!policy.enabled) continue;
+      const walletsRes = await pool.query(
+        `select id, student_id, balance_credits, balance_currency
+         from wallets where organization_id = $1`,
+        [org.id]
+      );
+      for (const wallet of walletsRes.rows) {
+        walletsChecked++;
+        const ledgerRes = await pool.query(
+          `select id, credits, paise, at from wallet_ledger
+           where organization_id = $1 and student_id = $2
+           order by at asc, id asc`,
+          [org.id, wallet.student_id]
+        );
+        const { expired, warnings } = computeCreditExpiry(ledgerRes.rows, policy.windowDays, /* @__PURE__ */ new Date());
+        if (expired.length > 0) {
+          await withTransaction(async (client) => {
+            let dCredits = 0;
+            let dPaise = 0;
+            for (const lot of expired) {
+              const key = `credit_expiry_${lot.lotLedgerId}_${lot.denom === "credits" ? "c" : "p"}`;
+              const dup = await client.query(
+                `select 1 from wallet_ledger where organization_id = $1 and idempotency_key = $2`,
+                [org.id, key]
+              );
+              if ((dup.rowCount ?? 0) > 0) continue;
+              const credits = lot.denom === "credits" ? -lot.amount : 0;
+              const paise2 = lot.denom === "paise" ? -lot.amount : 0;
+              await client.query(
+                `insert into wallet_ledger
+                   (organization_id, student_id, type, credits, paise, reason, by, idempotency_key, at)
+                 values ($1, $2, 'credit_expiry', $3, $4, 'credit_expiry', 'credit_expiry_cron', $5, now())`,
+                [org.id, wallet.student_id, credits, paise2, key]
+              );
+              dCredits += credits;
+              dPaise += paise2;
+              lotsExpired++;
+              if (lot.denom === "credits") creditsExpired += lot.amount;
+              else paiseExpired += lot.amount;
+            }
+            if (dCredits !== 0 || dPaise !== 0) {
+              await client.query(
+                `update wallets
+                   set balance_credits = balance_credits + $1,
+                       balance_currency = balance_currency + $2
+                 where id = $3`,
+                [dCredits, paiseToRupees(dPaise), wallet.id]
+              );
+              await writeAudit(
+                org.id,
+                { system: "credit_expiry_cron" },
+                "wallet.credit_expiry",
+                "wallets",
+                wallet.id,
+                { studentId: wallet.student_id, creditsExpired: -dCredits, paiseExpired: -dPaise }
+              );
+            }
+          });
+        }
+        for (const warn of warnings) {
+          if (await sendExpiryWarning(org.id, wallet.student_id, warn)) warningsSent++;
+        }
+      }
+    }
+    res.json({
+      ok: true,
+      orgsProcessed: orgsRes.rowCount,
+      walletsChecked,
+      lotsExpired,
+      creditsExpired,
+      paiseExpired,
+      warningsSent
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+async function sendExpiryWarning(orgId, studentId, warn) {
+  const existing = await pool.query(
+    `select 1 from notifications
+     where organization_id = $1 and type = 'wallet_credit_expiring'
+       and payload ->> 'lotLedgerId' = $2 and payload ->> 'stage' = $3 and payload ->> 'denom' = $4
+     limit 1`,
+    [orgId, warn.lotLedgerId, String(warn.stage), warn.denom]
+  );
+  if ((existing.rowCount ?? 0) > 0) return false;
+  const recipientsRes = await pool.query(
+    `select parent_user_id as uid from parent_links where student_id = $1
+     union
+     select student_user_id as uid from students where id = $1 and student_user_id is not null`,
+    [studentId]
+  );
+  if (recipientsRes.rowCount === 0) return false;
+  const amountLabel = warn.denom === "credits" ? `${warn.remaining} credit${warn.remaining === 1 ? "" : "s"}` : `\u20B9${(warn.remaining / 100).toLocaleString("en-IN")}`;
+  const title = `${amountLabel} of wallet credit expires in ${warn.stage} days`;
+  const payload = JSON.stringify({
+    title,
+    studentId,
+    denom: warn.denom,
+    stage: warn.stage,
+    remaining: warn.remaining,
+    lotLedgerId: warn.lotLedgerId,
+    expiresAt: warn.expiresAt
+  });
+  for (const row of recipientsRes.rows) {
+    await pool.query(
+      `insert into notifications (organization_id, user_id, type, payload)
+       values ($1, $2, 'wallet_credit_expiring', $3::jsonb)`,
+      [orgId, row.uid, payload]
+    );
+  }
+  return true;
+}
 var cron_default = router9;
 
 // server/routes/documents.ts

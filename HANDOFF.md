@@ -4,7 +4,7 @@
 
 **Companion docs:** [MASTER_PLAN.md](MASTER_PLAN.md) is the current release plan (R1-R4) and the one open founder decisions live in. [EXECUTION_PLAN.md](EXECUTION_PLAN.md) is the step-by-step, checkbox-trackable execution order for R1 — start there for day-to-day work. [DEV_PLAN.md](DEV_PLAN.md) is tech-debt detail and the shipped-when build log (its stage numbering is superseded by MASTER_PLAN.md). [REDESIGN.md](REDESIGN.md) is the product-experience spec. [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) is strategy (its architecture and security sections are Firestore-era history). [docs/BUILD_LOG_ARCHIVE.md](docs/BUILD_LOG_ARCHIVE.md) is the old append-only build log, kept for narrative detail only. [docs/OPTIMIZATION_AUDIT.md](docs/OPTIMIZATION_AUDIT.md) is a 2026-07-26 performance/correctness audit; its fixes are applied (commit `b15f691`), see §8 for the two most consequential findings.
 
-_Last verified 2026-09-05 against commit `22fbf19` plus an uncommitted pass closing MASTER_PLAN.md's R1 items B-09 (bulk import) and B-05 (self-serve parent top-up), EXECUTION_PLAN.md Steps 6-7, plus a follow-up client-hook audit (§8) fixing the same role/organizationRole bug in three more hooks. Every number below was re-run, not inherited._
+_Last verified 2026-09-05 against commit `f72ef49` plus an uncommitted pass closing MASTER_PLAN.md's R1 item B-04 (credit expiry policy), EXECUTION_PLAN.md Step 9 — new `POST /api/cron/expire-credits`, a per-org opt-in `organizations.settings.creditExpiry` key, an on-the-fly FIFO lot walk in `shared/creditExpiry.ts`, and a Settings section. No migration (same as Step 1). Every number below was re-run, not inherited._
 
 ---
 
@@ -29,11 +29,11 @@ Multi-tenant SaaS for Indian tuition centers: INR, GST invoices, UPI/Razorpay co
 | Gate | Command | Result |
 |---|---|---|
 | Typecheck | `npm run lint` | clean |
-| Unit | `npm test` | 193/193 (18 files) |
+| Unit | `npm test` | 207/207 (19 files) |
 | RLS / authorization | `npm run test:rls` | 81/81 (4 files) |
 | Route contracts | `npm run test:contract` | 242/242 (18 files) |
-| Build | `npm run build` | passes, server bundle 168.9 KB |
-| Bundle budget | `npm run check:bundle-size` | 200.3 KB gzip, budget 260 KB |
+| Build | `npm run build` | passes, server bundle 176.1 KB |
+| Bundle budget | `npm run check:bundle-size` | 200.4 KB gzip, budget 260 KB |
 | API bundle | `npm run build:api && npm run check:api-bundle` | all 16 route mounts present |
 
 Run all seven before every commit. None of them need Docker, Java, or a live database.
@@ -66,7 +66,7 @@ tests/        unit/ · integration/ (RLS) · contract/ (supertest) · load/ (k6)
 
 **Live:** `https://tuition-saas-two.vercel.app` (Vercel project `tuition-saas`) against Supabase Cloud `cwugpiernnwrhcximjwh` (ap-south-1). Repo `Sankaranakshar/Tuition-SaaS`, branch `main`, push auto-deploys.
 
-**There is no staging.** Local dev points at the production Supabase project. Be deliberate about test data and clean up after walkthroughs.
+**There is no staging.** Local dev points at the production Supabase project. Be deliberate about test data and clean up after walkthroughs. **Confirmed founder decision 2026-09-05: hold on B-10 for R1** (EXECUTION_PLAN.md Step 11) — R1 ships its migrations straight to production. To be revisited before R2, whose identity migration (B-06) runs against live data.
 
 ```bash
 npm install
@@ -158,6 +158,8 @@ Each of these cost real debugging time. They are distilled here so they cost nob
 **Also 2026-09-05:** B-05's self-serve parent top-up (EXECUTION_PLAN.md Step 7, `POST /api/v1/billing/wallets/topup-link`) is code-reviewed and contract-tested only, not browser-verified — it's blocked on the same two things every parent-facing surface in this codebase is blocked on: no live Razorpay creds locally (so the outbound link-creation call can't run for real) and no demo parent account exists (`scripts/seed.ts` seeds no `parent_links` row). The *inbound* half — the webhook crediting a wallet once a payment is captured — needs no live gateway account at all and IS fully contract-tested against a real signed HMAC payload, same technique `webhooks.test.ts` already used for the invoice path.
 
 **Also 2026-09-05:** B-09's bulk import (EXECUTION_PLAN.md Step 6, `POST /api/v1/students/import{,/inspect}`) was verified end to end against production — a real 5-row CSV with non-exact header names (`Mobile`, `Parent`, `Parent Mobile`) auto-mapped correctly, dry-run showed the right 3-ready/1-duplicate/1-error split, and commit produced exactly that outcome. A real bug surfaced during this walkthrough and is now fixed: see §8's new "role vs organizationRole" entry below.
+
+**Also 2026-09-05:** B-04's credit expiry (EXECUTION_PLAN.md Step 9, `POST /api/cron/expire-credits`) is throwaway-contract-tested against PGlite (a real Postgres engine, every migration applied) — FIFO remainder expiry, the `credit_expiry` ledger row + idempotency key, wallet decrement, the B-03 `balance == ledger sum` invariant, an audit row, an idempotent re-run, the 7-day warning firing once to parent + student, and cross-org isolation — plus the pure FIFO walk unit-tested in `tests/unit/creditExpiry.test.ts` (14 cases). The route itself was invoked live against production (`npm run dev:preview` + `curl`): 404 without / with a wrong `x-cron-secret`, `200 {"ok":true,"orgsProcessed":0,"walletsChecked":0}` with the configured one. **Not** browser- or live-data-verified: production has 0 wallets and 0 opted-in orgs, no browser surface mints wallet credit (`/wallets/topup` is staff-only, Razorpay deferred), and a direct production DB seed is blocked in this session — same standing gap as `/reconcile-wallets`. The Settings "7. Credit Expiry" section is code-reviewed + build-verified only (needs the demo owner login).
 
 **Also 2026-08-02:** `POST /api/cron/reporting-daily` (DEV_PLAN §3.3) was verified against the PGlite contract-test harness — correct aggregation values, idempotent rerun, 404 without the cron secret — via a throwaway test file written and then deleted (this endpoint isn't part of the permanent contract suite, same as `/materialize-sessions`). Never exercised in a real browser, since it has no UI; not run against production either, since Cloud Scheduler isn't wired up yet (see below).
 
