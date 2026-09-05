@@ -27,6 +27,7 @@ import type { SubscriptionResponse, CheckoutResponse } from "../../shared/schema
 import type { PlanId } from "../../shared/plans";
 import type { ListOrgsResponse, ImpersonateResponse } from "../../shared/schemas/admin";
 import type { OffboardResponse } from "../../shared/schemas/orgExport";
+import type { EraseStudentResponse } from "../../shared/schemas/students";
 import type { ListAuditEventsResponse } from "../../shared/schemas/auditLog";
 import type { BulkImportInspectResponse, BulkImportPreviewResponse, BulkImportCommitResponse, ImportField, BulkImportResolutions } from "../../shared/schemas/students";
 
@@ -282,6 +283,17 @@ export function redeemStudentInvite(token: string) {
   return api<{ ok: true; organizationId: string; studentId: string }>("/students/redeem", {
     method: "POST",
     body: { token },
+  });
+}
+
+/** Owner/admin: erase a student's personal data (DPDP right to erasure,
+ *  B-11 / EXECUTION_PLAN.md Step 10). Type the student's exact current name
+ *  to confirm — re-checked server-side. Irreversible: personal + academic
+ *  data is deleted, the financial trail is kept as anonymized rows. */
+export function eraseStudent(studentId: string, confirmName: string) {
+  return api<EraseStudentResponse>(`/students/${studentId}/erase`, {
+    method: "POST",
+    body: { confirmName },
   });
 }
 

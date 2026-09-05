@@ -4,7 +4,7 @@
 
 **Companion docs:** [MASTER_PLAN.md](MASTER_PLAN.md) is the current release plan (R1-R4) and the one open founder decisions live in. [EXECUTION_PLAN.md](EXECUTION_PLAN.md) is the step-by-step, checkbox-trackable execution order for R1 — start there for day-to-day work. [DEV_PLAN.md](DEV_PLAN.md) is tech-debt detail and the shipped-when build log (its stage numbering is superseded by MASTER_PLAN.md). [REDESIGN.md](REDESIGN.md) is the product-experience spec. [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) is strategy (its architecture and security sections are Firestore-era history). [docs/BUILD_LOG_ARCHIVE.md](docs/BUILD_LOG_ARCHIVE.md) is the old append-only build log, kept for narrative detail only. [docs/OPTIMIZATION_AUDIT.md](docs/OPTIMIZATION_AUDIT.md) is a 2026-07-26 performance/correctness audit; its fixes are applied (commit `b15f691`), see §8 for the two most consequential findings.
 
-_Last verified 2026-09-05 against commit `f72ef49` plus an uncommitted pass closing MASTER_PLAN.md's R1 item B-04 (credit expiry policy), EXECUTION_PLAN.md Step 9 — new `POST /api/cron/expire-credits`, a per-org opt-in `organizations.settings.creditExpiry` key, an on-the-fly FIFO lot walk in `shared/creditExpiry.ts`, and a Settings section. No migration (same as Step 1). Every number below was re-run, not inherited._
+_Last verified 2026-09-05 against commit `4bf162a` plus the R1 stack (Steps 6–9, unmerged) and an uncommitted pass closing MASTER_PLAN.md's R1 item B-11 (DPDP consent + per-student erasure), EXECUTION_PLAN.md Step 10 — new `consent_records` table (migration `20260905130000`, pushed to production), `students.erased_at/erased_by`, `POST /api/v1/students/:studentId/erase` (owner/admin, no new route mount), a per-org `settings.erasure.walletPolicy` (block/writeoff), a `CONSENT_VERSION` record written on every parent/student invite redeem, and People/Settings UI. Every number below was re-run, not inherited._
 
 ---
 
@@ -29,11 +29,11 @@ Multi-tenant SaaS for Indian tuition centers: INR, GST invoices, UPI/Razorpay co
 | Gate | Command | Result |
 |---|---|---|
 | Typecheck | `npm run lint` | clean |
-| Unit | `npm test` | 207/207 (19 files) |
-| RLS / authorization | `npm run test:rls` | 81/81 (4 files) |
-| Route contracts | `npm run test:contract` | 242/242 (18 files) |
-| Build | `npm run build` | passes, server bundle 176.1 KB |
-| Bundle budget | `npm run check:bundle-size` | 200.4 KB gzip, budget 260 KB |
+| Unit | `npm test` | 211/211 (20 files) |
+| RLS / authorization | `npm run test:rls` | 89/89 (5 files) |
+| Route contracts | `npm run test:contract` | 252/252 (19 files) |
+| Build | `npm run build` | passes, server bundle 184.9 KB |
+| Bundle budget | `npm run check:bundle-size` | 200.7 KB gzip, budget 260 KB |
 | API bundle | `npm run build:api && npm run check:api-bundle` | all 16 route mounts present |
 
 Run all seven before every commit. None of them need Docker, Java, or a live database.
@@ -49,9 +49,9 @@ src/          React 19 + Vite + Tailwind 4 SPA
   lib/        pure logic, unit-tested, no IO
   components/ kit/ = shared primitives, see /app/kit for a live gallery
 server/       stateless Express API, mounted at /api/v1
-  routes/     15 route modules, split by domain
+  routes/     16 route modules, split by domain
   db.ts       direct pg Pool + withTransaction, for money and scheduling
-supabase/     28 timestamped migrations, RLS on every table
+supabase/     33 timestamped migrations, RLS on every table
 shared/       Zod contracts + plans.ts, imported by both sides
 tests/        unit/ · integration/ (RLS) · contract/ (supertest) · load/ (k6)
 ```
@@ -85,7 +85,7 @@ supabase db push         # apply migrations to the hosted project
 2. **Money mutates only via `/api/v1/billing`,** idempotency-keyed, each writing an `audit_events` row. `invoices`, `payments`, `wallets`, `wallet_ledger`, and `refunds` have no client write policy at all.
 3. **Attendance is one real transaction** covering the attendance record, wallet debit, and invoice accrual.
 4. **Money is integer paise** (`*_paise` columns). The `total_amount` and `subtotal` rupee columns are legacy display mirrors, not sources of truth.
-5. **Server-only tables stay server-only:** `google_tokens`, `audit_events`, `payment_gateways`, `refunds`, `invoice_counters`, `parent_invites`, `student_invites`, `platform_admins` writes, `platform_admin_actions`. RLS is enabled on every table, and these simply have no policy, which means default-deny for everything except `service_role`.
+5. **Server-only tables stay server-only:** `google_tokens`, `audit_events`, `payment_gateways`, `refunds`, `invoice_counters`, `parent_invites`, `student_invites`, `platform_admins` writes, `platform_admin_actions`, `consent_records` writes (it has a *select* policy — own rows or org staff — but no insert/update/delete: every row is written by the parent/student redeem routes on `service_role`). RLS is enabled on every table, and these simply have no write policy, which means default-deny for everything except `service_role`.
 6. **Never fabricate** meeting links, invoice numbers, or payment confirmations client-side.
 7. **Gateway secrets are AES-GCM encrypted, server-only, write-only** from the client's perspective.
 8. **Every webhook is HMAC-verified before its body is trusted,** and settled idempotently by gateway payment id. The raw-body mount in `server/app.ts` sits before JSON parsing and rate limiting: do not reorder it.
@@ -160,6 +160,8 @@ Each of these cost real debugging time. They are distilled here so they cost nob
 **Also 2026-09-05:** B-09's bulk import (EXECUTION_PLAN.md Step 6, `POST /api/v1/students/import{,/inspect}`) was verified end to end against production — a real 5-row CSV with non-exact header names (`Mobile`, `Parent`, `Parent Mobile`) auto-mapped correctly, dry-run showed the right 3-ready/1-duplicate/1-error split, and commit produced exactly that outcome. A real bug surfaced during this walkthrough and is now fixed: see §8's new "role vs organizationRole" entry below.
 
 **Also 2026-09-05:** B-04's credit expiry (EXECUTION_PLAN.md Step 9, `POST /api/cron/expire-credits`) is throwaway-contract-tested against PGlite (a real Postgres engine, every migration applied) — FIFO remainder expiry, the `credit_expiry` ledger row + idempotency key, wallet decrement, the B-03 `balance == ledger sum` invariant, an audit row, an idempotent re-run, the 7-day warning firing once to parent + student, and cross-org isolation — plus the pure FIFO walk unit-tested in `tests/unit/creditExpiry.test.ts` (14 cases). The route itself was invoked live against production (`npm run dev:preview` + `curl`): 404 without / with a wrong `x-cron-secret`, `200 {"ok":true,"orgsProcessed":0,"walletsChecked":0}` with the configured one. **Not** browser- or live-data-verified: production has 0 wallets and 0 opted-in orgs, no browser surface mints wallet credit (`/wallets/topup` is staff-only, Razorpay deferred), and a direct production DB seed is blocked in this session — same standing gap as `/reconcile-wallets`. The Settings "7. Credit Expiry" section is code-reviewed + build-verified only (needs the demo owner login).
+
+**Also 2026-09-05:** B-11's per-student erasure (EXECUTION_PLAN.md Step 10, `POST /api/v1/students/:studentId/erase`) was walked end to end against production on the demo owner account — a throwaway student created through the app's own Add-Student modal, erased via the new owner/admin-only "Erase student data" row action and type-to-confirm modal, then confirmed gone from the People list with a real `student.erased` audit-log entry. The `consent_records` migration was pushed to production (`supabase db push`). **Not** directly asserted against the live DB — this session's tooling blocks direct production DB reads/writes (same standing gap as `/reconcile-wallets` and `/expire-credits`) — so the table-by-table anonymize/hard-delete behaviour, the B-03 `balance == ledger sum` invariant after a wallet write-off, and the consent-record inserts on redeem are covered instead by `tests/contract/studentErasure.test.ts` (+10) and the redeem-test assertions in `parents.test.ts`/`students.test.ts` against PGlite (a real Postgres engine, every migration applied). The "8. Data Erasure (DPDP)" Settings section is browser-rendered but its save path is code-reviewed only (needs the demo owner login, same as Steps 6/9). The erased anonymized stub row is left in the demo org — that is the correct end state of an erasure, not test residue.
 
 **Also 2026-08-02:** `POST /api/cron/reporting-daily` (DEV_PLAN §3.3) was verified against the PGlite contract-test harness — correct aggregation values, idempotent rerun, 404 without the cron secret — via a throwaway test file written and then deleted (this endpoint isn't part of the permanent contract suite, same as `/materialize-sessions`). Never exercised in a real browser, since it has no UI; not run against production either, since Cloud Scheduler isn't wired up yet (see below).
 

@@ -1776,6 +1776,9 @@ var parentRedeemRequestSchema = z4.object({
   consent: z4.literal(true)
 });
 
+// shared/consent.ts
+var CONSENT_VERSION = "dpdp-2026-09.draft";
+
 // server/routes/parents.ts
 var router5 = express5.Router();
 router5.use(authenticateToken);
@@ -1864,6 +1867,11 @@ router5.post("/redeem", async (req, res, next) => {
         [uid, body.token]
       );
       await client.query(
+        `insert into consent_records (organization_id, user_id, student_id, role, consent_version)
+         values ($1, $2, $3, 'parent', $4)`,
+        [invite.organization_id, uid, invite.student_id, CONSENT_VERSION]
+      );
+      await client.query(
         `update class_sessions
          set parent_user_ids = array_append(parent_user_ids, $1)
          where organization_id = $2 and $3 = any(student_ids) and not ($1 = any(parent_user_ids))`,
@@ -1892,6 +1900,9 @@ import Papa from "papaparse";
 import { z as z5 } from "zod";
 var studentInviteRequestSchema = z5.object({ studentId: z5.string().uuid() });
 var studentRedeemRequestSchema = z5.object({ token: z5.string().min(10) });
+var eraseStudentRequestSchema = z5.object({
+  confirmName: z5.string().min(1)
+});
 var IMPORT_FIELDS = ["name", "phone", "parentName", "parentPhone", "grade", "subject"];
 var bulkImportMappingSchema = z5.array(z5.enum(IMPORT_FIELDS).nullable());
 var bulkImportResolutionsSchema = z5.record(z5.string(), z5.enum(["skip", "import"]));
@@ -1988,6 +1999,169 @@ function detectDuplicates(rows, existingStudents) {
   return duplicates;
 }
 
+// shared/erasure.ts
+function resolveErasurePolicy(raw) {
+  const obj = raw && typeof raw === "object" ? raw : {};
+  return { walletPolicy: obj.walletPolicy === "writeoff" ? "writeoff" : "block" };
+}
+
+// server/utils/erasure.ts
+async function getErasurePolicy(orgId) {
+  const { data, error } = await supabaseAdmin.from("organizations").select("settings").eq("id", orgId).maybeSingle();
+  if (error) throw error;
+  return resolveErasurePolicy(data?.settings?.erasure);
+}
+var STUDENT_PII_COLUMNS = [
+  "notes",
+  "phone",
+  "email",
+  "address",
+  "parent_name",
+  "parent_phone",
+  "parent_email",
+  "emergency_contact_name",
+  "emergency_contact_phone",
+  "student_phone",
+  "student_email",
+  "age",
+  "gender",
+  "school_name",
+  "board",
+  "grade",
+  "subject",
+  "areas_of_difficulty",
+  "learning_goals",
+  "fee_structure"
+];
+var ErasureError = class extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+};
+async function eraseStudentTx(client, opts) {
+  const { orgId, studentId, actorId, walletPolicy } = opts;
+  const studentRes = await client.query(
+    `select id, name, student_user_id, erased_at from students
+     where id = $1 and organization_id = $2 for update`,
+    [studentId, orgId]
+  );
+  const student = studentRes.rows[0];
+  if (!student) throw new ErasureError(404, "not_found", "Student not found");
+  if (student.erased_at) throw new ErasureError(409, "already_erased", "This student has already been erased");
+  const walletRes = await client.query(
+    `select id, balance_credits, balance_currency from wallets
+     where organization_id = $1 and student_id = $2`,
+    [orgId, studentId]
+  );
+  const wallet = walletRes.rows[0];
+  let walletWriteOff = null;
+  if (wallet) {
+    const credits = Number(wallet.balance_credits) || 0;
+    const paise2 = rupeesToPaise(Number(wallet.balance_currency) || 0);
+    if (credits !== 0 || paise2 !== 0) {
+      if (walletPolicy === "block") {
+        throw new ErasureError(
+          409,
+          "wallet_balance_outstanding",
+          "This student still has an unused wallet balance. Refund or adjust it to zero before erasing, or switch the center's erasure policy to write-off."
+        );
+      }
+      const key = `erasure_writeoff_${studentId}`;
+      const dup = await client.query(
+        `select 1 from wallet_ledger where organization_id = $1 and idempotency_key = $2`,
+        [orgId, key]
+      );
+      if ((dup.rowCount ?? 0) === 0) {
+        await client.query(
+          `insert into wallet_ledger
+             (organization_id, student_id, type, credits, paise, reason, by, idempotency_key, at)
+           values ($1, $2, 'erasure_writeoff', $3, $4, 'erasure_writeoff', $5, $6, now())`,
+          [orgId, studentId, -credits, -paise2, actorId, key]
+        );
+        await client.query(
+          `update wallets set balance_credits = 0, balance_currency = 0 where id = $1`,
+          [wallet.id]
+        );
+      }
+      walletWriteOff = { credits, paise: paise2 };
+    }
+  }
+  const docRows = await client.query(
+    `select storage_path from documents where organization_id = $1 and student_id = $2 and storage_path is not null`,
+    [orgId, studentId]
+  );
+  const storagePaths = docRows.rows.map((r) => r.storage_path);
+  const del = async (sql) => (await client.query(sql, [orgId, studentId])).rowCount ?? 0;
+  const studentNotes = await del(`delete from student_notes where organization_id = $1 and student_id = $2`);
+  const assessments = await del(`delete from assessments where organization_id = $1 and student_id = $2`);
+  const enrollments = await del(`delete from enrollments where organization_id = $1 and student_id = $2`);
+  const parentLinks = await del(`delete from parent_links where organization_id = $1 and student_id = $2`);
+  const sessionRequests = await del(`delete from session_requests where organization_id = $1 and student_id = $2`);
+  const documents = await del(`delete from documents where organization_id = $1 and student_id = $2`);
+  const invites = await del(`delete from parent_invites where organization_id = $1 and student_id = $2`) + await del(`delete from student_invites where organization_id = $1 and student_id = $2`);
+  await client.query(
+    `update consent_records set student_id = null where organization_id = $1 and student_id = $2`,
+    [orgId, studentId]
+  );
+  const detachedUids = [];
+  if (student.student_user_id) detachedUids.push(student.student_user_id);
+  const parentUidRows = await client.query(
+    `select parent_user_id from parent_links where student_id = $1`,
+    [studentId]
+  );
+  for (const r of parentUidRows.rows) detachedUids.push(r.parent_user_id);
+  if (detachedUids.length > 0) {
+    await client.query(
+      `update class_sessions
+         set student_user_ids = (
+               select coalesce(array_agg(u), '{}'::uuid[])
+               from unnest(student_user_ids) u
+               where not (u = any($3::uuid[]))
+             ),
+             parent_user_ids = (
+               select coalesce(array_agg(u), '{}'::uuid[])
+               from unnest(parent_user_ids) u
+               where not (u = any($3::uuid[]))
+             )
+       where organization_id = $1
+         and start_time > now()
+         and status = 'scheduled'
+         and ($2 = any(student_ids))`,
+      [orgId, studentId, detachedUids]
+    );
+  }
+  const setClause = STUDENT_PII_COLUMNS.map((c) => `${c} = null`).join(",\n       ");
+  await client.query(
+    `update students set
+       name = 'Erased student',
+       student_user_id = null,
+       is_deleted = true,
+       status = 'inactive',
+       erased_at = now(),
+       erased_by = $2,
+       updated_at = now(),
+       ${setClause}
+     where id = $1`,
+    [studentId, actorId]
+  );
+  return {
+    walletWriteOff,
+    deleted: { studentNotes, assessments, enrollments, parentLinks, sessionRequests, documents, invites },
+    storagePaths
+  };
+}
+async function deleteErasedStorageObjects(paths) {
+  if (paths.length === 0) return;
+  try {
+    const { error } = await supabaseAdmin.storage.from("documents").remove(paths);
+    if (error) console.error("Erasure: failed to delete Storage objects", error);
+  } catch (err) {
+    console.error("Erasure: failed to delete Storage objects", err);
+  }
+}
+
 // server/routes/students.ts
 var router6 = express6.Router();
 router6.use(authenticateToken);
@@ -2079,6 +2253,11 @@ router6.post("/redeem", async (req, res, next) => {
       await client.query(
         `update student_invites set used_at = now(), used_by = $1 where token = $2`,
         [uid, body.token]
+      );
+      await client.query(
+        `insert into consent_records (organization_id, user_id, student_id, role, consent_version)
+         values ($1, $2, $3, 'student', $4)`,
+        [invite.organization_id, uid, invite.student_id, CONSENT_VERSION]
       );
       await client.query(
         `update class_sessions
@@ -2223,6 +2402,50 @@ router6.post("/import", requireOrg, requireRole(...CAN_IMPORT), importUpload.sin
       errorCount: commitErrors.length
     });
     const body = { ok: true, dryRun: false, createdCount: created.length, created, skippedDuplicates, errors: commitErrors };
+    res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+var CAN_ERASE = ["owner", "admin"];
+router6.post("/:studentId/erase", requireOrg, requireRole(...CAN_ERASE), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const studentId = req.params.studentId;
+    const { confirmName } = eraseStudentRequestSchema.parse(req.body);
+    const { data: student, error: studentErr } = await supabaseAdmin.from("students").select("name, organization_id, erased_at").eq("id", studentId).maybeSingle();
+    if (studentErr) throw studentErr;
+    if (!student || student.organization_id !== orgId) {
+      return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
+    }
+    if (student.erased_at) {
+      return res.status(409).json({ error: { code: "already_erased", message: "This student has already been erased" } });
+    }
+    if (confirmName.trim() !== (student.name ?? "").trim()) {
+      return res.status(422).json({ error: { code: "name_mismatch", message: "Typed name doesn't match the student's name" } });
+    }
+    const policy = await getErasurePolicy(orgId);
+    let result;
+    try {
+      result = await withTransaction(
+        (client) => eraseStudentTx(client, { orgId, studentId, actorId: req.user.id, walletPolicy: policy.walletPolicy })
+      );
+    } catch (err) {
+      if (err instanceof ErasureError) {
+        return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+      }
+      throw err;
+    }
+    await deleteErasedStorageObjects(result.storagePaths);
+    await writeAudit(orgId, req.user.id, "student.erased", "students", studentId, {
+      studentName: student.name,
+      walletPolicy: policy.walletPolicy,
+      walletWriteOff: result.walletWriteOff,
+      deleted: result.deleted,
+      storageObjectsDeleted: result.storagePaths.length,
+      consentVersion: CONSENT_VERSION
+    });
+    const body = { ok: true, walletWriteOff: result.walletWriteOff, deleted: result.deleted };
     res.json(body);
   } catch (err) {
     next(err);

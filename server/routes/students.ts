@@ -9,12 +9,15 @@ import { authenticateToken, requireOrg, requireRole, type AuthRequest } from "..
 import { writeAudit } from "../utils/audit.ts";
 import { setMembership } from "./members.ts";
 import {
-  studentInviteRequestSchema, studentRedeemRequestSchema,
+  studentInviteRequestSchema, studentRedeemRequestSchema, eraseStudentRequestSchema,
   bulkImportMappingSchema, bulkImportResolutionsSchema,
   type ImportField, type BulkImportInspectResponse, type BulkImportPreviewResponse,
   type BulkImportCommitResponse, type BulkImportCandidate, type BulkImportDuplicate,
+  type EraseStudentResponse,
 } from "../../shared/schemas/students.ts";
 import { suggestColumnMapping, parseImportRows, detectDuplicates, type ExistingStudent } from "../utils/bulkImport.ts";
+import { eraseStudentTx, deleteErasedStorageObjects, getErasurePolicy, ErasureError } from "../utils/erasure.ts";
+import { CONSENT_VERSION } from "../../shared/consent.ts";
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -128,6 +131,14 @@ router.post("/redeem", async (req: AuthRequest, res, next) => {
       await client.query(
         `update student_invites set used_at = now(), used_by = $1 where token = $2`,
         [uid, body.token]
+      );
+      // B-11 (EXECUTION_PLAN.md Step 10): persist the DPDP consent record.
+      // Claiming your own portal account is the consent event on the student
+      // side, version-stamped so a center can show what was agreed and when.
+      await client.query(
+        `insert into consent_records (organization_id, user_id, student_id, role, consent_version)
+         values ($1, $2, $3, 'student', $4)`,
+        [invite.organization_id, uid, invite.student_id, CONSENT_VERSION]
       );
       // Sessions materialized before this redeem never had this student's
       // user id in their id-space array (resolveUserIds only sees it at
@@ -311,6 +322,69 @@ router.post("/import", requireOrg, requireRole(...CAN_IMPORT), importUpload.sing
     });
 
     const body: BulkImportCommitResponse = { ok: true, dryRun: false, createdCount: created.length, created, skippedDuplicates, errors: commitErrors };
+    res.json(body);
+  } catch (err) { next(err); }
+});
+
+// B-11 / EXECUTION_PLAN.md Step 10: per-student erasure (DPDP right to
+// erasure). Owner/admin only (founder decision 2026-09-05 — admins run
+// day-to-day data requests and owner-only would bottleneck the statutory
+// response window), type the student's exact current name to confirm
+// (re-checked server-side, same posture as org offboarding). Irreversible.
+//
+// The table-by-table split (server/utils/erasure.ts): hard-delete the
+// personal + academic rows, anonymize the students row into a stub, leave
+// the financial trail (invoices/payments/wallets/wallet_ledger/attendance)
+// untouched for 8-year retention. A leftover wallet balance is handled per
+// the org's `settings.erasure.walletPolicy` — block (default) or writeoff.
+const CAN_ERASE = ["owner", "admin"] as const;
+router.post("/:studentId/erase", requireOrg, requireRole(...CAN_ERASE), async (req: AuthRequest, res, next) => {
+  try {
+    const orgId = req.user!.organizationId!;
+    const studentId = req.params.studentId;
+    const { confirmName } = eraseStudentRequestSchema.parse(req.body);
+
+    const { data: student, error: studentErr } = await supabaseAdmin
+      .from("students").select("name, organization_id, erased_at").eq("id", studentId).maybeSingle();
+    if (studentErr) throw studentErr;
+    if (!student || student.organization_id !== orgId) {
+      return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
+    }
+    if (student.erased_at) {
+      return res.status(409).json({ error: { code: "already_erased", message: "This student has already been erased" } });
+    }
+    if (confirmName.trim() !== (student.name ?? "").trim()) {
+      return res.status(422).json({ error: { code: "name_mismatch", message: "Typed name doesn't match the student's name" } });
+    }
+
+    const policy = await getErasurePolicy(orgId);
+
+    let result;
+    try {
+      result = await withTransaction((client) =>
+        eraseStudentTx(client, { orgId, studentId, actorId: req.user!.id, walletPolicy: policy.walletPolicy })
+      );
+    } catch (err) {
+      if (err instanceof ErasureError) {
+        return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+      }
+      throw err;
+    }
+
+    // Storage is not transactional — delete the orphaned objects only after
+    // the DB erasure has committed, best-effort.
+    await deleteErasedStorageObjects(result.storagePaths);
+
+    await writeAudit(orgId, req.user!.id, "student.erased", "students", studentId, {
+      studentName: student.name,
+      walletPolicy: policy.walletPolicy,
+      walletWriteOff: result.walletWriteOff,
+      deleted: result.deleted,
+      storageObjectsDeleted: result.storagePaths.length,
+      consentVersion: CONSENT_VERSION,
+    });
+
+    const body: EraseStudentResponse = { ok: true, walletWriteOff: result.walletWriteOff, deleted: result.deleted };
     res.json(body);
   } catch (err) { next(err); }
 });
