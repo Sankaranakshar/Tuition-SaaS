@@ -4,7 +4,7 @@
 
 **Companion docs:** [MASTER_PLAN.md](MASTER_PLAN.md) is the current release plan (R1-R4) and the one open founder decisions live in. [EXECUTION_PLAN.md](EXECUTION_PLAN.md) is the step-by-step, checkbox-trackable execution order for R1 — start there for day-to-day work. [DEV_PLAN.md](DEV_PLAN.md) is tech-debt detail and the shipped-when build log (its stage numbering is superseded by MASTER_PLAN.md). [REDESIGN.md](REDESIGN.md) is the product-experience spec. [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) is strategy (its architecture and security sections are Firestore-era history). [docs/BUILD_LOG_ARCHIVE.md](docs/BUILD_LOG_ARCHIVE.md) is the old append-only build log, kept for narrative detail only. [docs/OPTIMIZATION_AUDIT.md](docs/OPTIMIZATION_AUDIT.md) is a 2026-07-26 performance/correctness audit; its fixes are applied (commit `b15f691`), see §8 for the two most consequential findings.
 
-_Last verified 2026-08-06 against commit `64db1e7` plus an uncommitted pass closing MASTER_PLAN.md's R1 items B-02 (rate limiter), B-20 (README rewrite), D-08 (cancellation-policy settings), B-01 (attendance reversal), and the cancellation-policy surface (parent-facing disclosure). Every number below was re-run, not inherited._
+_Last verified 2026-09-05 against commit `4631da9` plus an uncommitted pass closing MASTER_PLAN.md's R1 items B-03 (wallet-to-ledger reconciliation job) and the booking-request approval UI (EXECUTION_PLAN.md Steps 4-5). Every number below was re-run, not inherited._
 
 ---
 
@@ -24,17 +24,17 @@ Multi-tenant SaaS for Indian tuition centers: INR, GST invoices, UPI/Razorpay co
 | 4 | Mobile polish (done); growth-loop payment-link footer (done, not live-verified — no Razorpay creds locally); reporting (done, see DEV_PLAN §3.3); AI morning brief deferred by founder (2026-08-02); activation-funnel analytics not started | **Active**, see DEV_PLAN §3 |
 | External | Razorpay live keys, Google OAuth, phone OTP, Sentry, staging, legal, AI integrations | Deferred by founder, see §7 |
 
-**Gates, all re-run and green on 2026-08-06:**
+**Gates, all re-run and green on 2026-09-05:**
 
 | Gate | Command | Result |
 |---|---|---|
 | Typecheck | `npm run lint` | clean |
 | Unit | `npm test` | 182/182 (17 files) |
 | RLS / authorization | `npm run test:rls` | 81/81 (4 files) |
-| Route contracts | `npm run test:contract` | 206/206 (15 files) |
-| Build | `npm run build` | passes, server bundle 142.7 KB |
-| Bundle budget | `npm run check:bundle-size` | 199.2 KB gzip, budget 260 KB |
-| API bundle | `npm run build:api && npm run check:api-bundle` | all 15 route mounts present |
+| Route contracts | `npm run test:contract` | 220/220 (16 files) |
+| Build | `npm run build` | passes, server bundle 155.2 KB |
+| Bundle budget | `npm run check:bundle-size` | 199.6 KB gzip, budget 260 KB |
+| API bundle | `npm run build:api && npm run check:api-bundle` | all 16 route mounts present |
 
 Run all seven before every commit. None of them need Docker, Java, or a live database.
 

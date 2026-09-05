@@ -324,6 +324,51 @@ export function ensureClassChannel(templateId: string) {
   return api<EnsureClassChannelResponse>(`/inbox/class-channels/${templateId}/ensure`, { method: "POST" });
 }
 
+// Booking-request approval (EXECUTION_PLAN.md Step 5). Not under
+// /scheduling — session_requests is its own resource, distinct from the
+// enrollments/sessions it eventually creates on acceptance.
+export interface BookingRequestRow {
+  id: string;
+  status: "pending" | "countered" | "accepted" | "declined";
+  notes: string | null;
+  response_note: string | null;
+  created_at: string;
+  responded_at: string | null;
+  student_id: string;
+  template_id: string | null;
+  tutor_id: string | null;
+  requested_start_time: string | null;
+  requested_end_time: string | null;
+  proposed_template_id: string | null;
+  proposed_start_time: string | null;
+  proposed_end_time: string | null;
+  requested_by_user_id: string;
+  student_name: string | null;
+  template_name: string | null;
+  tutor_name: string | null;
+  proposed_template_name: string | null;
+  requested_by_name: string | null;
+}
+
+export function listBookingRequests(status?: string) {
+  return api<{ ok: true; requests: BookingRequestRow[] }>(`/session-requests${status ? `?status=${status}` : ""}`);
+}
+
+export function acceptBookingRequest(requestId: string) {
+  return api<{ ok: true }>(`/session-requests/${requestId}/accept`, { method: "POST" });
+}
+
+export function declineBookingRequest(requestId: string, responseNote?: string) {
+  return api<{ ok: true }>(`/session-requests/${requestId}/decline`, { method: "POST", body: { responseNote } });
+}
+
+export function proposeBookingAlternative(
+  requestId: string,
+  input: { proposedTemplateId: string; responseNote?: string } | { proposedStartTime: string; proposedEndTime: string; responseNote?: string }
+) {
+  return api<{ ok: true }>(`/session-requests/${requestId}/propose`, { method: "POST", body: input });
+}
+
 /**
  * Creates the caller's organization with a real, user-chosen name (Epic
  * 14.5's onboarding rebuild — previously only auto-called by

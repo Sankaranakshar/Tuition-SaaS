@@ -1,5 +1,5 @@
 // server/app.ts
-import express16 from "express";
+import express17 from "express";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
@@ -2183,41 +2183,42 @@ var findGapsResponseSchema = z6.object({
 var router8 = express8.Router();
 router8.use(authenticateToken, requireOrg);
 var CAN_SCHEDULE = ["owner", "admin", "tutor", "frontdesk"];
+async function createEnrollmentTx(client, orgId, studentId, templateId) {
+  const templateRes = await client.query(
+    `select organization_id, type, capacity from class_templates where id = $1 for update`,
+    [templateId]
+  );
+  if (templateRes.rowCount === 0) {
+    throw Object.assign(new Error("Class template not found"), { status: 404, code: "not_found" });
+  }
+  const template = templateRes.rows[0];
+  if (template.organization_id !== orgId) {
+    throw Object.assign(new Error("Template belongs to another organization"), { status: 403, code: "forbidden" });
+  }
+  if (template.type === "BATCH") {
+    const countRes = await client.query(
+      `select count(*)::int as n from enrollments where template_id = $1 and status = 'active'`,
+      [templateId]
+    );
+    if (countRes.rows[0].n >= template.capacity) {
+      throw Object.assign(
+        new Error(`Cannot enroll: ${template.type} is at max capacity (${template.capacity})`),
+        { status: 409, code: "capacity_full" }
+      );
+    }
+  }
+  const insertRes = await client.query(
+    `insert into enrollments (organization_id, student_id, template_id, status)
+     values ($1, $2, $3, 'active') returning id`,
+    [orgId, studentId, templateId]
+  );
+  return insertRes.rows[0].id;
+}
 router8.post("/enrollments", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
   try {
     const { studentId, templateId } = enrollRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
-    const enrollmentId = await withTransaction(async (client) => {
-      const templateRes = await client.query(
-        `select organization_id, type, capacity from class_templates where id = $1 for update`,
-        [templateId]
-      );
-      if (templateRes.rowCount === 0) {
-        throw Object.assign(new Error("Class template not found"), { status: 404, code: "not_found" });
-      }
-      const template = templateRes.rows[0];
-      if (template.organization_id !== orgId) {
-        throw Object.assign(new Error("Template belongs to another organization"), { status: 403, code: "forbidden" });
-      }
-      if (template.type === "BATCH") {
-        const countRes = await client.query(
-          `select count(*)::int as n from enrollments where template_id = $1 and status = 'active'`,
-          [templateId]
-        );
-        if (countRes.rows[0].n >= template.capacity) {
-          throw Object.assign(
-            new Error(`Cannot enroll: ${template.type} is at max capacity (${template.capacity})`),
-            { status: 409, code: "capacity_full" }
-          );
-        }
-      }
-      const insertRes = await client.query(
-        `insert into enrollments (organization_id, student_id, template_id, status)
-         values ($1, $2, $3, 'active') returning id`,
-        [orgId, studentId, templateId]
-      );
-      return insertRes.rows[0].id;
-    });
+    const enrollmentId = await withTransaction((client) => createEnrollmentTx(client, orgId, studentId, templateId));
     await writeAudit(orgId, req.user.id, "enrollment.create", "enrollments", enrollmentId, { studentId, templateId });
     res.json({ ok: true, enrollmentId });
   } catch (err) {
@@ -2260,24 +2261,25 @@ async function checkTutorConflictAndInsert(client, orgId, tutorId, startTime, en
   await assertNoTutorConflict(client, orgId, tutorId, startTime, endTime, excludeSessionId);
   return insert();
 }
+async function createSessionTx(client, orgId, body) {
+  return checkTutorConflictAndInsert(client, orgId, body.tutorId, body.startTime, body.endTime, async () => {
+    const studentIds = body.studentIds || [];
+    const { studentUserIds, parentUserIds } = await resolveUserIds(client, studentIds);
+    const insertRes = await client.query(
+      `insert into class_sessions
+         (organization_id, template_id, tutor_id, student_ids, student_user_ids, parent_user_ids, start_time, end_time, status, is_online, room_number)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, 'scheduled', $9, $10)
+       returning id`,
+      [orgId, body.templateId ?? null, body.tutorId, studentIds, studentUserIds, parentUserIds, body.startTime, body.endTime, body.isOnline ?? false, body.roomNumber ?? null]
+    );
+    return insertRes.rows[0].id;
+  });
+}
 router8.post("/sessions", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
   try {
     const body = createSessionRequestSchema.parse(req.body);
     const orgId = req.user.organizationId;
-    const sessionId = await withTransaction(
-      (client) => checkTutorConflictAndInsert(client, orgId, body.tutorId, body.startTime, body.endTime, async () => {
-        const studentIds = body.studentIds || [];
-        const { studentUserIds, parentUserIds } = await resolveUserIds(client, studentIds);
-        const insertRes = await client.query(
-          `insert into class_sessions
-             (organization_id, template_id, tutor_id, student_ids, student_user_ids, parent_user_ids, start_time, end_time, status, is_online, room_number)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, 'scheduled', $9, $10)
-           returning id`,
-          [orgId, body.templateId, body.tutorId, studentIds, studentUserIds, parentUserIds, body.startTime, body.endTime, body.isOnline ?? false, body.roomNumber ?? null]
-        );
-        return insertRes.rows[0].id;
-      })
-    );
+    const sessionId = await withTransaction((client) => createSessionTx(client, orgId, body));
     res.json({ ok: true, sessionId });
   } catch (err) {
     next(err);
@@ -2620,6 +2622,48 @@ router9.post("/reporting-daily", async (req, res, next) => {
       [targetDate]
     );
     res.json({ ok: true, date: targetDate, orgsProcessed: result.rowCount });
+  } catch (err) {
+    next(err);
+  }
+});
+router9.post("/reconcile-wallets", async (_req, res, next) => {
+  try {
+    const mismatches = await pool.query(
+      `with expected as (
+         select organization_id, student_id,
+                coalesce(sum(credits), 0)::int as expected_credits,
+                coalesce(sum(paise), 0)::bigint as expected_paise
+         from wallet_ledger
+         group by organization_id, student_id
+       )
+       select w.id, w.organization_id, w.student_id,
+              w.balance_credits, w.balance_currency,
+              coalesce(e.expected_credits, 0) as expected_credits,
+              coalesce(e.expected_paise, 0) as expected_paise
+       from wallets w
+       left join expected e
+         on e.organization_id = w.organization_id and e.student_id = w.student_id
+       where w.balance_credits <> coalesce(e.expected_credits, 0)
+          or w.balance_currency <> round(coalesce(e.expected_paise, 0)::numeric / 100, 2)`
+    );
+    for (const row of mismatches.rows) {
+      await writeAudit(
+        row.organization_id,
+        { system: "wallet_reconciliation_cron" },
+        "wallet.reconciliation_mismatch",
+        "wallets",
+        row.id,
+        {
+          studentId: row.student_id,
+          actualCredits: row.balance_credits,
+          expectedCredits: row.expected_credits,
+          actualCurrency: row.balance_currency,
+          expectedCurrency: paiseToRupees(Number(row.expected_paise))
+        }
+      );
+    }
+    const totalRes = await pool.query(`select count(*)::int as total from wallets`);
+    res.json({ ok: true, walletsChecked: totalRes.rows[0].total, mismatches: mismatches.rowCount });
   } catch (err) {
     next(err);
   }
@@ -3290,6 +3334,258 @@ router15.get("/", async (req, res, next) => {
 });
 var auditLog_default = router15;
 
+// server/routes/sessionRequests.ts
+import express16 from "express";
+
+// shared/schemas/bookingRequests.ts
+import { z as z14 } from "zod";
+var joinTemplateShape = z14.object({
+  studentId: z14.string().uuid(),
+  templateId: z14.string().uuid(),
+  notes: z14.string().max(2e3).optional()
+});
+var bookTutorShape = z14.object({
+  studentId: z14.string().uuid(),
+  tutorId: z14.string().uuid(),
+  requestedStartTime: z14.string().min(1),
+  requestedEndTime: z14.string().min(1),
+  notes: z14.string().max(2e3).optional()
+});
+var createBookingRequestSchema = z14.union([joinTemplateShape, bookTutorShape]);
+var declineBookingRequestSchema = z14.object({ responseNote: z14.string().max(2e3).optional() });
+var proposeAlternativeSchema = z14.union([
+  z14.object({ proposedTemplateId: z14.string().uuid(), responseNote: z14.string().max(2e3).optional() }),
+  z14.object({ proposedStartTime: z14.string().min(1), proposedEndTime: z14.string().min(1), responseNote: z14.string().max(2e3).optional() })
+]);
+var respondToProposalSchema = z14.object({ accept: z14.boolean() });
+
+// server/routes/sessionRequests.ts
+var router16 = express16.Router();
+router16.use(authenticateToken, requireOrg);
+var CAN_RESPOND = ["owner", "admin", "tutor", "frontdesk"];
+router16.get("/", requireRole(...CAN_RESPOND), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const status = typeof req.query.status === "string" ? req.query.status : null;
+    const result = await pool.query(
+      `select
+         sr.id, sr.status, sr.notes, sr.response_note, sr.created_at, sr.responded_at,
+         sr.student_id, sr.template_id, sr.tutor_id, sr.requested_start_time, sr.requested_end_time,
+         sr.proposed_template_id, sr.proposed_start_time, sr.proposed_end_time,
+         sr.requested_by_user_id,
+         s.name as student_name,
+         ct.name as template_name,
+         tp.name as tutor_name,
+         pt.name as proposed_template_name,
+         rp.name as requested_by_name
+       from session_requests sr
+       join students s on s.id = sr.student_id
+       left join class_templates ct on ct.id = sr.template_id
+       left join profiles tp on tp.id = sr.tutor_id
+       left join class_templates pt on pt.id = sr.proposed_template_id
+       left join profiles rp on rp.id = sr.requested_by_user_id
+       where sr.organization_id = $1
+         and ($2::text is null or sr.status = $2)
+       order by sr.created_at desc
+       limit 100`,
+      [orgId, status]
+    );
+    res.json({ ok: true, requests: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+router16.post("/", async (req, res, next) => {
+  try {
+    const body = createBookingRequestSchema.parse(req.body);
+    const orgId = req.user.organizationId;
+    const uid = req.user.id;
+    if ("templateId" in body) {
+      const templateRes = await pool.query(`select organization_id from class_templates where id = $1`, [body.templateId]);
+      if (templateRes.rowCount === 0 || templateRes.rows[0].organization_id !== orgId) {
+        return res.status(404).json({ error: { code: "not_found", message: "Class template not found" } });
+      }
+    } else {
+      if (new Date(body.requestedEndTime).getTime() <= new Date(body.requestedStartTime).getTime()) {
+        return res.status(422).json({ error: { code: "invalid_range", message: "End time must be after start time" } });
+      }
+      const tutorRes = await pool.query(
+        `select 1 from organization_members where organization_id = $1 and user_id = $2 and role = 'tutor'`,
+        [orgId, body.tutorId]
+      );
+      if (tutorRes.rowCount === 0) {
+        return res.status(404).json({ error: { code: "not_found", message: "Tutor not found in this organization" } });
+      }
+    }
+    const insertRes = await pool.query(
+      "templateId" in body ? `insert into session_requests (organization_id, requested_by_user_id, student_id, template_id, notes)
+           values ($1, $2, $3, $4, $5) returning id` : `insert into session_requests (organization_id, requested_by_user_id, student_id, tutor_id, requested_start_time, requested_end_time, notes)
+           values ($1, $2, $3, $4, $5, $6, $7) returning id`,
+      "templateId" in body ? [orgId, uid, body.studentId, body.templateId, body.notes ?? null] : [orgId, uid, body.studentId, body.tutorId, body.requestedStartTime, body.requestedEndTime, body.notes ?? null]
+    );
+    const requestId = insertRes.rows[0].id;
+    await writeAudit(orgId, uid, "booking_request.create", "session_requests", requestId, { studentId: body.studentId });
+    res.status(201).json({ ok: true, requestId });
+  } catch (err) {
+    next(err);
+  }
+});
+async function loadRequestForUpdate(client, orgId, requestId) {
+  const res = await client.query(`select * from session_requests where id = $1 for update`, [requestId]);
+  if (res.rowCount === 0) {
+    throw Object.assign(new Error("Booking request not found"), { status: 404, code: "not_found" });
+  }
+  const row = res.rows[0];
+  if (row.organization_id !== orgId) {
+    throw Object.assign(new Error("Request belongs to another organization"), { status: 403, code: "forbidden" });
+  }
+  return row;
+}
+router16.post("/:id/accept", requireRole(...CAN_RESPOND), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const uid = req.user.id;
+    const requestId = req.params.id;
+    await withTransaction(async (client) => {
+      const row = await loadRequestForUpdate(client, orgId, requestId);
+      if (row.status !== "pending") {
+        throw Object.assign(new Error(`Request is already ${row.status}`), { status: 409, code: "invalid_status" });
+      }
+      let enrollmentId = null;
+      let sessionId = null;
+      if (row.template_id) {
+        enrollmentId = await createEnrollmentTx(client, orgId, row.student_id, row.template_id);
+      } else {
+        sessionId = await createSessionTx(client, orgId, {
+          tutorId: row.tutor_id,
+          studentIds: [row.student_id],
+          startTime: row.requested_start_time,
+          endTime: row.requested_end_time
+        });
+      }
+      await client.query(
+        `update session_requests
+         set status = 'accepted', responded_by_user_id = $1, responded_at = now(),
+             resulting_enrollment_id = $2, resulting_session_id = $3
+         where id = $4`,
+        [uid, enrollmentId, sessionId, requestId]
+      );
+    });
+    await writeAudit(orgId, uid, "booking_request.accept", "session_requests", requestId, {});
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+router16.post("/:id/decline", requireRole(...CAN_RESPOND), async (req, res, next) => {
+  try {
+    const { responseNote } = declineBookingRequestSchema.parse(req.body);
+    const orgId = req.user.organizationId;
+    const uid = req.user.id;
+    const requestId = req.params.id;
+    await withTransaction(async (client) => {
+      const row = await loadRequestForUpdate(client, orgId, requestId);
+      if (row.status !== "pending" && row.status !== "countered") {
+        throw Object.assign(new Error(`Request is already ${row.status}`), { status: 409, code: "invalid_status" });
+      }
+      await client.query(
+        `update session_requests
+         set status = 'declined', responded_by_user_id = $1, responded_at = now(), response_note = $2
+         where id = $3`,
+        [uid, responseNote ?? null, requestId]
+      );
+    });
+    await writeAudit(orgId, uid, "booking_request.decline", "session_requests", requestId, { responseNote });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+router16.post("/:id/propose", requireRole(...CAN_RESPOND), async (req, res, next) => {
+  try {
+    const body = proposeAlternativeSchema.parse(req.body);
+    const orgId = req.user.organizationId;
+    const uid = req.user.id;
+    const requestId = req.params.id;
+    await withTransaction(async (client) => {
+      const row = await loadRequestForUpdate(client, orgId, requestId);
+      if (row.status !== "pending") {
+        throw Object.assign(new Error(`Request is already ${row.status}`), { status: 409, code: "invalid_status" });
+      }
+      const isTemplateProposal = "proposedTemplateId" in body;
+      if (isTemplateProposal !== !!row.template_id) {
+        throw Object.assign(new Error("Counter-offer must match the request's target type"), { status: 422, code: "target_mismatch" });
+      }
+      await client.query(
+        `update session_requests
+         set status = 'countered', responded_by_user_id = $1, responded_at = now(), response_note = $2,
+             proposed_template_id = $3, proposed_start_time = $4, proposed_end_time = $5
+         where id = $6`,
+        [
+          uid,
+          body.responseNote ?? null,
+          isTemplateProposal ? body.proposedTemplateId : null,
+          isTemplateProposal ? null : body.proposedStartTime,
+          isTemplateProposal ? null : body.proposedEndTime,
+          requestId
+        ]
+      );
+    });
+    await writeAudit(orgId, uid, "booking_request.propose", "session_requests", requestId, {});
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+router16.post("/:id/respond-to-proposal", async (req, res, next) => {
+  try {
+    const { accept } = respondToProposalSchema.parse(req.body);
+    const orgId = req.user.organizationId;
+    const uid = req.user.id;
+    const requestId = req.params.id;
+    await withTransaction(async (client) => {
+      const row = await loadRequestForUpdate(client, orgId, requestId);
+      if (row.requested_by_user_id !== uid) {
+        throw Object.assign(new Error("Only the original requester can respond to a counter-offer"), { status: 403, code: "forbidden" });
+      }
+      if (row.status !== "countered") {
+        throw Object.assign(new Error(`Request is already ${row.status}`), { status: 409, code: "invalid_status" });
+      }
+      if (!accept) {
+        await client.query(
+          `update session_requests set status = 'declined', responded_by_user_id = $1, responded_at = now() where id = $2`,
+          [uid, requestId]
+        );
+        return;
+      }
+      let enrollmentId = null;
+      let sessionId = null;
+      if (row.proposed_template_id) {
+        enrollmentId = await createEnrollmentTx(client, orgId, row.student_id, row.proposed_template_id);
+      } else {
+        sessionId = await createSessionTx(client, orgId, {
+          tutorId: row.tutor_id,
+          studentIds: [row.student_id],
+          startTime: row.proposed_start_time,
+          endTime: row.proposed_end_time
+        });
+      }
+      await client.query(
+        `update session_requests
+         set status = 'accepted', responded_by_user_id = $1, responded_at = now(),
+             resulting_enrollment_id = $2, resulting_session_id = $3
+         where id = $4`,
+        [uid, enrollmentId, sessionId, requestId]
+      );
+    });
+    await writeAudit(orgId, uid, "booking_request.respond_to_proposal", "session_requests", requestId, { accept });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+var sessionRequests_default = router16;
+
 // server/app.ts
 function createApp() {
   if (process.env.SENTRY_DSN) {
@@ -3299,7 +3595,7 @@ function createApp() {
       tracesSampleRate: 0.1
     });
   }
-  const app2 = express16();
+  const app2 = express17();
   const isProd = process.env.NODE_ENV === "production";
   app2.use(pino({
     level: isProd ? "info" : "debug",
@@ -3320,7 +3616,7 @@ function createApp() {
     // header-based auth only; no cookies, no CSRF surface
   }));
   app2.set("trust proxy", 1);
-  app2.use("/api/webhooks", express16.raw({ type: "*/*", limit: "1mb" }), webhooks_default);
+  app2.use("/api/webhooks", express17.raw({ type: "*/*", limit: "1mb" }), webhooks_default);
   const apiLimiter = rateLimit({
     windowMs: 60 * 1e3,
     max: 120,
@@ -3330,7 +3626,7 @@ function createApp() {
     // (coaching centers share IPs). ipKeyGenerator handles IPv6 subnets.
     keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip || "")
   });
-  app2.use(express16.json({ limit: "1mb" }));
+  app2.use(express17.json({ limit: "1mb" }));
   app2.use("/api/", identifyUser, apiLimiter);
   app2.use("/api/v1/settings", settings_default);
   app2.use("/api/v1/members", members_default);
@@ -3339,6 +3635,7 @@ function createApp() {
   app2.use("/api/v1/parents", parents_default);
   app2.use("/api/v1/students", students_default);
   app2.use("/api/v1/scheduling", scheduling_default);
+  app2.use("/api/v1/session-requests", sessionRequests_default);
   app2.use("/api/v1/documents", documents_default);
   app2.use("/api/v1/inbox", inbox_default);
   app2.use("/api/v1/subscription", subscription_default);

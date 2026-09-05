@@ -2,6 +2,7 @@
   "common": {
     "appName": "ClassStackr",
     "search": "Search or jump to…",
+    "unknown": "Someone",
     "cancel": "Cancel",
     "save": "Save",
     "saving": "Saving…",
@@ -239,6 +240,7 @@
     "segUnread": "Unread",
     "segWaiting": "Waiting",
     "segArchived": "Archived",
+    "segRequests": "Requests",
     "newMessage": "New message",
     "classChannels": "Class channels",
     "directMessage": "Direct message",
@@ -264,7 +266,24 @@
       "payment_due": "Payment due",
       "session_reminder": "Upcoming session",
       "session_conflict": "Scheduling conflict"
-    }
+    },
+    "requestsEmpty": "No pending requests",
+    "requestsEmptyHint": "Booking requests from parents and students will show up here.",
+    "requestWantsClass": "Wants to join",
+    "requestWantsTutor": "Wants a one-on-one with",
+    "requestNotes": "Note",
+    "requestAccept": "Accept",
+    "requestDecline": "Decline",
+    "requestPropose": "Propose alternative",
+    "requestAccepted": "Request accepted",
+    "requestDeclined": "Request declined",
+    "requestProposed": "Alternative sent",
+    "requestActionFailed": "Couldn't complete that",
+    "requestDeclineNotePrompt": "Add a note for the requester (optional)",
+    "requestProposeTemplatePrompt": "Choose a different class",
+    "requestProposeTimePrompt": "Propose a different time",
+    "requestCountered": "Awaiting requester's response to your alternative",
+    "requestCancel": "Cancel"
   },
   "onboarding": {
     "welcomeTitle": "Let's get your first class booked",

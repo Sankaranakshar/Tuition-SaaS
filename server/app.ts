@@ -19,6 +19,7 @@ import subscriptionRoutes from "./routes/subscription.ts";
 import adminRoutes from "./routes/admin.ts";
 import orgExportRoutes from "./routes/orgExport.ts";
 import auditLogRoutes from "./routes/auditLog.ts";
+import sessionRequestsRoutes from "./routes/sessionRequests.ts";
 import { identifyUser, type AuthRequest } from "./middleware/auth.ts";
 
 // Builds the configured Express app WITHOUT starting a listener or serving the
@@ -89,6 +90,7 @@ export function createApp() {
   app.use("/api/v1/parents", parentsRoutes);
   app.use("/api/v1/students", studentsRoutes);
   app.use("/api/v1/scheduling", schedulingRoutes);
+  app.use("/api/v1/session-requests", sessionRequestsRoutes);
   app.use("/api/v1/documents", documentsRoutes);
   app.use("/api/v1/inbox", inboxRoutes);
   app.use("/api/v1/subscription", subscriptionRoutes);

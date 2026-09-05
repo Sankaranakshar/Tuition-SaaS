@@ -22,46 +22,50 @@ router.use(authenticateToken, requireOrg);
 
 const CAN_SCHEDULE = ["owner", "admin", "tutor", "frontdesk"] as const;
 
+/** Row lock on the template serializes concurrent enrollment attempts against
+ *  it, so the capacity count read is race-free. Shared by the direct
+ *  enrollment route and booking-request acceptance (sessionRequests.ts) —
+ *  both need the exact same capacity check, not two copies of it. */
+export async function createEnrollmentTx(client: PoolClient, orgId: string, studentId: string, templateId: string): Promise<string> {
+  const templateRes = await client.query(
+    `select organization_id, type, capacity from class_templates where id = $1 for update`,
+    [templateId]
+  );
+  if (templateRes.rowCount === 0) {
+    throw Object.assign(new Error("Class template not found"), { status: 404, code: "not_found" });
+  }
+  const template = templateRes.rows[0];
+  if (template.organization_id !== orgId) {
+    throw Object.assign(new Error("Template belongs to another organization"), { status: 403, code: "forbidden" });
+  }
+
+  if (template.type === "BATCH") {
+    const countRes = await client.query(
+      `select count(*)::int as n from enrollments where template_id = $1 and status = 'active'`,
+      [templateId]
+    );
+    if (countRes.rows[0].n >= template.capacity) {
+      throw Object.assign(
+        new Error(`Cannot enroll: ${template.type} is at max capacity (${template.capacity})`),
+        { status: 409, code: "capacity_full" }
+      );
+    }
+  }
+
+  const insertRes = await client.query(
+    `insert into enrollments (organization_id, student_id, template_id, status)
+     values ($1, $2, $3, 'active') returning id`,
+    [orgId, studentId, templateId]
+  );
+  return insertRes.rows[0].id as string;
+}
+
 router.post("/enrollments", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, next) => {
   try {
     const { studentId, templateId } = enrollSchema.parse(req.body);
     const orgId = req.user!.organizationId!;
 
-    const enrollmentId = await withTransaction(async (client) => {
-      // Row lock on the template serializes concurrent enrollment attempts
-      // against it, so the capacity count read below is race-free.
-      const templateRes = await client.query(
-        `select organization_id, type, capacity from class_templates where id = $1 for update`,
-        [templateId]
-      );
-      if (templateRes.rowCount === 0) {
-        throw Object.assign(new Error("Class template not found"), { status: 404, code: "not_found" });
-      }
-      const template = templateRes.rows[0];
-      if (template.organization_id !== orgId) {
-        throw Object.assign(new Error("Template belongs to another organization"), { status: 403, code: "forbidden" });
-      }
-
-      if (template.type === "BATCH") {
-        const countRes = await client.query(
-          `select count(*)::int as n from enrollments where template_id = $1 and status = 'active'`,
-          [templateId]
-        );
-        if (countRes.rows[0].n >= template.capacity) {
-          throw Object.assign(
-            new Error(`Cannot enroll: ${template.type} is at max capacity (${template.capacity})`),
-            { status: 409, code: "capacity_full" }
-          );
-        }
-      }
-
-      const insertRes = await client.query(
-        `insert into enrollments (organization_id, student_id, template_id, status)
-         values ($1, $2, $3, 'active') returning id`,
-        [orgId, studentId, templateId]
-      );
-      return insertRes.rows[0].id as string;
-    });
+    const enrollmentId = await withTransaction((client) => createEnrollmentTx(client, orgId, studentId, templateId));
 
     await writeAudit(orgId, req.user!.id, "enrollment.create", "enrollments", enrollmentId, { studentId, templateId });
     res.json({ ok: true, enrollmentId });
@@ -152,27 +156,35 @@ async function checkTutorConflictAndInsert(
   return insert();
 }
 
+/** Shared by the direct session route and booking-request acceptance
+ *  (sessionRequests.ts) — both need the same tutor-conflict check, not two
+ *  copies of it. Meeting links are attached server-side via the Google
+ *  Calendar integration (Epic 8, deferred). Never fabricate one here. */
+export async function createSessionTx(
+  client: PoolClient,
+  orgId: string,
+  body: { templateId?: string | null; tutorId: string; studentIds?: string[]; startTime: string; endTime: string; isOnline?: boolean; roomNumber?: string | null }
+): Promise<string> {
+  return checkTutorConflictAndInsert(client, orgId, body.tutorId, body.startTime, body.endTime, async () => {
+    const studentIds = body.studentIds || [];
+    const { studentUserIds, parentUserIds } = await resolveUserIds(client, studentIds);
+    const insertRes = await client.query(
+      `insert into class_sessions
+         (organization_id, template_id, tutor_id, student_ids, student_user_ids, parent_user_ids, start_time, end_time, status, is_online, room_number)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, 'scheduled', $9, $10)
+       returning id`,
+      [orgId, body.templateId ?? null, body.tutorId, studentIds, studentUserIds, parentUserIds, body.startTime, body.endTime, body.isOnline ?? false, body.roomNumber ?? null]
+    );
+    return insertRes.rows[0].id as string;
+  });
+}
+
 router.post("/sessions", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, next) => {
   try {
     const body = sessionSchema.parse(req.body);
     const orgId = req.user!.organizationId!;
 
-    const sessionId = await withTransaction((client) =>
-      checkTutorConflictAndInsert(client, orgId, body.tutorId, body.startTime, body.endTime, async () => {
-        const studentIds = body.studentIds || [];
-        const { studentUserIds, parentUserIds } = await resolveUserIds(client, studentIds);
-        // Meeting links are attached server-side via the Google Calendar
-        // integration (Epic 8, deferred). Never fabricate one here.
-        const insertRes = await client.query(
-          `insert into class_sessions
-             (organization_id, template_id, tutor_id, student_ids, student_user_ids, parent_user_ids, start_time, end_time, status, is_online, room_number)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, 'scheduled', $9, $10)
-           returning id`,
-          [orgId, body.templateId, body.tutorId, studentIds, studentUserIds, parentUserIds, body.startTime, body.endTime, body.isOnline ?? false, body.roomNumber ?? null]
-        );
-        return insertRes.rows[0].id as string;
-      })
-    );
+    const sessionId = await withTransaction((client) => createSessionTx(client, orgId, body));
 
     res.json({ ok: true, sessionId });
   } catch (err) { next(err); }

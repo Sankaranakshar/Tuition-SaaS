@@ -28,8 +28,8 @@
 | 1 | Cancellation-policy settings (D-08 schema) | 0c | ✅ Done 2026-08-06 |
 | 2 | B-01 attendance reversal engine | 1 | ✅ Done 2026-08-06 |
 | 3 | Cancellation-policy surface (parent-facing) | 2 | ✅ Done 2026-08-06 |
-| 4 | B-03 wallet-to-ledger reconciliation job | 2 | ☐ Not started |
-| 5 | Booking-request approval UI | — | ☐ Not started |
+| 4 | B-03 wallet-to-ledger reconciliation job | 2 | ✅ Done 2026-09-05 |
+| 5 | Booking-request approval UI | — | ✅ Done 2026-09-05 |
 | 6 | B-09 bulk import (CSV/Excel) | — | ☐ Not started |
 | 7 | B-05 self-serve parent top-up | — | ☐ Not started |
 | 8 | **Needs you** — D-07 credit expiry period | — | ☐ Not started |
@@ -132,24 +132,29 @@ Unit (182/182), RLS (81/81), and contract (206/206) suites all green — no RLS 
 **Scope:** new endpoint `POST /api/cron/reconcile-wallets` in `server/routes/cron.ts`, following the exact existing pattern of `/api/cron/reporting-daily` (same file — read it first, copy its secret-gating and idempotent-upsert shape). Logic: for each wallet, sum `wallet_ledger` rows for that `(organization_id, student_id)` and compare to the wallet's current `balance_credits`/`balance_currency`. Where they disagree, write a row to a small new table (or reuse `audit_events` with a distinct action type `wallet.reconciliation_mismatch` — prefer this over a new table, less schema surface for a diagnostic-only feature) rather than silently auto-correcting; a human should look at a real drift before the job starts rewriting balances.
 
 **Definition of done:**
-- [ ] Throwaway contract test proving correct-match and deliberate-mismatch cases, written against the PGlite harness, then deleted — same convention as `/reporting-daily`'s verification (DEV_PLAN.md §3.3), since cron routes are deliberately excluded from the permanent contract suite (HANDOFF.md §5 rule... actually the testing-strategy note in DEV_PLAN.md §5: "Route contracts deliberately skip `cron.ts`").
-- [ ] Manually invoke against local dev with a real `CRON_SECRET`, confirm a clean org reports no mismatches.
-- [ ] Cloud Scheduler wiring is explicitly **out of scope** for this step (same open ops gap already noted for `/materialize-sessions` and `/reporting-daily` — don't try to close it here, it needs infra access this session doesn't have).
-- [ ] All seven gates green.
+- [x] Throwaway contract test proving correct-match and deliberate-mismatch cases, written against the PGlite harness, then deleted — same convention as `/reporting-daily`'s verification (DEV_PLAN.md §3.3), since cron routes are deliberately excluded from the permanent contract suite (HANDOFF.md §5 rule... actually the testing-strategy note in DEV_PLAN.md §5: "Route contracts deliberately skip `cron.ts`").
+- [x] Manually invoke against local dev with a real `CRON_SECRET`, confirm a clean org reports no mismatches. (Production currently has 0 rows in `wallets`, so this confirmed the route is wired correctly end-to-end — auth-gating, query execution, response shape — but didn't exercise real data. Worth re-running once a real org has wallet activity.)
+- [x] Cloud Scheduler wiring is explicitly **out of scope** for this step (same open ops gap already noted for `/materialize-sessions` and `/reporting-daily` — don't try to close it here, it needs infra access this session doesn't have).
+- [x] All seven gates green.
+
+**Shipped 2026-09-05:** `POST /api/cron/reconcile-wallets` in `server/routes/cron.ts`, mirroring `/reporting-daily`'s secret-gating. Sums `wallet_ledger.credits`/`paise` per `(organization_id, student_id)`, compares to `wallets.balance_credits`/`balance_currency`, and on mismatch writes an `audit_events` row (`wallet.reconciliation_mismatch`) rather than auto-correcting. Gates: tsc clean, 182 unit, 81 RLS, 206 contract, build, bundle 199.2KB/260KB, API-bundle all 15 mounts present.
 
 ---
 
 ## Step 5 — Booking-request approval UI
 
-**Goal:** `session_requests` (per MASTER_PLAN.md §3, "carried from spec v2 Tutor tab") already exists as a table/API but the staff accept/decline/propose-alternative UI is thin.
+**Goal:** ~~`session_requests` (per MASTER_PLAN.md §3, "carried from spec v2 Tutor tab") already exists as a table/API but the staff accept/decline/propose-alternative UI is thin.~~ **Correction, found while starting this step:** that description was wrong. `session_requests` was a bare stub (id, org, requester, status, created_at) — no route or client ever read or wrote it, and it had no columns to represent an actual request (no template/tutor/time reference). This was a build-from-scratch feature, not a thin-UI pass. Scope confirmed with the founder: support both request shapes (join an existing recurring class, or book a one-on-one with a specific tutor) with a full accept/decline/propose-counter-offer flow, not just accept/decline.
 
-**Scope:** find the existing `session_requests` read path (grep for it — likely partially wired into Inbox or Schedule already) and build out accept/decline/propose-alternative actions using the existing popover/inline-action interaction vocabulary (REDESIGN.md §10 — popover-first editing, not a new modal pattern).
+**Shipped 2026-09-05:**
+- Migration `20260905120000_booking_requests.sql` (pushed live — no staging exists) fleshes out `session_requests`: `student_id`, exactly one of `template_id`/`tutor_id` (XOR check constraint), `requested_start_time/end_time`, `notes`, `proposed_template_id`/`proposed_start_time/end_time`, `response_note`, `responded_by_user_id`/`responded_at`, `resulting_enrollment_id`/`resulting_session_id`.
+- New `server/routes/sessionRequests.ts` mounted at `/api/v1/session-requests`: create (any org member), staff-only list/accept/decline/propose, and a requester-only respond-to-proposal endpoint. Accept/respond-to-proposal reuse `scheduling.ts`'s enrollment-capacity and session-conflict logic directly (extracted into exported `createEnrollmentTx`/`createSessionTx` so there's one source of truth, not a second copy) rather than re-implementing those checks.
+- Client: new `BookingRequestsPanel` rendered as a staff-only "Requests" segment in Inbox (kept as its own list+popover rather than merged into the conversations/notifications feed, which would have forced a booking request into a shape it isn't). Popover-first accept/decline/propose actions per REDESIGN.md §10.
+- The requester's own response to a counter-offer is API-only, code-reviewed but not browser-verified — no demo parent account exists, same convention as this codebase's other parent/student-only surfaces (e.g. StudentDashboard/ParentPortal).
+- **Real bug found and fixed during browser verification:** the propose-alternative form's template dropdown loaded its option list asynchronously after the form mounted; the submit button read a `useState` initializer that only runs once, so on a request's *first* open the button stayed disabled forever (templates hadn't arrived yet) unless the popover was closed and reopened. Fixed with a `useEffect` that syncs the default selection once the list arrives. Confirmed reproduced, then confirmed fixed, against a fresh request in production.
 
 **Definition of done:**
-- [ ] All three actions (accept/decline/propose) work end to end, browser-verified.
-- [ ] All seven gates green.
-
-*(Lighter detail here deliberately — read the existing `session_requests` code first; the shape of "thin UI over an existing table" means the real scope only becomes clear once you've seen what's there.)*
+- [x] All three staff actions (accept/decline/propose) work end to end, browser-verified against production (demo tutor account) — accept creates a real enrollment or session, decline just changes status, propose moves the request to `countered` and a requester-side accept resolves it against the *proposed* values, not the original ask.
+- [x] All seven gates green (182 unit, 81 RLS, 220 contract [+14 new], build, bundle 199.6KB/260KB, API-bundle 16/16 mounts).
 
 ---
 

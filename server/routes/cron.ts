@@ -1,6 +1,8 @@
 import express from "express";
 import { pool } from "../db.ts";
 import { materializeTemplate, TEMPLATE_SELECT, MATERIALIZABLE, type Template } from "./scheduling.ts";
+import { writeAudit } from "../utils/audit.ts";
+import { paiseToRupees } from "../../shared/money.ts";
 
 // Machine-to-machine endpoint for Cloud Scheduler. No Supabase user session
 // exists for a scheduler invocation, so this is gated by a shared secret
@@ -111,6 +113,61 @@ router.post("/reporting-daily", async (req, res, next) => {
     );
 
     res.json({ ok: true, date: targetDate, orgsProcessed: result.rowCount });
+  } catch (err) { next(err); }
+});
+
+// Wallet-to-ledger reconciliation (B-03, MASTER_PLAN.md §3 R1) — the check
+// that catches the next B-01-shaped bug before a parent notices their
+// balance is wrong. wallet_ledger is the append-only source of truth (every
+// top-up/attendance-debit/refund/reversal route writes a signed delta row
+// here); wallets.balance_credits/balance_currency are denormalized running
+// totals kept in sync by those same routes. This job re-derives the totals
+// from the ledger and compares — on a mismatch it does NOT auto-correct
+// (a real drift needs a human to look at it, not a job silently rewriting
+// money), it just logs an audit_events row so it's visible in the audit log
+// viewer. balance_currency is legacy display-mirror rupees (numeric(10,2),
+// shared/money.ts); expected_paise is cast to numeric before dividing since
+// bigint/int division in Postgres truncates.
+router.post("/reconcile-wallets", async (_req, res, next) => {
+  try {
+    const mismatches = await pool.query(
+      `with expected as (
+         select organization_id, student_id,
+                coalesce(sum(credits), 0)::int as expected_credits,
+                coalesce(sum(paise), 0)::bigint as expected_paise
+         from wallet_ledger
+         group by organization_id, student_id
+       )
+       select w.id, w.organization_id, w.student_id,
+              w.balance_credits, w.balance_currency,
+              coalesce(e.expected_credits, 0) as expected_credits,
+              coalesce(e.expected_paise, 0) as expected_paise
+       from wallets w
+       left join expected e
+         on e.organization_id = w.organization_id and e.student_id = w.student_id
+       where w.balance_credits <> coalesce(e.expected_credits, 0)
+          or w.balance_currency <> round(coalesce(e.expected_paise, 0)::numeric / 100, 2)`
+    );
+
+    for (const row of mismatches.rows) {
+      await writeAudit(
+        row.organization_id,
+        { system: "wallet_reconciliation_cron" },
+        "wallet.reconciliation_mismatch",
+        "wallets",
+        row.id,
+        {
+          studentId: row.student_id,
+          actualCredits: row.balance_credits,
+          expectedCredits: row.expected_credits,
+          actualCurrency: row.balance_currency,
+          expectedCurrency: paiseToRupees(Number(row.expected_paise)),
+        }
+      );
+    }
+
+    const totalRes = await pool.query(`select count(*)::int as total from wallets`);
+    res.json({ ok: true, walletsChecked: totalRes.rows[0].total, mismatches: mismatches.rowCount });
   } catch (err) { next(err); }
 });
 

@@ -6,6 +6,7 @@ import { Send, Archive, Clock, Radio, MessageSquare, Inbox as InboxIcon, Plus, X
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { EmptyState, SkeletonRow, ContextCard, Popover, Modal } from "../components/kit";
+import { BookingRequestsPanel } from "../components/BookingRequestsPanel";
 import { formatTime, formatDate } from "../lib/format";
 import { recordManualPayment } from "../lib/api";
 import {
@@ -32,13 +33,16 @@ import {
   findOrCreateDirectConversation,
 } from "../hooks/useInbox";
 
-type Segment = "all" | "unread" | "waiting" | "archived";
+type Segment = "all" | "unread" | "waiting" | "archived" | "requests";
 const SEGMENTS: { key: Segment; labelKey: string }[] = [
   { key: "all", labelKey: "inbox.segAll" },
   { key: "unread", labelKey: "inbox.segUnread" },
   { key: "waiting", labelKey: "inbox.segWaiting" },
   { key: "archived", labelKey: "inbox.segArchived" },
 ];
+// Staff-only — a booking request needs someone who can accept/decline/
+// propose an alternative, which parents and students can't do.
+const STAFF_SEGMENTS: { key: Segment; labelKey: string }[] = [{ key: "requests", labelKey: "inbox.segRequests" }];
 
 const SNOOZE_OPTIONS = [
   { labelKey: "inbox.snoozeHour", hours: 1 },
@@ -204,7 +208,7 @@ export default function Inbox() {
       </div>
 
       <div className="flex items-center gap-1 border-b border-[var(--cs-border)] px-1">
-        {SEGMENTS.map(({ key, labelKey }) => (
+        {[...SEGMENTS, ...(isStaff ? STAFF_SEGMENTS : [])].map(({ key, labelKey }) => (
           <button
             key={key}
             onClick={() => setSegment(key)}
@@ -220,6 +224,10 @@ export default function Inbox() {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
+        {segment === "requests" ? (
+          <BookingRequestsPanel orgId={orgId} />
+        ) : (
+          <>
         <div className="w-80 shrink-0 overflow-y-auto border-r border-[var(--cs-border)]">
           {conversationsLoading ? (
             <div className="divide-y divide-[var(--cs-border)]">{Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} />)}</div>
@@ -252,6 +260,8 @@ export default function Inbox() {
             </div>
           )}
         </div>
+          </>
+        )}
       </div>
 
       {newMessageOpen && (
