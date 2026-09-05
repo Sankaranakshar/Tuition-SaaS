@@ -814,7 +814,8 @@ function ClassWizard({
     (async () => {
       const [{ data: courseRows }, { data: studentRows }] = await Promise.all([
         supabase.from("courses").select("id, name").eq("organization_id", user.organizationId).limit(100),
-        supabase.from("students").select("id, name").eq("organization_id", user.organizationId).limit(200),
+        // is_deleted: false — an archived or DPDP-erased student can't be enrolled in a new class
+        supabase.from("students").select("id, name").eq("organization_id", user.organizationId).eq("is_deleted", false).limit(200),
       ]);
       setCourses(courseRows || []);
       setStudents(studentRows || []);
