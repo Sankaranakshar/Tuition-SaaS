@@ -1,7 +1,11 @@
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Inbox, Receipt, Users, MessageSquare, Phone } from "lucide-react";
+import { Inbox, Receipt, Users, MessageSquare, Phone, Plus } from "lucide-react";
 import {
+  Button,
+  Toggle,
+  Field,
+  Input,
   EmptyState,
   Skeleton,
   SkeletonText,
@@ -19,18 +23,66 @@ import { formatINR } from "@/lib/format";
 
 // Storybook-style demo route (DEV_PLAN E5.4 acceptance): every kit component
 // in every meaningful state, so regressions are visible at a glance. Reachable
-// at /app/kit and via the command palette ("kit").
+// at /app/kit and via the command palette ("kit"). This is the regression
+// surface for the design-system work — keep it exhaustive.
 export default function Kit() {
   const [amount, setAmount] = useState("3000");
+  const [toggleA, setToggleA] = useState(true);
+  const [toggleB, setToggleB] = useState(false);
 
   return (
     <div className="mx-auto max-w-4xl space-y-10 pb-16">
       <header>
         <h1 className="text-xl font-semibold text-[var(--cs-text)]">Component kit</h1>
         <p className="mt-1 text-sm text-[var(--cs-text-muted)]">
-          The shared vocabulary (DEV_PLAN E5.4). Every state rendered here.
+          The shared vocabulary (DEV_PLAN E5.4). Every state rendered here, light and dark.
         </p>
       </header>
+
+      <Section title="Button">
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button>Primary</Button>
+            <Button variant="ghost">Ghost</Button>
+            <Button variant="quiet">Quiet</Button>
+            <Button variant="danger">Delete</Button>
+            <Button icon={Plus}>With icon</Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm">Small primary</Button>
+            <Button size="sm" variant="ghost">Small ghost</Button>
+            <Button disabled>Disabled</Button>
+            <Button variant="ghost" disabled>Disabled ghost</Button>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Toggle">
+        <div className="flex flex-wrap items-center gap-6">
+          <Toggle label="Setting A" checked={toggleA} onChange={setToggleA} />
+          <Toggle label="Setting B" checked={toggleB} onChange={setToggleB} />
+          <Toggle label="Disabled on" checked disabled onChange={() => {}} />
+          <Toggle label="Disabled off" checked={false} disabled onChange={() => {}} />
+        </div>
+      </Section>
+
+      <Section title="Field / Input">
+        <div className="grid max-w-md gap-4">
+          <Field label="Student name" renderControl={(id) => <Input id={id} placeholder="e.g. Riya Sharma" />} />
+          <Field
+            label="Monthly fee"
+            hint="Shown to the parent on every invoice."
+            renderControl={(id) => <Input id={id} type="number" defaultValue={3000} />}
+          />
+          <Field
+            label="Email"
+            required
+            error="Enter a valid email address."
+            renderControl={(id) => <Input id={id} defaultValue="riya@" aria-invalid />}
+          />
+          <Field label="Disabled" renderControl={(id) => <Input id={id} disabled value="Locked" readOnly />} />
+        </div>
+      </Section>
 
       <Section title="StatChip">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -38,7 +90,7 @@ export default function Kit() {
           <StatChip label="Outstanding" value={formatINR(27300)} hint="6 invoices" tone="warn" />
           <StatChip label="Overdue 30+ days" value={formatINR(4500)} hint="3 parents" tone="danger" />
           <StatChip label="Sessions this week" value={18} hint="+3 vs last week" />
-          <StatChip label="Active students" value={126} onClick={() => toast("Would open People")} />
+          <StatChip label="Active students" value={126} onClick={() => toast("Would open Students")} />
         </div>
       </Section>
 
@@ -63,7 +115,7 @@ export default function Kit() {
       </Section>
 
       <Section title="PersonRow">
-        <div className="divide-y divide-[var(--cs-border)] rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+        <div className="divide-y divide-[var(--cs-border)] rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
           <PersonRow
             name="Riya Sharma"
             subtitle="Paid ₹3,000 · 2 days ago"
@@ -90,6 +142,7 @@ export default function Kit() {
       <Section title="ContextCard">
         <div className="space-y-2">
           <ContextCard icon={Receipt} title="Invoice #142" detail="₹3,000 · overdue 6 days" tone="danger" action={<RowAction icon={Receipt} label="Record payment" />} />
+          <ContextCard icon={Users} title="Class 10 Maths batch" detail="12 students · Mon/Wed/Fri 5:00 pm" tone="warn" />
           <ContextCard icon={Users} title="Class 10 Maths batch" detail="12 students · Mon/Wed/Fri 5:00 pm" />
         </div>
       </Section>
@@ -121,7 +174,7 @@ export default function Kit() {
 
       <Section title="Skeleton">
         <div className="grid gap-4 sm:grid-cols-2">
-          <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+          <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
             <SkeletonRow />
             <SkeletonRow />
           </div>
@@ -170,7 +223,7 @@ function RowAction({ icon: Icon, label }: { icon: typeof MessageSquare; label: s
         toast(label);
       }}
       title={label}
-      className="flex h-8 w-8 items-center justify-center rounded-[6px] text-[var(--cs-text-muted)] hover:bg-[var(--cs-surface)] hover:text-[var(--cs-text)]"
+      className="flex h-8 w-8 items-center justify-center rounded-[var(--cs-radius-control)] text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)]"
     >
       <Icon className="h-4 w-4" strokeWidth={1.75} />
     </button>

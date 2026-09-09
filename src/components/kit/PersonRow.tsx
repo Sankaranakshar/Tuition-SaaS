@@ -32,8 +32,8 @@ export function PersonRow({
     <div
       onClick={onClick}
       className={cn(
-        "group flex items-center gap-3 rounded-[6px] px-3 py-2.5 transition-colors",
-        onClick && "cursor-pointer hover:bg-[var(--cs-bg)]",
+        "group flex items-center gap-3 rounded-[var(--cs-radius-control)] px-3 py-2.5 transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)]",
+        onClick && "cursor-pointer hover:bg-[var(--cs-surface-2)]",
         selected && "bg-[var(--cs-accent-soft)]",
         className
       )}
@@ -57,7 +57,7 @@ export function PersonRow({
       </div>
 
       {actions && (
-        <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] group-hover:opacity-100 focus-within:opacity-100">
           {actions}
         </div>
       )}

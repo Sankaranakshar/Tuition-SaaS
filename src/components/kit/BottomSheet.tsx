@@ -29,7 +29,7 @@ export function BottomSheet({ onClose, children, className, labelledBy, label }:
         onClose={onClose}
         labelledBy={labelledBy}
         label={label}
-        className={`w-full max-w-md rounded-t-[10px] border-t border-[var(--cs-border)] bg-[var(--cs-surface)] pb-[env(safe-area-inset-bottom)] shadow-lg transition-transform duration-200 ease-out ${
+        className={`w-full max-w-md rounded-t-[var(--cs-radius-container)] border-t border-[var(--cs-border)] bg-[var(--cs-surface)] pb-[env(safe-area-inset-bottom)] shadow-[var(--cs-shadow-pop)] transition-transform duration-[var(--cs-motion-spatial)] ease-[var(--cs-ease-out)] ${
           entered ? "translate-y-0" : "translate-y-full"
         } ${className || ""}`}
       >

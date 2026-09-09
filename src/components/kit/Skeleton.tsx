@@ -8,7 +8,7 @@ export function Skeleton({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "animate-pulse rounded-[6px] bg-[var(--cs-border)]/60",
+        "animate-pulse rounded-[var(--cs-radius-control)] bg-[var(--cs-border)]/60",
         className
       )}
     />
@@ -23,7 +23,7 @@ export function SkeletonText({ lines = 3, className }: { lines?: number; classNa
         <div
           key={i}
           className={cn(
-            "h-3.5 animate-pulse rounded-[6px] bg-[var(--cs-border)]/60",
+            "h-3.5 animate-pulse rounded-[var(--cs-radius-control)] bg-[var(--cs-border)]/60",
             i === lines - 1 ? "w-2/3" : "w-full"
           )}
         />
@@ -48,7 +48,7 @@ export function SkeletonRow() {
 /** A card placeholder: header line + body lines. */
 export function SkeletonCard() {
   return (
-    <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4">
+    <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4">
       <Skeleton className="mb-3 h-4 w-24" />
       <SkeletonText lines={3} />
     </div>

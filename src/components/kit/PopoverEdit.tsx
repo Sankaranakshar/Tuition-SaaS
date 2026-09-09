@@ -1,6 +1,9 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Popover } from "./Popover";
+import { Button } from "./Button";
+import { Input } from "./Field";
 
 interface PopoverEditProps {
   /** Current value, rendered as the clickable trigger. */
@@ -30,7 +33,7 @@ export function PopoverEdit({
     <Popover
       trigger={value || placeholder || "—"}
       triggerClassName={cn(
-        "rounded-[6px] px-1.5 py-0.5 text-sm text-[var(--cs-text)] underline decoration-dotted decoration-[var(--cs-text-muted)] underline-offset-4 transition-colors hover:bg-[var(--cs-bg)]",
+        "rounded-[var(--cs-radius-control)] px-1.5 py-0.5 text-sm text-[var(--cs-text)] underline decoration-dotted decoration-[var(--cs-text-muted)] underline-offset-4 transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)]",
         className
       )}
     >
@@ -69,6 +72,7 @@ function Editor({
   onSubmit: (next: string) => void | Promise<void>;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation();
   const [val, setVal] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -96,7 +100,7 @@ function Editor({
       className="flex flex-col gap-2"
     >
       {label && <label className="text-xs font-medium text-[var(--cs-text-muted)]">{label}</label>}
-      <input
+      <Input
         autoFocus
         type={type}
         value={val}
@@ -108,24 +112,15 @@ function Editor({
         onKeyDown={(e) => {
           if (e.key === "Escape") onCancel();
         }}
-        className="w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] px-2.5 py-1.5 text-sm text-[var(--cs-text)] outline-none focus:border-[var(--cs-accent)]"
       />
       {error && <p className="text-xs text-[var(--cs-danger)]">{error}</p>}
       <div className="flex items-center justify-end gap-2 pt-0.5">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-[6px] px-2.5 py-1.5 text-sm text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)]"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={saving}
-          className="rounded-[6px] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-        >
-          {saving ? "Saving…" : "Save"}
-        </button>
+        <Button type="button" variant="quiet" size="sm" onClick={onCancel}>
+          {t("common.cancel")}
+        </Button>
+        <Button type="submit" size="sm" disabled={saving}>
+          {saving ? t("common.saving") : t("common.save")}
+        </Button>
       </div>
     </form>
   );

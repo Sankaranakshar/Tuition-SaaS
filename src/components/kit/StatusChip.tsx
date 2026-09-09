@@ -2,11 +2,13 @@ import { cn } from "@/lib/utils";
 
 export type ChipTone = "neutral" | "positive" | "warn" | "danger" | "accent";
 
+// Near-monochrome semantics (REDESIGN §13): positive/accent carry the pine
+// accent, a caution reads as plain grey (no amber), only a real problem is red.
 const tones: Record<ChipTone, string> = {
-  neutral: "bg-[var(--cs-bg)] text-[var(--cs-text-muted)]",
-  positive: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300",
-  warn: "bg-yellow-50 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
-  danger: "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300",
+  neutral: "bg-[var(--cs-surface-2)] text-[var(--cs-text-muted)]",
+  positive: "bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]",
+  warn: "bg-[var(--cs-surface-2)] text-[var(--cs-text-muted)]",
+  danger: "bg-[var(--cs-danger-soft)] text-[var(--cs-danger)]",
   accent: "bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]",
 };
 
