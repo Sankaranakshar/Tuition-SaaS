@@ -255,23 +255,64 @@ Keep the Tailwind + shadcn/ui base (it is the right choice) but govern it:
 
 ## 12. Motion principles
 
-- **Durations:** 120ms micro (hover, toggle), 180ms structural (popover, row expand), 240ms spatial (panel slide, palette). Nothing over 300ms, ever.
-- **Easing:** ease-out for entrances, ease-in for exits, spring only for drag settle.
-- **Motion must mean something:** things animate to show where they went (a marked-attendance session block settles into its "done" state; a paid invoice row slides to Paid). The current hover `-translate-y-1` card lift and `translate-x-1` nav slide are motion as garnish; both die.
-- **The now-cursor on Today's timeline moves in real time.** One piece of ambient motion that makes the product feel alive; everything else stays still.
-- `prefers-reduced-motion` collapses everything to opacity fades.
+Tokens live in `src/index.css` (`--cs-motion-*`, `--cs-ease-out`).
+
+- **Durations:** `--cs-motion-fast` 120ms (hover, toggle, chip), `--cs-motion-structural` 180ms (popover, row expand, tab switch), `--cs-motion-spatial` 240ms (panel/sheet slide, palette open). Nothing over 300ms, ever.
+- **Easing:** `--cs-ease-out` (`cubic-bezier(.2,.8,.2,1)`) for entrances; ease-in for exits; spring only for a drag settle.
+- **Motion must mean something:** a marked-attendance block settles into its "done" state, a paid invoice row slides to Paid. No hover `-translate-y-1` card lift, no `translate-x-1` nav slide — motion as garnish is out.
+- **The now-cursor on Today's timeline moves in real time.** The one piece of ambient motion; everything else stays still.
+- **`prefers-reduced-motion` is enforced once, globally** in `src/index.css` `@layer base` (animation + transition durations collapse to ~0). Components do not need their own guard.
 
 ---
 
 ## 13. Visual language
 
-- **Type:** Inter (UI) with `tabular-nums` for every number. Scale: 12 / 13 / 14 (body) / 16 / 20 / 28. Two weights: 450 and 600. The current soup of `text-2xl font-bold` page titles becomes a single 20/600 page header.
-- **Color:** near-monochrome slate base (background `#FAFAF9`, surface white, borders `#E7E5E4`, text `#1C1917` / `#78716C`). One brand accent (a deep indigo, kept from the current identity but used at perhaps 5% of current frequency: focused states, primary buttons, links). Semantic trio used only for state: amber (aging/at-risk), red (overdue/conflict), green (paid/present). Full dark theme from day one; tutors teach evenings.
-- **Space:** 4px base grid; 8/12/16/24 as the only gaps; page gutter 24px; **card padding 16px, down from the current 24px**, because information density is a feature for an 8-hour tool.
-- **Depth:** borders and background shifts, not shadows. Shadows only on floating elements (popover, palette, drag lift). The current `shadow-sm hover:shadow-md` card treatment goes.
-- **Radius:** 6px controls, 10px containers, full only on avatars and status dots.
-- **Iconography:** lucide stays, one size (16px) inline and one (18px) in the rail, `stroke-width: 1.75` everywhere.
-- **Numbers and money:** ₹ everywhere, Indian digit grouping, negative amounts in red only inside Money.
+**The direction was agreed with the founder on 2026-09-09.** `docs/design/direction.html` is the visual reference; `src/index.css` `:root` is the implementation and the single place the palette is set. This section supersedes the earlier slate-and-indigo proposal.
+
+- **Type:** Inter, with `tabular-nums` on every number (`.tabular-nums` / `[data-money]` in `src/index.css`). Scale: 12 / 13 / 14 (body) / 16 / 20 / 28. Weights: 450 (`font-normal`, mapped) and 600 (`font-semibold`); 500 for controls. A single 20/600 page header — every `text-2xl font-bold` title retires.
+- **Colour — near-monochrome, one accent:**
+  - Ground: warm off-white `--cs-bg #f7f7f5`, surface `#ffffff`, inset `--cs-surface-2 #f1f1ee`, hairline `--cs-border #e3e3df`, ink `--cs-text #1f211f`, muted `#6d716c`, faint `#969a94`.
+  - One brand accent: **deep pine green `--cs-accent #315c52`** (hover `#264b42`, soft `#e5eeeb`). Used sparingly — primary buttons, active nav, links, focus rings, "paid/enrolled".
+  - **Only the accent and a muted brick red `--cs-danger #b54747` carry hue.** No amber, no separate success green. Aging / at-risk / caution read as **neutral grey + a text label** ("32d overdue"). `--cs-warn` and `--cs-ok` are kept as token names but aliased (to grey / to the accent) so legacy `var(--cs-warn|--cs-ok)` call sites stop rendering amber / a second green.
+  - Overdue past a threshold is the single red signal; scheduling conflicts also red.
+  - **Charts:** accent + neutral steps (`--cs-chart-1..4` = pine → sage → grey → faint), never a rainbow.
+  - **Dark theme from day one** (`--cs-bg #151513`, accent lifts to `#6faa94`) — same tokens, resolved before first paint by the inline script in `index.html` and at runtime by `src/lib/theme.ts` (`light` / `dark` / `system`, persisted in `localStorage` as `cs-theme`).
+- **Space:** 4px base grid; 8/12/16/24 as the only gaps; page gutter 24px; card padding 16px (down from 24).
+- **Depth:** borders and background shifts, not shadows. `--cs-shadow-pop` only on floating elements (popover, palette, drag lift). The `shadow-sm hover:shadow-md` card treatment goes.
+- **Radius:** `--cs-radius-control` 5px, `--cs-radius-container` 8px, full only on avatars and status dots. Literal `rounded-[6px]` / `rounded-[10px]` in components migrate to `rounded-[var(--cs-radius-control|container)]` as each surface is restyled.
+- **Iconography:** lucide, one size 16px inline and 18px in the rail, `stroke-width: 1.75`.
+- **Numbers and money:** ₹ everywhere, Indian digit grouping (`formatINR` / `formatPaise`), negative amounts in red only inside Money.
+
+### 13.1 Token reference
+
+Everything reads from `--cs-*` in `src/index.css`. The shadcn/ui variables
+(`--primary`, `--background`, `--border`, …) are mapped onto these, so `bg-primary`
+/ `border-border` and the `src/components/ui/*` primitives inherit the system and
+dark mode with no per-component change.
+
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `--cs-bg` | `#f7f7f5` | `#151513` | page ground |
+| `--cs-surface` | `#ffffff` | `#1d1d1a` | cards, sheets, rail |
+| `--cs-surface-2` | `#f1f1ee` | `#262622` | insets, hover, table headers |
+| `--cs-border` | `#e3e3df` | `#33332e` | hairlines |
+| `--cs-border-strong` | `#cfcfca` | `#47473f` | input borders, dividers that must read |
+| `--cs-text` | `#1f211f` | `#ecebe6` | primary text |
+| `--cs-text-muted` | `#6d716c` | `#a3a49c` | secondary text, icons |
+| `--cs-text-faint` | `#969a94` | `#75766e` | hints, timestamps, placeholders |
+| `--cs-accent` | `#315c52` | `#6faa94` | brand: buttons, active nav, links, focus |
+| `--cs-accent-hover` | `#264b42` | `#82bda6` | accent hover |
+| `--cs-accent-soft` | `#e5eeeb` | `#1d312b` | active-nav bg, accent chips, avatars |
+| `--cs-accent-contrast` | `#ffffff` | `#0a1512` | text/icon on an accent fill |
+| `--cs-focus` | `#315c52` | `#6faa94` | 2px focus ring |
+| `--cs-danger` | `#b54747` | `#d98a8a` | overdue, conflict, destructive |
+| `--cs-danger-soft` | `#f6e8e8` | `#3a2020` | danger chip / row bg |
+| `--cs-warn` → grey, `--cs-ok` → accent | — | — | legacy aliases; do not use for new work |
+| `--cs-chart-1..4` | pine→faint | pine→faint | chart series, calm ramp |
+| `--cs-radius-control` / `-container` | 5px / 8px | — | controls / containers |
+| `--cs-shadow-pop` | — | — | popover / palette / drag lift only |
+| `--cs-motion-fast` / `-structural` / `-spatial` | 120 / 180 / 240ms | — | see §12 |
+| `--cs-ease-out` | `cubic-bezier(.2,.8,.2,1)` | — | entrance easing |
 
 ---
 

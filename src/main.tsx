@@ -3,6 +3,11 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './lib/i18n';
 import './index.css';
+import { watchSystemTheme } from './lib/theme';
+
+// The initial theme is resolved by an inline script in index.html (pre-paint).
+// This keeps a "system" preference reactive to the OS toggling while open.
+watchSystemTheme();
 
 // Dynamically imported: @sentry/react costs ~29KB gzip on the main entry
 // chunk (measured, docs/OPTIMIZATION_AUDIT.md finding H5) and the DSN is
