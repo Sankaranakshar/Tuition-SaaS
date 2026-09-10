@@ -15,12 +15,16 @@
     "logOut": "Log out",
     "settings": "Settings",
     "notifications": "Notifications",
-    "switchPortal": "Switch portal"
+    "switchPortal": "Switch portal",
+    "more": "More",
+    "navigation": "Navigation",
+    "auditLog": "Audit log",
+    "platformAdmin": "Platform admin"
   },
   "nav": {
     "today": "Today",
-    "schedule": "Schedule",
-    "people": "People",
+    "schedule": "Classes",
+    "people": "Students",
     "money": "Money",
     "inbox": "Inbox",
     "learn": "Learn",
@@ -42,6 +46,11 @@
     "newStudent": "New student",
     "scheduleClass": "Schedule a class",
     "newLead": "New lead",
+    "courses": "Courses",
+    "leads": "Leads",
+    "tutors": "Tutors",
+    "documents": "Documents",
+    "componentKit": "Component kit",
     "hint": "↑↓ navigate · ↵ open · esc close"
   },
   "empty": {
@@ -346,7 +355,7 @@
     "classNameLabel": "Class name",
     "startTimeLabel": "Start time",
     "beat3Title": "Add your first students",
-    "beat3Subtitle": "Add up to two now — you can add more later from People.",
+    "beat3Subtitle": "Add up to two now; you can add more later from Students.",
     "studentNameLabel": "Student name",
     "phoneLabel": "Phone (optional)",
     "importCsv": "Import from CSV instead",
