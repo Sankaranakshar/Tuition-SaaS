@@ -5,9 +5,12 @@ import type { AuditEvent } from "../../shared/schemas/auditLog";
 import type { OrgHealth } from "../../shared/schemas/admin";
 import { useIsPlatformAdmin } from "../hooks/usePlatformAdmin";
 import { formatDate, formatTime } from "../lib/format";
-import { EmptyState, SkeletonRow } from "../components/kit";
+import { EmptyState, SkeletonRow, Button } from "../components/kit";
 
 const PAGE_SIZE = 50;
+
+const FIELD_CLASS =
+  "rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-2 py-1.5 text-sm text-[var(--cs-text)] outline-none transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] focus:border-[var(--cs-focus)] focus:ring-2 focus:ring-[var(--cs-focus)]/30";
 
 // Tech Debt #31 / old Epic 16.4: read-only view over audit_events. Gated
 // exactly like server/routes/auditLog.ts — a platform admin sees every org
@@ -62,22 +65,22 @@ export default function AuditLog() {
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h1 className="text-xl font-semibold text-gray-900">Audit log</h1>
-        <p className="text-sm text-gray-500">
+        <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">Audit log</h1>
+        <p className="text-sm text-[var(--cs-text-muted)]">
           {isPlatformAdmin
             ? "Every privileged mutation across every organization, newest first."
             : "Every privileged mutation in your organization, newest first."}
         </p>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-end gap-3 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4">
         {isPlatformAdmin && (
-          <label className="flex flex-col gap-1 text-xs text-gray-500">
+          <label className="flex flex-col gap-1 text-xs text-[var(--cs-text-muted)]">
             Organization
             <select
               value={orgId}
               onChange={(e) => resetAndSet(setOrgId)(e.target.value)}
-              className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              className={FIELD_CLASS}
             >
               <option value="">All organizations</option>
               {orgs.map((o) => (
@@ -86,41 +89,41 @@ export default function AuditLog() {
             </select>
           </label>
         )}
-        <label className="flex flex-col gap-1 text-xs text-gray-500">
+        <label className="flex flex-col gap-1 text-xs text-[var(--cs-text-muted)]">
           Entity type
           <input
             type="text"
             placeholder="e.g. invoices"
             value={entityType}
             onChange={(e) => resetAndSet(setEntityType)(e.target.value)}
-            className="w-36 rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+            className={`w-36 ${FIELD_CLASS}`}
           />
         </label>
-        <label className="flex flex-col gap-1 text-xs text-gray-500">
+        <label className="flex flex-col gap-1 text-xs text-[var(--cs-text-muted)]">
           From
           <input
             type="date"
             value={from}
             onChange={(e) => resetAndSet(setFrom)(e.target.value)}
-            className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+            className={FIELD_CLASS}
           />
         </label>
-        <label className="flex flex-col gap-1 text-xs text-gray-500">
+        <label className="flex flex-col gap-1 text-xs text-[var(--cs-text-muted)]">
           To
           <input
             type="date"
             value={to}
             onChange={(e) => resetAndSet(setTo)(e.target.value)}
-            className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+            className={FIELD_CLASS}
           />
         </label>
       </div>
 
-      {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+      {error && <div className="rounded-[var(--cs-radius-control)] bg-[var(--cs-danger-soft)] p-3 text-sm text-[var(--cs-danger)]">{error}</div>}
 
-      <div className="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-gray-100 text-sm">
-          <thead className="bg-gray-50 text-left text-xs font-medium uppercase tracking-wide text-gray-500">
+      <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+        <table className="min-w-full divide-y divide-[var(--cs-border)] text-sm">
+          <thead className="bg-[var(--cs-surface-2)] text-left text-xs font-medium uppercase tracking-wide text-[var(--cs-text-faint)]">
             <tr>
               <th className="px-4 py-2">When</th>
               {isPlatformAdmin && <th className="px-4 py-2">Organization</th>}
@@ -130,7 +133,7 @@ export default function AuditLog() {
               <th className="px-4 py-2"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-[var(--cs-border)]">
             {loading && Array.from({ length: 6 }).map((_, i) => (
               <tr key={i}><td colSpan={isPlatformAdmin ? 6 : 5} className="px-4 py-3"><SkeletonRow /></td></tr>
             ))}
@@ -146,39 +149,39 @@ export default function AuditLog() {
               return (
                 <Fragment key={event.id}>
                   <tr
-                    className="cursor-pointer hover:bg-gray-50"
+                    className="cursor-pointer transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-surface-2)]"
                     onClick={() => setExpandedId(isExpanded ? null : event.id)}
                   >
-                    <td className="px-4 py-3 whitespace-nowrap text-gray-600">
-                      {formatDate(event.createdAt)} <span className="text-gray-400">{formatTime(event.createdAt)}</span>
+                    <td className="whitespace-nowrap px-4 py-3 text-[var(--cs-text-muted)]">
+                      {formatDate(event.createdAt)} <span className="text-[var(--cs-text-faint)]">{formatTime(event.createdAt)}</span>
                     </td>
                     {isPlatformAdmin && (
-                      <td className="px-4 py-3 text-gray-600">{event.organizationName ?? event.organizationId}</td>
+                      <td className="px-4 py-3 text-[var(--cs-text-muted)]">{event.organizationName ?? event.organizationId}</td>
                     )}
-                    <td className="px-4 py-3 text-gray-600">
+                    <td className="px-4 py-3 text-[var(--cs-text-muted)]">
                       {/* A system actor (payment webhook, scheduler) has no
                           auth user behind it, so actorName/actorEmail are
                           always null — show which system acted rather than
                           falling through to the bare "System" that a deleted
                           user also lands on. */}
                       {event.systemActor ? (
-                        <span className="font-mono text-xs text-gray-500">{event.systemActor}</span>
+                        <span className="font-mono text-xs text-[var(--cs-text-muted)]">{event.systemActor}</span>
                       ) : (
                         event.actorName || event.actorEmail || "System"
                       )}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-700">{event.action}</td>
-                    <td className="px-4 py-3 text-gray-600">
+                    <td className="px-4 py-3 font-mono text-xs text-[var(--cs-text)]">{event.action}</td>
+                    <td className="px-4 py-3 text-[var(--cs-text-muted)]">
                       {event.entityType ? `${event.entityType}${event.entityId ? ` · ${event.entityId.slice(0, 8)}` : ""}` : "—"}
                     </td>
-                    <td className="px-4 py-3 text-right text-gray-400">
-                      {isExpanded ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
+                    <td className="px-4 py-3 text-right text-[var(--cs-text-faint)]">
+                      {isExpanded ? <ChevronDown className="ml-auto h-4 w-4" strokeWidth={1.75} /> : <ChevronRight className="ml-auto h-4 w-4" strokeWidth={1.75} />}
                     </td>
                   </tr>
                   {isExpanded && (
                     <tr>
-                      <td colSpan={isPlatformAdmin ? 6 : 5} className="bg-gray-50 px-4 py-3">
-                        <pre className="whitespace-pre-wrap break-all text-xs text-gray-600">
+                      <td colSpan={isPlatformAdmin ? 6 : 5} className="bg-[var(--cs-surface-2)] px-4 py-3">
+                        <pre className="whitespace-pre-wrap break-all text-xs text-[var(--cs-text-muted)]">
                           {JSON.stringify(event.payload, null, 2)}
                         </pre>
                       </td>
@@ -192,25 +195,27 @@ export default function AuditLog() {
       </div>
 
       {total > 0 && (
-        <div className="flex items-center justify-between text-sm text-gray-500">
+        <div className="flex items-center justify-between text-sm text-[var(--cs-text-muted)]">
           <span>
             {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
           </span>
           <div className="flex gap-2">
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               disabled={offset === 0}
               onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-              className="rounded-md border border-gray-300 px-3 py-1 disabled:opacity-40"
             >
               Previous
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               disabled={offset + PAGE_SIZE >= total}
               onClick={() => setOffset(offset + PAGE_SIZE)}
-              className="rounded-md border border-gray-300 px-3 py-1 disabled:opacity-40"
             >
               Next
-            </button>
+            </Button>
           </div>
         </div>
       )}
