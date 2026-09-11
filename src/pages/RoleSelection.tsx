@@ -21,11 +21,11 @@ export default function RoleSelection() {
 
   const getRoleIcon = (role: string) => {
     switch (role) {
-      case 'student': return <GraduationCap className="w-8 h-8 text-[var(--cs-accent)]" />;
-      case 'parent': return <Users className="w-8 h-8 text-[var(--cs-ok)]" />;
-      case 'tutor': return <User className="w-8 h-8 text-[var(--cs-warn)]" />;
-      case 'admin': return <Shield className="w-8 h-8 text-[var(--cs-danger)]" />;
-      default: return <User className="w-8 h-8 text-[var(--cs-text-muted)]" />;
+      case 'student': return <GraduationCap className="h-6 w-6" strokeWidth={1.75} />;
+      case 'parent': return <Users className="h-6 w-6" strokeWidth={1.75} />;
+      case 'tutor': return <User className="h-6 w-6" strokeWidth={1.75} />;
+      case 'admin': return <Shield className="h-6 w-6" strokeWidth={1.75} />;
+      default: return <User className="h-6 w-6" strokeWidth={1.75} />;
     }
   };
 
@@ -44,10 +44,10 @@ export default function RoleSelection() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--cs-bg)] flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div className="flex min-h-screen flex-col justify-center bg-[var(--cs-bg)] py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-[var(--cs-text)]">
-          Select Your Portal
+        <h2 className="mt-6 text-center text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">
+          Select your portal
         </h2>
         <p className="mt-2 text-center text-sm text-[var(--cs-text-muted)]">
           You have multiple roles. Please choose which portal you want to access.
@@ -55,19 +55,19 @@ export default function RoleSelection() {
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-[var(--cs-surface)] py-8 px-4 border border-[var(--cs-border)] rounded-[10px] sm:px-10">
+        <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] px-4 py-8 sm:px-10">
           <div className="space-y-4">
             {user.roles.map((role) => (
               <button
                 key={role}
                 onClick={() => handleRoleSelect(role)}
-                className="w-full flex items-center p-4 border border-[var(--cs-border)] rounded-[6px] hover:bg-[var(--cs-bg)] hover:border-[var(--cs-accent)] transition-colors text-left"
+                className="flex w-full items-center rounded-[var(--cs-radius-container)] border-2 border-[var(--cs-border)] p-4 text-left transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:border-[var(--cs-accent)] hover:bg-[var(--cs-accent-soft)]"
               >
-                <div className="flex-shrink-0 mr-4">
+                <div className="mr-4 flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]">
                   {getRoleIcon(role)}
                 </div>
                 <div>
-                  <h3 className="text-lg font-medium text-[var(--cs-text)]">{getRoleTitle(role)}</h3>
+                  <h3 className="text-sm font-semibold text-[var(--cs-text)]">{getRoleTitle(role)}</h3>
                   <p className="text-sm text-[var(--cs-text-muted)]">{getRoleDescription(role)}</p>
                 </div>
               </button>

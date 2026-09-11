@@ -2,24 +2,28 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { GraduationCap, Mail, Lock, User as UserIcon, Phone, ArrowLeft } from "lucide-react";
+import { Button, Field, Input } from "../components/kit";
+
+const ICON_INPUT_CLASS = "pl-10";
+const ICON_CLASS = "pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[var(--cs-text-faint)]";
 
 export default function Login() {
   const { login, loginWithEmail, registerWithEmail, sendOTP, verifyOTP, user } = useAuth();
   const navigate = useNavigate();
-  
+
   const [isLogin, setIsLogin] = useState(true);
   const [authMethod, setAuthMethod] = useState<'email' | 'phone'>('phone');
-  
+
   // Email state
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  
+
   // Phone state
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSentTo, setOtpSentTo] = useState<string | null>(null);
-  
+
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -93,47 +97,47 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 relative">
+    <div className="relative flex min-h-screen flex-col justify-center bg-[var(--cs-bg)] px-4 py-12 sm:px-6 lg:px-8">
       <button
         onClick={() => navigate('/')}
-        className="absolute top-8 left-8 flex items-center text-gray-600 hover:text-indigo-600 transition-colors"
+        className="absolute left-8 top-8 flex items-center text-sm text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] hover:text-[var(--cs-text)]"
       >
-        <ArrowLeft className="w-5 h-5 mr-2" />
+        <ArrowLeft className="mr-2 h-4 w-4" strokeWidth={1.75} />
         Back to Home
       </button>
 
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center">
-          <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center">
-            <GraduationCap className="w-8 h-8 text-white" />
+          <div className="flex h-12 w-12 items-center justify-center rounded-[var(--cs-radius-container)] bg-[var(--cs-accent)]">
+            <GraduationCap className="h-7 w-7 text-[var(--cs-accent-contrast)]" strokeWidth={1.75} />
           </div>
         </div>
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+        <h2 className="mt-6 text-center text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">
           {isLogin ? "Sign in to classstackr" : "Create an account"}
         </h2>
-        <p className="mt-2 text-center text-sm text-gray-600">
+        <p className="mt-2 text-center text-sm text-[var(--cs-text-muted)]">
           The complete tuition management platform
         </p>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
+        <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] px-4 py-8 sm:px-10">
           {error && (
-            <div className="mb-4 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm">
+            <div className="mb-4 rounded-[var(--cs-radius-control)] bg-[var(--cs-danger-soft)] px-4 py-3 text-sm text-[var(--cs-danger)]">
               {error}
             </div>
           )}
 
-          <div className="flex justify-center mb-6 space-x-4">
+          <div className="mb-6 flex justify-center space-x-4">
             <button
               onClick={() => { setAuthMethod('phone'); setError(""); setOtpSentTo(null); }}
-              className={`pb-2 px-4 text-sm font-medium border-b-2 ${authMethod === 'phone' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              className={`border-b-2 px-4 pb-2 text-sm font-medium transition-colors duration-[var(--cs-motion-fast)] ${authMethod === 'phone' ? 'border-[var(--cs-accent)] text-[var(--cs-accent)]' : 'border-transparent text-[var(--cs-text-muted)] hover:text-[var(--cs-text)]'}`}
             >
               Phone
             </button>
             <button
               onClick={() => { setAuthMethod('email'); setError(""); }}
-              className={`pb-2 px-4 text-sm font-medium border-b-2 ${authMethod === 'email' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              className={`border-b-2 px-4 pb-2 text-sm font-medium transition-colors duration-[var(--cs-motion-fast)] ${authMethod === 'email' ? 'border-[var(--cs-accent)] text-[var(--cs-accent)]' : 'border-transparent text-[var(--cs-text-muted)] hover:text-[var(--cs-text)]'}`}
             >
               Email
             </button>
@@ -142,135 +146,76 @@ export default function Login() {
           {authMethod === 'email' ? (
             <form className="space-y-6" onSubmit={handleEmailAuth}>
               {!isLogin && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    Full Name
-                  </label>
-                  <div className="mt-1 relative rounded-md shadow-sm">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <UserIcon className="h-5 w-5 text-gray-400" />
+                <Field
+                  label="Full name"
+                  renderControl={(id) => (
+                    <div className="relative">
+                      <span className={ICON_CLASS}><UserIcon className="h-4 w-4" strokeWidth={1.75} /></span>
+                      <Input id={id} type="text" required value={name} onChange={(e) => setName(e.target.value)} className={ICON_INPUT_CLASS} placeholder="John Doe" />
                     </div>
-                    <input
-                      type="text"
-                      required
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      className="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-md py-2 border"
-                      placeholder="John Doe"
-                    />
-                  </div>
-                </div>
+                  )}
+                />
               )}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Email address
-                </label>
-                <div className="mt-1 relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Mail className="h-5 w-5 text-gray-400" />
+              <Field
+                label="Email address"
+                renderControl={(id) => (
+                  <div className="relative">
+                    <span className={ICON_CLASS}><Mail className="h-4 w-4" strokeWidth={1.75} /></span>
+                    <Input id={id} type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={ICON_INPUT_CLASS} placeholder="you@example.com" />
                   </div>
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-md py-2 border"
-                    placeholder="you@example.com"
-                  />
-                </div>
-              </div>
+                )}
+              />
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Password
-                </label>
-                <div className="mt-1 relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Lock className="h-5 w-5 text-gray-400" />
+              <Field
+                label="Password"
+                renderControl={(id) => (
+                  <div className="relative">
+                    <span className={ICON_CLASS}><Lock className="h-4 w-4" strokeWidth={1.75} /></span>
+                    <Input id={id} type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className={ICON_INPUT_CLASS} placeholder="••••••••" />
                   </div>
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-md py-2 border"
-                    placeholder="••••••••"
-                  />
-                </div>
-              </div>
+                )}
+              />
 
-              <div>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                >
-                  {loading ? "Please wait..." : (isLogin ? "Sign in" : "Sign up")}
-                </button>
-              </div>
+              <Button type="submit" disabled={loading} className="w-full">
+                {loading ? "Please wait…" : (isLogin ? "Sign in" : "Sign up")}
+              </Button>
             </form>
           ) : (
             <div className="space-y-6">
               {!otpSentTo ? (
                 <form onSubmit={handleSendOTP} className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Phone Number
-                    </label>
-                    <div className="mt-1 relative rounded-md shadow-sm">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <Phone className="h-5 w-5 text-gray-400" />
+                  <Field
+                    label="Phone number"
+                    renderControl={(id) => (
+                      <div className="relative">
+                        <span className={ICON_CLASS}><Phone className="h-4 w-4" strokeWidth={1.75} /></span>
+                        <Input id={id} type="tel" required value={phone} onChange={(e) => setPhone(e.target.value)} className={ICON_INPUT_CLASS} placeholder="+1234567890" />
                       </div>
-                      <input
-                        type="tel"
-                        required
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        className="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-md py-2 border"
-                        placeholder="+1234567890"
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                  >
-                    {loading ? "Sending OTP..." : "Send OTP"}
-                  </button>
+                    )}
+                  />
+                  <Button type="submit" disabled={loading} className="w-full">
+                    {loading ? "Sending OTP…" : "Send OTP"}
+                  </Button>
                 </form>
               ) : (
                 <form onSubmit={handleVerifyOTP} className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Enter OTP
-                    </label>
-                    <div className="mt-1 relative rounded-md shadow-sm">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <Lock className="h-5 w-5 text-gray-400" />
+                  <Field
+                    label="Enter OTP"
+                    renderControl={(id) => (
+                      <div className="relative">
+                        <span className={ICON_CLASS}><Lock className="h-4 w-4" strokeWidth={1.75} /></span>
+                        <Input id={id} type="text" required value={otp} onChange={(e) => setOtp(e.target.value)} className={ICON_INPUT_CLASS} placeholder="123456" />
                       </div>
-                      <input
-                        type="text"
-                        required
-                        value={otp}
-                        onChange={(e) => setOtp(e.target.value)}
-                        className="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-md py-2 border"
-                        placeholder="123456"
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                  >
-                    {loading ? "Verifying..." : "Verify OTP"}
-                  </button>
+                    )}
+                  />
+                  <Button type="submit" disabled={loading} className="w-full">
+                    {loading ? "Verifying…" : "Verify OTP"}
+                  </Button>
                   <button
                     type="button"
                     onClick={() => setOtpSentTo(null)}
-                    className="w-full text-sm text-indigo-600 hover:text-indigo-500"
+                    className="w-full text-sm text-[var(--cs-accent)] hover:text-[var(--cs-accent-hover)]"
                   >
                     Use a different number
                   </button>
@@ -282,21 +227,18 @@ export default function Login() {
           <div className="mt-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
+                <div className="w-full border-t border-[var(--cs-border)]" />
               </div>
               <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">
+                <span className="bg-[var(--cs-surface)] px-2 text-[var(--cs-text-muted)]">
                   Or continue with
                 </span>
               </div>
             </div>
 
             <div className="mt-6">
-              <button
-                onClick={handleGoogleLogin}
-                className="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
+              <Button variant="ghost" onClick={handleGoogleLogin} className="w-full">
+                <svg className="mr-2 h-5 w-5" viewBox="0 0 24 24">
                   <path
                     fill="currentColor"
                     d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -315,7 +257,7 @@ export default function Login() {
                   />
                 </svg>
                 Google
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -326,7 +268,7 @@ export default function Login() {
                   setIsLogin(!isLogin);
                   setError("");
                 }}
-                className="text-sm text-indigo-600 hover:text-indigo-500 font-medium"
+                className="text-sm font-medium text-[var(--cs-accent)] hover:text-[var(--cs-accent-hover)]"
               >
                 {isLogin
                   ? "Don't have an account? Sign up"
