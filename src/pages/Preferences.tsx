@@ -1,59 +1,95 @@
 import { useState } from "react";
-import { Bell, Mail, Smartphone, Save } from "lucide-react";
-import { Toggle } from "@/components/kit";
+import { useTranslation } from "react-i18next";
+import { Bell, Mail, Smartphone, Save, Sun, Moon, Monitor } from "lucide-react";
+import { Toggle, Button } from "@/components/kit";
+import { getThemePref, setThemePref, type ThemePref } from "@/lib/theme";
 
 const NOTIFICATION_ROWS = [
-  { key: "emailNotifications", icon: Mail, title: "Email Notifications", desc: "Receive updates and reminders via email." },
-  { key: "smsNotifications", icon: Smartphone, title: "SMS Notifications", desc: "Receive urgent alerts via text message." },
-  { key: "pushAlerts", icon: Bell, title: "Push Alerts", desc: "Receive real-time notifications in the browser." },
+  { key: "emailNotifications", icon: Mail },
+  { key: "smsNotifications", icon: Smartphone },
+  { key: "pushAlerts", icon: Bell },
 ] as const;
 
+const THEME_OPTIONS: { value: ThemePref; icon: typeof Sun }[] = [
+  { value: "light", icon: Sun },
+  { value: "dark", icon: Moon },
+  { value: "system", icon: Monitor },
+];
+
 export default function Preferences() {
+  const { t } = useTranslation();
   const [preferences, setPreferences] = useState({
     emailNotifications: true,
     smsNotifications: false,
     pushAlerts: true,
-    classReminders: true,
-    assignmentUpdates: true,
-    marketingEmails: false,
   });
+  const [themePref, setThemePrefState] = useState<ThemePref>(getThemePref);
 
   const setToggle = (key: keyof typeof preferences, next: boolean) => {
-    setPreferences(prev => ({ ...prev, [key]: next }));
+    setPreferences((prev) => ({ ...prev, [key]: next }));
+  };
+
+  const chooseTheme = (pref: ThemePref) => {
+    setThemePrefState(pref);
+    setThemePref(pref);
   };
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-[var(--cs-text)]">Preferences</h1>
-        <button className="flex items-center rounded-[var(--cs-radius-control)] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-[var(--cs-accent-contrast)] hover:bg-[var(--cs-accent-hover)] transition-colors">
-          <Save className="w-4 h-4 mr-2" />
-          Save Preferences
-        </button>
+    <div className="mx-auto max-w-4xl space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">{t("preferences.title")}</h1>
+        <Button icon={Save}>{t("preferences.save")}</Button>
       </div>
 
-      <div className="bg-[var(--cs-surface)] rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] overflow-hidden">
-        <div className="px-6 py-4 border-b border-[var(--cs-border)] flex justify-between items-center">
-          <h2 className="text-lg font-semibold text-[var(--cs-text)] flex items-center">
-            <Bell className="w-5 h-5 mr-2 text-[var(--cs-accent)]" />
-            Notification Settings
-          </h2>
+      <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+        <h2 className="border-b border-[var(--cs-border)] px-4 py-3 text-sm font-semibold text-[var(--cs-text)]">
+          {t("preferences.appearance")}
+        </h2>
+        <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-[var(--cs-text)]">{t("preferences.theme")}</p>
+            <p className="text-xs text-[var(--cs-text-muted)]">{t("preferences.themeDescription")}</p>
+          </div>
+          <div className="flex gap-1 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-bg)] p-1">
+            {THEME_OPTIONS.map(({ value, icon: Icon }) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={themePref === value}
+                onClick={() => chooseTheme(value)}
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded-[var(--cs-radius-control)] px-3 py-1.5 text-sm font-medium transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${
+                  themePref === value
+                    ? "bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]"
+                    : "text-[var(--cs-text-muted)] hover:bg-[var(--cs-surface-2)]"
+                }`}
+              >
+                <Icon className="h-4 w-4" strokeWidth={1.75} />
+                {t(`preferences.theme_${value}`)}
+              </button>
+            ))}
+          </div>
         </div>
+      </div>
 
-        <div className="p-6 space-y-6">
-          {NOTIFICATION_ROWS.map(({ key, icon: Icon, title, desc }) => (
+      <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+        <h2 className="border-b border-[var(--cs-border)] px-4 py-3 text-sm font-semibold text-[var(--cs-text)]">
+          {t("preferences.notifications")}
+        </h2>
+
+        <div className="space-y-6 p-4">
+          {NOTIFICATION_ROWS.map(({ key, icon: Icon }) => (
             <div key={key} className="flex items-center justify-between">
               <div className="flex items-center">
-                <Icon className="w-5 h-5 text-[var(--cs-text-muted)] mr-3" />
+                <Icon className="mr-3 h-5 w-5 text-[var(--cs-text-muted)]" strokeWidth={1.75} />
                 <div>
-                  <p className="text-sm font-medium text-[var(--cs-text)]">{title}</p>
-                  <p className="text-xs text-[var(--cs-text-muted)]">{desc}</p>
+                  <p className="text-sm font-medium text-[var(--cs-text)]">{t(`preferences.${key}`)}</p>
+                  <p className="text-xs text-[var(--cs-text-muted)]">{t(`preferences.${key}Description`)}</p>
                 </div>
               </div>
               <Toggle
-                label={title}
+                label={t(`preferences.${key}`)}
                 checked={preferences[key]}
-                onChange={next => setToggle(key, next)}
+                onChange={(next) => setToggle(key, next)}
               />
             </div>
           ))}

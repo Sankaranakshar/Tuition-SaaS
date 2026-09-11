@@ -1,14 +1,16 @@
 import { useState, useEffect } from "react";
-import { Calendar, DollarSign, Video, BookOpen, Clock, FileText, CheckCircle, AlertTriangle } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Calendar, DollarSign, Video, Clock, FileText, CheckCircle, AlertTriangle } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { format, isSameDay, parseISO, isAfter, startOfDay } from "date-fns";
 import { Link } from "react-router-dom";
-import LoadingSpinner from "../components/LoadingSpinner";
 import { formatINR } from "../lib/format";
 import { debounce } from "../lib/debounce";
+import { EmptyState, Skeleton, SkeletonText, StatChip, StatusChip, type ChipTone } from "../components/kit";
 
 export default function StudentDashboard() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [upcomingClasses, setUpcomingClasses] = useState<any[]>([]);
   const [recentGrades, setRecentGrades] = useState<any[]>([]);
@@ -141,71 +143,70 @@ export default function StudentDashboard() {
     };
   }, [user]);
 
-  if (loading) return <LoadingSpinner message="Loading dashboard..." />;
-
-  return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-[var(--cs-text)]">Student Overview</h1>
-      </div>
-
-      {/* Action Center Alerts */}
-      {overdueInvoices.length > 0 && (
-        <div className="bg-red-50 border-l-4 border-[var(--cs-danger)] p-4 rounded-[6px]">
-          <div className="flex">
-            <div className="flex-shrink-0">
-              <AlertTriangle className="h-5 w-5 text-[var(--cs-danger)]" />
-            </div>
-            <div className="ml-3">
-              <p className="text-sm text-[var(--cs-danger)]">
-                You have {overdueInvoices.length} overdue invoice(s).
-                <Link to="/app/money" className="font-medium underline ml-1">Pay now</Link>
-              </p>
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-7xl space-y-6">
+        <Skeleton className="h-7 w-48" />
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
+            <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-6">
+              <SkeletonText lines={4} />
             </div>
           </div>
+          <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-6">
+            <SkeletonText lines={3} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-7xl space-y-6">
+      <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">{t("studentDashboard.title")}</h1>
+
+      {overdueInvoices.length > 0 && (
+        <div className="flex rounded-[var(--cs-radius-container)] border-l-4 border-[var(--cs-danger)] bg-[var(--cs-danger-soft)] p-4">
+          <AlertTriangle className="h-5 w-5 shrink-0 text-[var(--cs-danger)]" strokeWidth={1.75} />
+          <p className="ml-3 text-sm text-[var(--cs-danger)]">
+            {t("studentDashboard.overdueCount", { count: overdueInvoices.length })}
+            <Link to="/app/money" className="ml-1 font-medium underline">{t("studentDashboard.payNow")}</Link>
+          </p>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: My Snapshot */}
-        <div className="lg:col-span-2 space-y-6">
-
-          {/* Upcoming Classes */}
-          <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden">
-            <div className="px-6 py-4 border-b border-[var(--cs-border)] flex justify-between items-center">
-              <h2 className="text-lg font-semibold text-[var(--cs-text)] flex items-center">
-                <Calendar className="w-5 h-5 mr-2 text-[var(--cs-accent)]" />
-                Next Upcoming Classes
-              </h2>
-              <Link to="/app/timetable" className="text-sm text-[var(--cs-accent)] hover:opacity-80 font-medium">
-                View Timetable
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+            <div className="flex items-center justify-between border-b border-[var(--cs-border)] px-4 py-3">
+              <h2 className="text-sm font-semibold text-[var(--cs-text)]">{t("studentDashboard.upcomingClasses")}</h2>
+              <Link to="/app/timetable" className="text-sm font-medium text-[var(--cs-accent)] hover:text-[var(--cs-accent-hover)]">
+                {t("studentDashboard.viewTimetable")}
               </Link>
             </div>
 
             {upcomingClasses.length > 0 ? (
               <ul className="divide-y divide-[var(--cs-border)]">
                 {upcomingClasses.map((session) => (
-                  <li key={session.id} className="px-6 py-4 flex items-center justify-between gap-3 hover:bg-[var(--cs-bg)] transition-colors">
+                  <li key={session.id} className="flex items-center justify-between gap-3 px-4 py-3 transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-surface-2)]">
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-[var(--cs-text)]">{session.title || 'Class Session'}</p>
-                      <p className="text-sm text-[var(--cs-text-muted)] flex items-center mt-1">
-                        <Clock className="w-4 h-4 mr-1 shrink-0" />
-                        {format(parseISO(session.startTime), 'MMM d, yyyy')} • {format(parseISO(session.startTime), 'h:mm a')} - {format(parseISO(session.endTime), 'h:mm a')}
+                      <p className="text-sm font-medium text-[var(--cs-text)]">{session.title || t("studentDashboard.classSession")}</p>
+                      <p className="mt-1 flex items-center text-sm text-[var(--cs-text-muted)]">
+                        <Clock className="mr-1 h-4 w-4 shrink-0" strokeWidth={1.75} />
+                        {format(parseISO(session.startTime), 'MMM d, yyyy')} · {format(parseISO(session.startTime), 'h:mm a')} - {format(parseISO(session.endTime), 'h:mm a')}
                       </p>
                     </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className={`whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-medium ${session.isOnline ? 'bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]' : 'bg-green-50 text-[var(--cs-ok)]'}`}>
-                        {session.isOnline ? 'Online' : 'In-Person'}
-                      </span>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <StatusChip label={session.isOnline ? t("studentDashboard.online") : t("studentDashboard.inPerson")} tone="neutral" />
                       {session.isOnline && session.meetingLink && (
                         <a
                           href={session.meetingLink}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center rounded-[6px] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+                          className="flex items-center gap-1.5 rounded-[var(--cs-radius-control)] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-[var(--cs-accent-contrast)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-accent-hover)]"
                         >
-                          <Video className="w-4 h-4 mr-2" />
-                          Join
+                          <Video className="h-4 w-4" strokeWidth={1.75} />
+                          {t("studentDashboard.join")}
                         </a>
                       )}
                     </div>
@@ -213,22 +214,15 @@ export default function StudentDashboard() {
                 ))}
               </ul>
             ) : (
-              <div className="px-6 py-8 text-center">
-                <Calendar className="mx-auto h-10 w-10 text-[var(--cs-border)]" />
-                <p className="mt-2 text-sm text-[var(--cs-text-muted)]">No upcoming classes scheduled.</p>
-              </div>
+              <EmptyState icon={Calendar} title={t("studentDashboard.noUpcomingClasses")} className="border-0" />
             )}
           </div>
 
-          {/* Recent Grades */}
-          <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden">
-            <div className="px-6 py-4 border-b border-[var(--cs-border)] flex justify-between items-center">
-              <h2 className="text-lg font-semibold text-[var(--cs-text)] flex items-center">
-                <BookOpen className="w-5 h-5 mr-2 text-[var(--cs-accent)]" />
-                Latest Grades
-              </h2>
-              <Link to="/app/my-story" className="text-sm text-[var(--cs-accent)] hover:opacity-80 font-medium">
-                View Gradebook
+          <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+            <div className="flex items-center justify-between border-b border-[var(--cs-border)] px-4 py-3">
+              <h2 className="text-sm font-semibold text-[var(--cs-text)]">{t("studentDashboard.latestGrades")}</h2>
+              <Link to="/app/my-story" className="text-sm font-medium text-[var(--cs-accent)] hover:text-[var(--cs-accent-hover)]">
+                {t("studentDashboard.viewGradebook")}
               </Link>
             </div>
 
@@ -237,77 +231,62 @@ export default function StudentDashboard() {
                 {recentGrades.map((grade) => {
                   const maxScore = grade.totalScore || grade.maxScore || 100;
                   const percentage = Math.round((Number(grade.score) / Number(maxScore)) * 100);
-                  let statusColor = 'text-[var(--cs-ok)] bg-green-50';
-                  if (percentage < 60) statusColor = 'text-[var(--cs-danger)] bg-red-50';
-                  else if (percentage < 80) statusColor = 'text-[var(--cs-warn)] bg-yellow-50';
-
+                  const passed = percentage >= 60;
+                  const tone: ChipTone = passed ? "positive" : "danger";
                   return (
-                    <li key={grade.id} className="px-6 py-4 flex items-center justify-between hover:bg-[var(--cs-bg)] transition-colors">
+                    <li key={grade.id} className="flex items-center justify-between px-4 py-3 transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-surface-2)]">
                       <div>
-                        <p className="text-sm font-medium text-[var(--cs-text)]">{grade.title || 'Untitled Assessment'}</p>
-                        <p className="text-xs text-[var(--cs-text-muted)] mt-1">{grade.date ? format(parseISO(grade.date), 'MMM d, yyyy') : 'N/A'} • {grade.type}</p>
+                        <p className="text-sm font-medium text-[var(--cs-text)]">{grade.title || t("studentDashboard.untitledAssessment")}</p>
+                        <p className="mt-1 text-xs text-[var(--cs-text-muted)]">{grade.date ? format(parseISO(grade.date), 'MMM d, yyyy') : t("studentDashboard.notAvailable")} · {grade.type}</p>
                       </div>
-                      <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-3">
                         <div className="text-right">
-                          <p className="text-sm font-bold text-[var(--cs-text)]">{grade.score} / {maxScore}</p>
-                          <p className="text-xs text-[var(--cs-text-muted)]">{percentage}%</p>
+                          <p className="text-sm font-semibold tabular-nums text-[var(--cs-text)]">{grade.score} / {maxScore}</p>
+                          <p className="text-xs tabular-nums text-[var(--cs-text-muted)]">{percentage}%</p>
                         </div>
-                        <div className={`px-2.5 py-1 rounded-[6px] text-xs font-bold ${statusColor}`}>
-                          {percentage >= 60 ? 'Pass' : 'Review'}
-                        </div>
+                        <StatusChip label={passed ? t("studentDashboard.pass") : t("studentDashboard.review")} tone={tone} />
                       </div>
                     </li>
                   );
                 })}
               </ul>
             ) : (
-              <div className="px-6 py-8 text-center">
-                <FileText className="mx-auto h-10 w-10 text-[var(--cs-border)]" />
-                <p className="mt-2 text-sm text-[var(--cs-text-muted)]">No recent grades available.</p>
-              </div>
+              <EmptyState icon={FileText} title={t("studentDashboard.noRecentGrades")} className="border-0" />
             )}
           </div>
         </div>
 
-        {/* Right Column: Wallet & Quick Links */}
         <div className="space-y-6">
-          {/* Wallet Snapshot */}
-          <div className="bg-[var(--cs-surface)] p-6 rounded-[10px] border border-[var(--cs-border)]">
-            <h2 className="text-lg font-semibold text-[var(--cs-text)] flex items-center mb-4">
-              <DollarSign className="w-5 h-5 mr-2 text-[var(--cs-accent)]" />
-              Wallet Balance
-            </h2>
-            <div className="text-center py-4">
-              <p className="text-4xl font-bold text-[var(--cs-text)]">{formatINR(walletBalance)}</p>
-              <p className="text-sm text-[var(--cs-text-muted)] mt-1">Available Credits</p>
-            </div>
-            <div className="mt-4">
-              <Link to="/app/money" className="w-full flex justify-center items-center rounded-[6px] bg-[var(--cs-accent-soft)] px-4 py-2 text-sm font-medium text-[var(--cs-accent)] hover:opacity-90">
-                Top-up Wallet
-              </Link>
-            </div>
+          <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4">
+            <h2 className="mb-3 text-sm font-semibold text-[var(--cs-text)]">{t("studentDashboard.walletBalance")}</h2>
+            <StatChip label={t("studentDashboard.availableCredits")} value={formatINR(walletBalance)} icon={DollarSign} />
+            <Link
+              to="/app/money"
+              className="mt-4 flex w-full items-center justify-center rounded-[var(--cs-radius-control)] bg-[var(--cs-accent-soft)] px-4 py-2 text-sm font-medium text-[var(--cs-accent)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-accent)] hover:text-[var(--cs-accent-contrast)]"
+            >
+              {t("studentDashboard.topUpWallet")}
+            </Link>
           </div>
 
-          {/* Quick Links */}
-          <div className="bg-[var(--cs-surface)] p-6 rounded-[10px] border border-[var(--cs-border)]">
-            <h2 className="text-lg font-semibold text-[var(--cs-text)] mb-4">Quick Links</h2>
-            <div className="space-y-3">
-              <Link to="/app/my-story" className="flex items-center p-3 rounded-[6px] border border-[var(--cs-border)] hover:bg-[var(--cs-bg)] transition-colors">
-                <div className="bg-[var(--cs-accent-soft)] p-2 rounded-[6px] mr-3 text-[var(--cs-accent)]">
-                  <FileText className="w-5 h-5" />
+          <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4">
+            <h2 className="mb-3 text-sm font-semibold text-[var(--cs-text)]">{t("studentDashboard.quickLinks")}</h2>
+            <div className="space-y-2">
+              <Link to="/app/my-story" className="flex items-center rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] p-3 transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-surface-2)]">
+                <div className="mr-3 rounded-[var(--cs-radius-control)] bg-[var(--cs-accent-soft)] p-2 text-[var(--cs-accent)]">
+                  <FileText className="h-5 w-5" strokeWidth={1.75} />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-[var(--cs-text)]">Study Material</p>
-                  <p className="text-xs text-[var(--cs-text-muted)]">Access notes & assignments</p>
+                  <p className="text-sm font-medium text-[var(--cs-text)]">{t("studentDashboard.studyMaterial")}</p>
+                  <p className="text-xs text-[var(--cs-text-muted)]">{t("studentDashboard.studyMaterialDescription")}</p>
                 </div>
               </Link>
-              <Link to="/app/inbox" className="flex items-center p-3 rounded-[6px] border border-[var(--cs-border)] hover:bg-[var(--cs-bg)] transition-colors">
-                <div className="bg-green-50 p-2 rounded-[6px] mr-3 text-[var(--cs-ok)]">
-                  <CheckCircle className="w-5 h-5" />
+              <Link to="/app/inbox" className="flex items-center rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] p-3 transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-surface-2)]">
+                <div className="mr-3 rounded-[var(--cs-radius-control)] bg-[var(--cs-surface-2)] p-2 text-[var(--cs-text-muted)]">
+                  <CheckCircle className="h-5 w-5" strokeWidth={1.75} />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-[var(--cs-text)]">Tutor Chat</p>
-                  <p className="text-xs text-[var(--cs-text-muted)]">Message your instructors</p>
+                  <p className="text-sm font-medium text-[var(--cs-text)]">{t("studentDashboard.tutorChat")}</p>
+                  <p className="text-xs text-[var(--cs-text-muted)]">{t("studentDashboard.tutorChatDescription")}</p>
                 </div>
               </Link>
             </div>
