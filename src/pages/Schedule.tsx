@@ -22,7 +22,7 @@ import {
   buildClassTemplatePayload, minutesSinceMidnight, snapMinutes,
   type ScheduleClassType, type SchedulePricingModel,
 } from "../lib/schedule";
-import { EmptyState, Modal } from "../components/kit";
+import { EmptyState, Modal, Button, Input, Field } from "../components/kit";
 import { supabase } from "../supabase";
 import { cancellationCutoff, DEFAULT_CANCELLATION_POLICY, type CancellationPolicy } from "../../shared/cancellationPolicy";
 import { getOrgCancellationPolicy } from "../lib/cancellationPolicy";
@@ -41,6 +41,11 @@ import { formatDate, formatTime } from "../lib/format";
 // same convention as Money.tsx/StudentStory.tsx's isStaff check — not a
 // route param, since neither route needs one.
 
+// Matches kit Input's skin for the native <select> the wizard uses (same
+// recipe as Money.tsx's CreateInvoiceModal / People.tsx's lead form).
+const SELECT_CLASS =
+  "w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-3 py-1.5 text-[13px] text-[var(--cs-text)] outline-none transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] focus:border-[var(--cs-focus)] focus:ring-2 focus:ring-[var(--cs-focus)]/30";
+
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_START_HOUR = 7;
 const DAY_END_HOUR = 21;
@@ -52,12 +57,15 @@ function toLocalIso(date: Date) {
   return date.toISOString();
 }
 
+// Near-monochrome per REDESIGN §13: only the accent and danger carry hue, so
+// scheduled sessions (1:1 or batch alike) read as one calm neutral tone;
+// type is a label distinction (see the "Batch"/"1:1" text below), not a
+// colour distinction. Cancelled is the danger signal; completed is the one
+// positive/accent signal, matching "paid/enrolled" elsewhere in the app.
 function sessionColor(session: ScheduleSessionRow) {
-  if (session.status === "cancelled") return "bg-[var(--cs-danger-bg,#fee2e2)] border-[var(--cs-danger)] text-[var(--cs-danger)] line-through opacity-70";
-  if (session.status === "completed") return "bg-[var(--cs-ok-bg,#dcfce7)] border-[var(--cs-ok)] text-[var(--cs-ok)]";
-  return session.studentIds.length <= 1
-    ? "bg-[var(--cs-accent-bg,#ede9fe)] border-[var(--cs-accent)] text-[var(--cs-accent)]"
-    : "bg-[var(--cs-info-bg,#dbeafe)] border-[var(--cs-info,#2563eb)] text-[var(--cs-info,#2563eb)]";
+  if (session.status === "cancelled") return "bg-[var(--cs-danger-soft)] border-[var(--cs-danger)] text-[var(--cs-danger)] line-through opacity-70";
+  if (session.status === "completed") return "bg-[var(--cs-accent-soft)] border-[var(--cs-accent)] text-[var(--cs-accent)]";
+  return "bg-[var(--cs-surface-2)] border-[var(--cs-border-strong)] text-[var(--cs-text)]";
 }
 
 export default function Schedule() {
@@ -78,15 +86,23 @@ function MyScheduleView() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-[var(--cs-text)]">{t("schedule.myWeek")}</h1>
-        <div className="flex items-center gap-1 rounded-md border border-[var(--cs-border)] bg-white p-1">
-          <button onClick={() => setWeekStart(subWeeks(weekStart, 1))} className="rounded p-1 hover:bg-gray-100" aria-label="Previous week">
+        <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">{t("schedule.myWeek")}</h1>
+        <div className="flex items-center gap-1 rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-1">
+          <button
+            onClick={() => setWeekStart(subWeeks(weekStart, 1))}
+            className="rounded-[var(--cs-radius-control)] p-1 text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)]"
+            aria-label={t("schedule.previousWeek")}
+          >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <span className="w-40 text-center text-sm font-medium text-[var(--cs-text)]">
             {format(weekStart, "MMM d")} – {format(addDays(weekStart, 6), "MMM d, yyyy")}
           </span>
-          <button onClick={() => setWeekStart(addWeeks(weekStart, 1))} className="rounded p-1 hover:bg-gray-100" aria-label="Next week">
+          <button
+            onClick={() => setWeekStart(addWeeks(weekStart, 1))}
+            className="rounded-[var(--cs-radius-control)] p-1 text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)]"
+            aria-label={t("schedule.nextWeek")}
+          >
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
@@ -102,17 +118,17 @@ function MyScheduleView() {
             .filter((s) => isSameDay(new Date(s.startTime), day))
             .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
           return (
-            <div key={day.toISOString()} className="rounded-xl border border-[var(--cs-border)] bg-white p-3">
+            <div key={day.toISOString()} className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-3">
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--cs-text-muted)]">
                 {format(day, "EEE d")}
               </p>
               <div className="space-y-2">
                 {daySessions.map((s) => (
-                  <div key={s.id} className={`rounded border p-2 text-xs ${sessionColor(s)}`}>
+                  <div key={s.id} className={`rounded-[var(--cs-radius-control)] border p-2 text-xs ${sessionColor(s)}`}>
                     <div className="font-medium">{format(new Date(s.startTime), "h:mm a")}</div>
                     <div className="flex items-center gap-1 opacity-80">
                       {s.isOnline ? <Video className="h-3 w-3" /> : <MapPin className="h-3 w-3" />}
-                      {s.isOnline ? "Online" : s.roomNumber || "TBD"}
+                      {s.isOnline ? t("schedule.online") : s.roomNumber || t("schedule.tbd")}
                     </div>
                   </div>
                 ))}
@@ -248,7 +264,13 @@ function StaffSchedule() {
   }
 
   function startCreateDrag(e: React.PointerEvent, dayIndex: number) {
-    if (e.target !== e.currentTarget) return; // ignore clicks landing on a session block
+    // Session blocks and the resize handle call e.stopPropagation() on their
+    // own onPointerDown, so a click landing on either never reaches here.
+    // An e.target !== e.currentTarget check used to gate this too, but the
+    // hour-grid-line filler divs tile the day column edge to edge, so every
+    // click's real target was one of those children, never the column div
+    // itself, and this returned early unconditionally. Verified live: no
+    // drag-to-create fired anywhere in the grid before this fix.
     const { offsetMinutes } = offsetMinutesFromPointer(e, dayIndex);
     const day = days[dayIndex];
     const start = new Date(day);
@@ -364,6 +386,21 @@ function StaffSchedule() {
     const session = sessions.find((s) => s.id === current.sessionId);
     if (!session) return;
 
+    // A plain click on a session block also fires this move-mode branch
+    // (pointerdown -> immediate pointerup, zero movement), and until this
+    // check existed it ran the full reschedule flow every time: for any
+    // templated session that opened ScopeDialog on top of the SessionPopover
+    // the block's own onClick already opened underneath, silently blocking
+    // it (both are full-screen overlays; ScopeDialog's higher z-index just
+    // won). Verified live: clicking a session ever opened only ScopeDialog,
+    // never the details popover, for every session created through the
+    // wizard (all of them carry a templateId). A real drag always changes
+    // currentStart from originalStart, so this only short-circuits the
+    // no-movement case.
+    if (current.mode === "move" && current.originalStart && current.currentStart.getTime() === current.originalStart.getTime()) {
+      return;
+    }
+
     // Optimistic client-side conflict pre-check for instant feedback; the
     // server re-checks authoritatively under an advisory lock regardless.
     const wouldConflict = checkClientSideConflict(
@@ -443,12 +480,12 @@ function StaffSchedule() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-4">
-          <h1 className="text-2xl font-bold text-[var(--cs-text)]">{t("nav.schedule")}</h1>
-          <div className="flex items-center gap-1 rounded-md border border-[var(--cs-border)] bg-white p-1">
+          <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">{t("nav.schedule")}</h1>
+          <div className="flex items-center gap-1 rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-1">
             <button
               onClick={() => (view === "week" ? setWeekStart(subWeeks(weekStart, 1)) : setMonthCursor(addDays(startOfMonth(monthCursor), -1)))}
-              className="rounded p-1 hover:bg-gray-100"
-              aria-label={view === "week" ? "Previous week" : "Previous month"}
+              className="rounded-[var(--cs-radius-control)] p-1 text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)]"
+              aria-label={view === "week" ? t("schedule.previousWeek") : t("schedule.previousMonth")}
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -459,38 +496,39 @@ function StaffSchedule() {
             </span>
             <button
               onClick={() => (view === "week" ? setWeekStart(addWeeks(weekStart, 1)) : setMonthCursor(addDays(endOfMonth(monthCursor), 1)))}
-              className="rounded p-1 hover:bg-gray-100"
-              aria-label={view === "week" ? "Next week" : "Next month"}
+              className="rounded-[var(--cs-radius-control)] p-1 text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)]"
+              aria-label={view === "week" ? t("schedule.nextWeek") : t("schedule.nextMonth")}
             >
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex items-center gap-1 rounded-md border border-[var(--cs-border)] bg-white p-1 text-sm">
+          <div className="flex items-center gap-1 rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-1 text-sm">
             <button
               onClick={() => setView("week")}
-              className={`rounded px-2 py-1 ${view === "week" ? "bg-[var(--cs-accent)] text-white" : "text-[var(--cs-text-muted)]"}`}
+              className={`rounded-[var(--cs-radius-control)] px-2 py-1 transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${
+                view === "week" ? "bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]" : "text-[var(--cs-text-muted)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)]"
+              }`}
             >
               {t("schedule.week")}
             </button>
             <button
               onClick={() => setView("month")}
-              className={`rounded px-2 py-1 ${view === "month" ? "bg-[var(--cs-accent)] text-white" : "text-[var(--cs-text-muted)]"}`}
+              className={`rounded-[var(--cs-radius-control)] px-2 py-1 transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${
+                view === "month" ? "bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]" : "text-[var(--cs-text-muted)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)]"
+              }`}
             >
               {t("schedule.month")}
             </button>
           </div>
         </div>
-        <button
-          onClick={() => { setWizardPrefill({}); setWizardOpen(true); }}
-          className="flex items-center gap-2 rounded-md bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-        >
-          <Plus className="h-4 w-4" /> {t("schedule.addClass")}
-        </button>
+        <Button icon={Plus} onClick={() => { setWizardPrefill({}); setWizardOpen(true); }}>
+          {t("schedule.addClass")}
+        </Button>
       </div>
 
       {view === "week" ? (
-        <div className="overflow-hidden rounded-xl border border-[var(--cs-border)] bg-white">
-          <div className="grid grid-cols-[56px_repeat(7,1fr)] border-b border-[var(--cs-border)] bg-gray-50">
+        <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+          <div className="grid grid-cols-[56px_repeat(7,1fr)] border-b border-[var(--cs-border)] bg-[var(--cs-surface-2)]">
             <div />
             {days.map((day) => (
               <div key={day.toISOString()} className="border-l border-[var(--cs-border)] py-2 text-center text-xs font-semibold uppercase tracking-wide text-[var(--cs-text-muted)]">
@@ -538,7 +576,7 @@ function StaffSchedule() {
                           return (
                             <div
                               key={`dim-${h}`}
-                              className="pointer-events-none absolute inset-x-0 bg-black/[0.03]"
+                              className="pointer-events-none absolute inset-x-0 bg-[var(--cs-text)]/[0.04]"
                               style={{ top: (h - DAY_START_HOUR) * HOUR_PX, height: HOUR_PX }}
                             />
                           );
@@ -560,7 +598,7 @@ function StaffSchedule() {
                           ref={(el) => { if (isDraggingThis) movingBlockElRef.current = el; }}
                           onPointerDown={(e) => startMoveDrag(e, session, dayIndex)}
                           onClick={(e) => { e.stopPropagation(); if (!drag) setSelectedSession(session); }}
-                          className={`absolute cursor-grab select-none overflow-hidden rounded border px-1.5 py-0.5 text-[11px] shadow-sm active:cursor-grabbing ${sessionColor(session)}`}
+                          className={`absolute cursor-grab select-none overflow-hidden rounded-[var(--cs-radius-control)] border px-1.5 py-0.5 text-[11px] transition-shadow active:cursor-grabbing ${isDraggingThis ? "shadow-[var(--cs-shadow-pop)]" : ""} ${sessionColor(session)}`}
                           style={{
                             top,
                             height,
@@ -570,7 +608,7 @@ function StaffSchedule() {
                           }}
                         >
                           <div ref={(el) => { if (isDraggingThis) movingBlockTimeElRef.current = el; }} className="font-medium">{format(start, "h:mm a")}</div>
-                          <div className="truncate opacity-80">{templateById.get(session.templateId || "")?.name || (session.studentIds.length > 1 ? "Batch" : "1:1")}</div>
+                          <div className="truncate opacity-80">{templateById.get(session.templateId || "")?.name || (session.studentIds.length > 1 ? t("schedule.batchLabel") : t("schedule.oneOnOneLabel"))}</div>
                           <div
                             onPointerDown={(e) => startResizeDrag(e, session, dayIndex)}
                             className="absolute inset-x-0 bottom-0 h-1.5 cursor-ns-resize"
@@ -582,7 +620,7 @@ function StaffSchedule() {
                     {drag && drag.mode === "create" && drag.dayIndex === dayIndex && (
                       <div
                         ref={createPreviewElRef}
-                        className="pointer-events-none absolute inset-x-1 rounded border-2 border-dashed border-[var(--cs-accent)] bg-[var(--cs-accent)]/10"
+                        className="pointer-events-none absolute inset-x-1 rounded-[var(--cs-radius-control)] border-2 border-dashed border-[var(--cs-accent)] bg-[var(--cs-accent-soft)]"
                         style={{ top: timeOffsetPx(drag.currentStart), height: Math.max(18, (drag.currentEnd.getTime() - drag.currentStart.getTime()) / 60000 * PX_PER_MINUTE) }}
                       />
                     )}
@@ -651,13 +689,14 @@ function MonthView({
   onSelect: (s: ScheduleSessionRow) => void;
   onJumpToWeek: (day: Date) => void;
 }) {
+  const { t } = useTranslation();
   const monthStart = startOfMonth(monthCursor);
   const monthEnd = endOfMonth(monthStart);
   const days = eachDayOfInterval({ start: startOfWeek(monthStart), end: endOfWeek(monthEnd) });
 
   return (
-    <div className="overflow-hidden rounded-xl border border-[var(--cs-border)] bg-white">
-      <div className="grid grid-cols-7 border-b border-[var(--cs-border)] bg-gray-50">
+    <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+      <div className="grid grid-cols-7 border-b border-[var(--cs-border)] bg-[var(--cs-surface-2)]">
         {DAY_LABELS.map((d) => (
           <div key={d} className="py-2 text-center text-xs font-semibold uppercase tracking-wide text-[var(--cs-text-muted)]">{d}</div>
         ))}
@@ -670,9 +709,17 @@ function MonthView({
             <div
               key={day.toISOString()}
               onClick={() => onJumpToWeek(day)}
-              className={`min-h-[110px] cursor-pointer border-b border-r border-[var(--cs-border)] p-2 hover:bg-gray-50 ${inMonth ? "bg-white" : "bg-gray-50/50"}`}
+              className={`min-h-[110px] cursor-pointer border-b border-r border-[var(--cs-border)] p-2 transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] ${inMonth ? "bg-[var(--cs-surface)]" : "bg-[var(--cs-surface-2)]/50"}`}
             >
-              <span className={`text-sm ${inMonth ? "text-[var(--cs-text)]" : "text-gray-400"} ${isSameDay(day, new Date()) ? "font-bold text-[var(--cs-accent)]" : ""}`}>
+              <span
+                className={`text-sm ${
+                  isSameDay(day, new Date())
+                    ? "font-semibold text-[var(--cs-accent)]"
+                    : inMonth
+                      ? "text-[var(--cs-text)]"
+                      : "text-[var(--cs-text-faint)]"
+                }`}
+              >
                 {format(day, "d")}
               </span>
               <div className="mt-1 space-y-0.5">
@@ -680,12 +727,12 @@ function MonthView({
                   <div
                     key={s.id}
                     onClick={(e) => { e.stopPropagation(); onSelect(s); }}
-                    className={`truncate rounded border px-1 text-[10px] ${sessionColor(s)}`}
+                    className={`truncate rounded-[var(--cs-radius-control)] border px-1 text-[10px] ${sessionColor(s)}`}
                   >
                     {format(new Date(s.startTime), "h:mm a")}
                   </div>
                 ))}
-                {daySessions.length > 3 && <div className="text-[10px] text-[var(--cs-text-muted)]">+{daySessions.length - 3} more</div>}
+                {daySessions.length > 3 && <div className="text-[10px] text-[var(--cs-text-muted)]">{t("schedule.moreCount", { count: daySessions.length - 3 })}</div>}
               </div>
             </div>
           );
@@ -709,18 +756,18 @@ function SessionPopover({
   const { t } = useTranslation();
   const cutoff = cancellationCutoff(session.startTime, cancellationPolicy.freeHours);
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <Modal onClose={onClose} labelledBy="session-popover-title" className="w-80 rounded-lg border border-[var(--cs-border)] bg-white p-4 shadow-xl">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <Modal onClose={onClose} labelledBy="session-popover-title" className="w-80 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4 shadow-[var(--cs-shadow-pop)]">
         <div className="mb-3 flex items-start justify-between">
           <h3 id="session-popover-title" className="font-semibold text-[var(--cs-text)]">{t("schedule.sessionDetails")}</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
+          <button onClick={onClose} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]"><X className="h-4 w-4" /></button>
         </div>
         <div className="space-y-2 text-sm text-[var(--cs-text-muted)]">
           <div className="flex items-center gap-2"><Clock className="h-4 w-4" /> {format(new Date(session.startTime), "MMM d, yyyy h:mm a")}</div>
           {templateName && <div className="flex items-center gap-2"><CalendarIcon className="h-4 w-4" /> {templateName}</div>}
           <div className="flex items-center gap-2">
             {session.isOnline ? <Video className="h-4 w-4" /> : <MapPin className="h-4 w-4" />}
-            {session.isOnline ? "Online" : `Room: ${session.roomNumber || "TBD"}`}
+            {session.isOnline ? t("schedule.online") : t("schedule.room", { room: session.roomNumber || t("schedule.tbd") })}
           </div>
         </div>
         {session.status === "scheduled" && (
@@ -731,7 +778,10 @@ function SessionPopover({
                 feePercent: cancellationPolicy.lateFeePercent,
               })}
             </p>
-            <button onClick={onCancel} className="w-full rounded bg-[var(--cs-danger)]/10 py-1.5 text-xs font-medium text-[var(--cs-danger)] hover:bg-[var(--cs-danger)]/20">
+            <button
+              onClick={onCancel}
+              className="w-full rounded-[var(--cs-radius-control)] bg-[var(--cs-danger-soft)] py-1.5 text-xs font-medium text-[var(--cs-danger)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:opacity-90"
+            >
               {t("schedule.cancelSession")}
             </button>
           </div>
@@ -745,16 +795,12 @@ function ScopeDialog({ onClose, onJustThis, onFuture }: { onClose: () => void; o
   const { t } = useTranslation();
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <Modal onClose={onClose} labelledBy="scope-dialog-title" className="w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl">
+      <Modal onClose={onClose} labelledBy="scope-dialog-title" className="w-full max-w-sm rounded-[var(--cs-radius-container)] bg-[var(--cs-surface)] p-6 shadow-[var(--cs-shadow-pop)]">
         <h3 id="scope-dialog-title" className="mb-2 text-lg font-medium text-[var(--cs-text)]">{t("schedule.sessionDetails")}</h3>
         <p className="mb-4 text-sm text-[var(--cs-text-muted)]">{t("schedule.scopePrompt")}</p>
         <div className="flex flex-col gap-2">
-          <button onClick={onJustThis} className="w-full rounded-md border border-[var(--cs-border)] py-2 text-sm font-medium text-[var(--cs-text)] hover:bg-gray-50">
-            {t("schedule.justThis")}
-          </button>
-          <button onClick={onFuture} className="w-full rounded-md bg-[var(--cs-accent)] py-2 text-sm font-medium text-white hover:opacity-90">
-            {t("schedule.thisAndFuture")}
-          </button>
+          <Button variant="ghost" className="w-full" onClick={onJustThis}>{t("schedule.justThis")}</Button>
+          <Button className="w-full" onClick={onFuture}>{t("schedule.thisAndFuture")}</Button>
         </div>
       </Modal>
     </div>
@@ -765,15 +811,11 @@ function OutsideHoursDialog({ onCancel, onConfirm }: { onCancel: () => void; onC
   const { t } = useTranslation();
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4" onClick={onCancel}>
-      <Modal onClose={onCancel} labelledBy="outside-hours-title" className="w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl">
+      <Modal onClose={onCancel} labelledBy="outside-hours-title" className="w-full max-w-sm rounded-[var(--cs-radius-container)] bg-[var(--cs-surface)] p-6 shadow-[var(--cs-shadow-pop)]">
         <p id="outside-hours-title" className="mb-4 text-sm text-[var(--cs-text)]">{t("schedule.outsideHours")}</p>
         <div className="flex justify-end gap-2">
-          <button onClick={onCancel} className="rounded-md border border-[var(--cs-border)] px-4 py-2 text-sm font-medium text-[var(--cs-text)] hover:bg-gray-50">
-            {t("schedule.cancel")}
-          </button>
-          <button onClick={onConfirm} className="rounded-md bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90">
-            {t("schedule.bookAnyway")}
-          </button>
+          <Button variant="ghost" onClick={onCancel}>{t("schedule.cancel")}</Button>
+          <Button onClick={onConfirm}>{t("schedule.bookAnyway")}</Button>
         </div>
       </Modal>
     </div>
@@ -915,10 +957,10 @@ function ClassWizard({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <Modal onClose={onClose} labelledBy="class-wizard-title" className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-[var(--cs-border)] bg-gray-50 px-6 py-4">
+      <Modal onClose={onClose} labelledBy="class-wizard-title" className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-[var(--cs-radius-container)] bg-[var(--cs-surface)] shadow-[var(--cs-shadow-pop)]">
+        <div className="flex items-center justify-between border-b border-[var(--cs-border)] bg-[var(--cs-surface-2)] px-6 py-4">
           <h3 id="class-wizard-title" className="text-lg font-semibold text-[var(--cs-text)]">{step === 1 ? t("schedule.selectClassType") : t("schedule.classDetails")}</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+          <button onClick={onClose} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]"><X className="h-5 w-5" /></button>
         </div>
         <form onSubmit={step === 1 ? (e) => { e.preventDefault(); setStep(2); } : handleSubmit}>
           <div className="space-y-6 px-6 py-6">
@@ -932,9 +974,9 @@ function ClassWizard({
                   <div
                     key={type}
                     onClick={() => setClassType(type)}
-                    className={`cursor-pointer rounded-xl border-2 p-4 transition-all ${classType === type ? "border-[var(--cs-accent)] bg-[var(--cs-accent)]/10" : "border-[var(--cs-border)] hover:border-[var(--cs-accent)]/50"}`}
+                    className={`cursor-pointer rounded-[var(--cs-radius-container)] border-2 p-4 transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${classType === type ? "border-[var(--cs-accent)] bg-[var(--cs-accent-soft)]" : "border-[var(--cs-border)] hover:border-[var(--cs-border-strong)]"}`}
                   >
-                    <Icon className={`mb-3 h-7 w-7 ${classType === type ? "text-[var(--cs-accent)]" : "text-gray-400"}`} />
+                    <Icon className={`mb-3 h-7 w-7 ${classType === type ? "text-[var(--cs-accent)]" : "text-[var(--cs-text-faint)]"}`} />
                     <h4 className="font-semibold text-[var(--cs-text)]">{label}</h4>
                     <p className="mt-1 text-xs text-[var(--cs-text-muted)]">{hint}</p>
                   </div>
@@ -943,41 +985,42 @@ function ClassWizard({
             ) : (
               <>
                 <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--cs-text)]">{t("schedule.course")}</label>
-                    <select required value={courseId} onChange={(e) => setCourseId(e.target.value)} className="w-full rounded-md border border-[var(--cs-border)] px-3 py-2 text-sm">
+                  <Field label={t("schedule.course")} required>
+                    <select required value={courseId} onChange={(e) => setCourseId(e.target.value)} className={SELECT_CLASS}>
                       <option value="" disabled>{t("schedule.selectCourse")}</option>
                       {courses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
-                  </div>
+                  </Field>
                   {classType === "BATCH" && (
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-[var(--cs-text)]">{t("schedule.capacity")}</label>
-                      <input type="number" min={1} required value={capacity} onChange={(e) => setCapacity(Number(e.target.value))} className="w-full rounded-md border border-[var(--cs-border)] px-3 py-2 text-sm" />
-                    </div>
+                    <Field label={t("schedule.capacity")} required>
+                      <Input type="number" min={1} required value={capacity} onChange={(e) => setCapacity(Number(e.target.value))} />
+                    </Field>
                   )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--cs-text)]">{t("schedule.pricingModel")}</label>
-                    <select value={pricingModel} onChange={(e) => setPricingModel(e.target.value as SchedulePricingModel)} className="w-full rounded-md border border-[var(--cs-border)] px-3 py-2 text-sm">
+                  <Field label={t("schedule.pricingModel")}>
+                    <select value={pricingModel} onChange={(e) => setPricingModel(e.target.value as SchedulePricingModel)} className={SELECT_CLASS}>
                       <option value="PER_SESSION">{t("schedule.perSession")}</option>
                       <option value="MONTHLY">{t("schedule.monthly")}</option>
                     </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--cs-text)]">{t("schedule.feeAmount")}</label>
-                    <input type="number" min={0} step="0.01" required value={feeAmount} onChange={(e) => setFeeAmount(Number(e.target.value))} className="w-full rounded-md border border-[var(--cs-border)] px-3 py-2 text-sm" />
-                  </div>
+                  </Field>
+                  <Field label={t("schedule.feeAmount")} required>
+                    <Input type="number" min={0} step="0.01" required value={feeAmount} onChange={(e) => setFeeAmount(Number(e.target.value))} />
+                  </Field>
                 </div>
 
                 {classType === "BATCH" && (
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-[var(--cs-text)]">{t("schedule.recurringPattern")}</label>
+                    <label className="mb-2 block text-xs font-medium text-[var(--cs-text-muted)]">{t("schedule.recurringPattern")}</label>
                     <div className="flex gap-2">
                       {DAY_LABELS.map((d, idx) => (
-                        <button key={d} type="button" onClick={() => toggleDay(idx)} className={`h-10 w-10 rounded-full text-sm font-medium ${selectedDays.includes(idx) ? "bg-[var(--cs-accent)] text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => toggleDay(idx)}
+                          className={`h-10 w-10 rounded-full text-sm font-medium transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${selectedDays.includes(idx) ? "bg-[var(--cs-accent)] text-[var(--cs-accent-contrast)]" : "bg-[var(--cs-surface-2)] text-[var(--cs-text-muted)] hover:bg-[var(--cs-border)]"}`}
+                        >
                           {d[0]}
                         </button>
                       ))}
@@ -986,35 +1029,32 @@ function ClassWizard({
                 )}
 
                 <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--cs-text)]">{t("schedule.startDate")}</label>
-                    <input type="date" required value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full rounded-md border border-[var(--cs-border)] px-3 py-2 text-sm" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--cs-text)]">{t("schedule.startTime")}</label>
-                    <input type="time" required value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full rounded-md border border-[var(--cs-border)] px-3 py-2 text-sm" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--cs-text)]">{t("schedule.duration")}</label>
-                    <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} className="w-full rounded-md border border-[var(--cs-border)] px-3 py-2 text-sm">
-                      {[30, 45, 60, 90, 120].map((m) => <option key={m} value={m}>{m} mins</option>)}
+                  <Field label={t("schedule.startDate")} required>
+                    <Input type="date" required value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                  </Field>
+                  <Field label={t("schedule.startTime")} required>
+                    <Input type="time" required value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+                  </Field>
+                  <Field label={t("schedule.duration")}>
+                    <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} className={SELECT_CLASS}>
+                      {[30, 45, 60, 90, 120].map((m) => <option key={m} value={m}>{t("schedule.durationMins", { count: m })}</option>)}
                     </select>
-                  </div>
+                  </Field>
                 </div>
 
                 {classType === "ONE_ON_ONE" && (
                   <div>
-                    <button type="button" onClick={handleFindGap} className="flex items-center gap-1 text-sm font-medium text-[var(--cs-accent)] hover:opacity-80">
-                      <Search className="h-4 w-4" /> {t("schedule.findGap")}
-                    </button>
+                    <Button type="button" variant="quiet" size="sm" icon={Search} className="px-0 hover:bg-transparent" onClick={handleFindGap}>
+                      {t("schedule.findGap")}
+                    </Button>
                     {gaps && gaps.length > 0 && (
-                      <div className="mt-2 max-h-32 space-y-1 overflow-y-auto rounded-md border border-[var(--cs-border)] p-2">
+                      <div className="mt-2 max-h-32 space-y-1 overflow-y-auto rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] p-2">
                         {gaps.map((g) => (
                           <button
                             key={g.start}
                             type="button"
                             onClick={() => applyGap(g)}
-                            className="block w-full rounded px-2 py-1 text-left text-xs hover:bg-gray-50"
+                            className="block w-full rounded-[var(--cs-radius-control)] px-2 py-1 text-left text-xs text-[var(--cs-text)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)]"
                           >
                             {format(new Date(g.start), "EEE MMM d, h:mm a")}
                           </button>
@@ -1025,11 +1065,11 @@ function ClassWizard({
                 )}
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-[var(--cs-text)]">{t("schedule.students")}</label>
-                  <div className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-[var(--cs-border)] p-2">
+                  <label className="mb-2 block text-xs font-medium text-[var(--cs-text-muted)]">{t("schedule.students")}</label>
+                  <div className="max-h-32 space-y-1 overflow-y-auto rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] p-2">
                     {students.map((s) => (
-                      <label key={s.id} className="flex cursor-pointer items-center rounded p-2 hover:bg-gray-50">
-                        <input type="checkbox" checked={selectedStudentIds.includes(s.id)} onChange={() => toggleStudent(s.id)} className="h-4 w-4 rounded border-gray-300" />
+                      <label key={s.id} className="flex cursor-pointer items-center rounded-[var(--cs-radius-control)] p-2 transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)]">
+                        <input type="checkbox" checked={selectedStudentIds.includes(s.id)} onChange={() => toggleStudent(s.id)} className="h-4 w-4 rounded border-[var(--cs-border-strong)] text-[var(--cs-accent)] focus:ring-[var(--cs-focus)]" />
                         <span className="ml-3 text-sm text-[var(--cs-text)]">{s.name}</span>
                       </label>
                     ))}
@@ -1041,36 +1081,32 @@ function ClassWizard({
                 </div>
 
                 <div className="border-t border-[var(--cs-border)] pt-4">
-                  <h4 className="mb-3 text-sm font-medium text-[var(--cs-text)]">{t("schedule.location")}</h4>
+                  <h4 className="mb-3 text-xs font-medium text-[var(--cs-text-muted)]">{t("schedule.location")}</h4>
                   <div className="flex items-center gap-6">
-                    <label className="flex items-center gap-2">
-                      <input type="radio" checked={!isOnline} onChange={() => setIsOnline(false)} /> {t("schedule.inPerson")}
+                    <label className="flex items-center gap-2 text-sm text-[var(--cs-text)]">
+                      <input type="radio" checked={!isOnline} onChange={() => setIsOnline(false)} className="text-[var(--cs-accent)] focus:ring-[var(--cs-focus)]" /> {t("schedule.inPerson")}
                     </label>
-                    <label className="flex items-center gap-2">
-                      <input type="radio" checked={isOnline} onChange={() => setIsOnline(true)} /> {t("schedule.online")}
+                    <label className="flex items-center gap-2 text-sm text-[var(--cs-text)]">
+                      <input type="radio" checked={isOnline} onChange={() => setIsOnline(true)} className="text-[var(--cs-accent)] focus:ring-[var(--cs-focus)]" /> {t("schedule.online")}
                     </label>
                   </div>
                   {!isOnline && (
-                    <input type="text" placeholder={t("schedule.roomNumber")} value={roomNumber} onChange={(e) => setRoomNumber(e.target.value)} className="mt-3 w-full rounded-md border border-[var(--cs-border)] px-3 py-2 text-sm" />
+                    <Input type="text" placeholder={t("schedule.roomNumber")} value={roomNumber} onChange={(e) => setRoomNumber(e.target.value)} className="mt-3" />
                   )}
                 </div>
               </>
             )}
           </div>
 
-          <div className="flex justify-between border-t border-[var(--cs-border)] bg-gray-50 px-6 py-4">
+          <div className="flex justify-between border-t border-[var(--cs-border)] bg-[var(--cs-surface-2)] px-6 py-4">
             {step === 2 ? (
-              <button type="button" onClick={() => setStep(1)} className="rounded-md border border-[var(--cs-border)] px-4 py-2 text-sm font-medium text-[var(--cs-text)] hover:bg-gray-50">
-                {t("schedule.back")}
-              </button>
+              <Button type="button" variant="ghost" onClick={() => setStep(1)}>{t("schedule.back")}</Button>
             ) : (
-              <button type="button" onClick={onClose} className="rounded-md border border-[var(--cs-border)] px-4 py-2 text-sm font-medium text-[var(--cs-text)] hover:bg-gray-50">
-                {t("schedule.cancel")}
-              </button>
+              <Button type="button" variant="ghost" onClick={onClose}>{t("schedule.cancel")}</Button>
             )}
-            <button type="submit" disabled={submitting} className="rounded-md bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50">
+            <Button type="submit" disabled={submitting}>
               {step === 1 ? t("schedule.continue") : t("schedule.createClass")}
-            </button>
+            </Button>
           </div>
         </form>
       </Modal>
