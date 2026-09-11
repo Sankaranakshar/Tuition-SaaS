@@ -23,7 +23,7 @@ import {
 } from "../lib/money";
 import { formatPaise, formatDate } from "../lib/format";
 import { rupeesToPaise, paiseToRupees } from "../../shared/money";
-import { EmptyState, SkeletonRow, AgedBadge, StatChip, Popover, StatusChip, BottomSheet, type ChipTone } from "../components/kit";
+import { EmptyState, SkeletonRow, AgedBadge, StatChip, Popover, StatusChip, BottomSheet, Button, Input, Field, Modal, type ChipTone } from "../components/kit";
 import { useIsMobile } from "../hooks/useIsMobile";
 
 type Segment = "outstanding" | "wallets" | "insights";
@@ -91,13 +91,10 @@ function StaffMoneyView() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-[var(--cs-text)]">{t("nav.money")}</h1>
-        <button
-          onClick={() => { setPrefillStudentId(undefined); setCreateOpen(true); }}
-          className="flex items-center gap-1.5 rounded-[6px] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-        >
-          <Plus className="h-4 w-4" /> {t("money.generateInvoice")}
-        </button>
+        <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">{t("nav.money")}</h1>
+        <Button icon={Plus} onClick={() => { setPrefillStudentId(undefined); setCreateOpen(true); }}>
+          {t("money.generateInvoice")}
+        </Button>
       </div>
 
       <div className="flex items-center gap-1 border-b border-[var(--cs-border)]">
@@ -105,7 +102,7 @@ function StaffMoneyView() {
           <button
             key={key}
             onClick={() => setSegment(key)}
-            className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+            className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${
               segment === key
                 ? "border-[var(--cs-accent)] text-[var(--cs-accent)]"
                 : "border-transparent text-[var(--cs-text-muted)] hover:text-[var(--cs-text)]"
@@ -143,7 +140,7 @@ function StaffMoneyView() {
       {detailInvoice && (
         <InvoiceDetailModal
           invoice={detailInvoice}
-          studentName={students.find((s) => s.id === detailInvoice.studentId)?.name || "Unknown student"}
+          studentName={students.find((s) => s.id === detailInvoice.studentId)?.name || t("money.unknownStudent")}
           payments={payments.filter((p) => p.invoiceId === detailInvoice.id)}
           onClose={() => setDetailInvoiceId(null)}
           onChanged={refetchInvoices}
@@ -220,7 +217,7 @@ function OutstandingSegment({
 
   if (loading) {
     return (
-      <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] divide-y divide-[var(--cs-border)]">
+      <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] divide-y divide-[var(--cs-border)]">
         {Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)}
       </div>
     );
@@ -239,8 +236,8 @@ function OutstandingSegment({
   return (
     <div className="space-y-4 pb-16">
       {groups.map((group) => (
-        <div key={group.studentId} className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] overflow-hidden">
-          <div className="flex items-center justify-between border-b border-[var(--cs-border)] bg-[var(--cs-bg)] px-4 py-2.5">
+        <div key={group.studentId} className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] overflow-hidden">
+          <div className="flex items-center justify-between border-b border-[var(--cs-border)] bg-[var(--cs-surface-2)] px-4 py-2.5">
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-[var(--cs-text)]">{group.studentName}</span>
               <AgedBadge daysOverdue={group.maxDaysOverdue} />
@@ -250,7 +247,7 @@ function OutstandingSegment({
               <button
                 onClick={() => onNewInvoice(group.studentId)}
                 title={t("money.newInvoice")}
-                className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]"
+                className="rounded-[var(--cs-radius-control)] p-1.5 text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface)] hover:text-[var(--cs-accent)]"
               >
                 <Plus className="h-4 w-4" />
               </button>
@@ -263,7 +260,7 @@ function OutstandingSegment({
                   type="checkbox"
                   checked={selected.has(line.invoice.id)}
                   onChange={() => toggle(line.invoice.id)}
-                  className="h-4 w-4"
+                  className="h-4 w-4 accent-[var(--cs-accent)]"
                 />
                 <button onClick={() => onViewInvoice(line.invoice.id)} className="min-w-0 flex-1 text-left">
                   <div className="truncate text-sm text-[var(--cs-text)]">
@@ -281,7 +278,7 @@ function OutstandingSegment({
                 <button
                   onClick={() => remind(line.invoice.id, group.studentName)}
                   title={t("money.remind")}
-                  className="p-1.5 text-[var(--cs-text-muted)] hover:text-green-600"
+                  className="rounded-[var(--cs-radius-control)] p-1.5 text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-accent)]"
                 >
                   <Share2 className="h-4 w-4" />
                 </button>
@@ -292,17 +289,18 @@ function OutstandingSegment({
       ))}
 
       {totals.count > 0 && (
-        <div className="fixed inset-x-0 bottom-0 z-10 flex items-center justify-between border-t border-[var(--cs-border)] bg-[var(--cs-surface)] px-6 py-3 shadow-lg md:left-64">
-          <span className="text-sm text-[var(--cs-text)]">
+        <div className="fixed inset-x-0 bottom-0 z-10 flex items-center justify-between bg-[var(--cs-text)] px-6 py-3 text-[var(--cs-bg)] shadow-[var(--cs-shadow-pop)] md:left-[92px]">
+          <span className="text-sm">
             {t("money.selectionTotal", { amount: formatPaise(totals.totalPaise), count: totals.count })}
           </span>
           <div className="flex items-center gap-2">
-            <button onClick={() => setSelected(new Set())} className="rounded-[6px] px-3 py-1.5 text-sm text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)]">
+            <button
+              onClick={() => setSelected(new Set())}
+              className="rounded-[var(--cs-radius-control)] px-3 py-1.5 text-sm text-[var(--cs-bg)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)]"
+            >
               {t("money.clearSelection")}
             </button>
-            <button onClick={bulkRemind} className="rounded-[6px] bg-[var(--cs-accent)] px-3.5 py-1.5 text-sm font-medium text-white hover:opacity-90">
-              {t("money.copyReminders")}
-            </button>
+            <Button onClick={bulkRemind}>{t("money.copyReminders")}</Button>
           </div>
         </div>
       )}
@@ -322,7 +320,7 @@ function RecordPaymentPopover({ invoiceId, outstandingPaise }: { invoiceId: stri
           type="button"
           onClick={() => setSheetOpen(true)}
           title={t("money.recordPayment")}
-          className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]"
+          className="rounded-[var(--cs-radius-control)] p-1.5 text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-accent)]"
         >
           <IndianRupee className="h-4 w-4" />
         </button>
@@ -341,7 +339,7 @@ function RecordPaymentPopover({ invoiceId, outstandingPaise }: { invoiceId: stri
     <Popover
       align="right"
       trigger={<IndianRupee className="h-4 w-4" />}
-      triggerClassName="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]"
+      triggerClassName="rounded-[var(--cs-radius-control)] p-1.5 text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-accent)]"
       triggerTitle={t("money.recordPayment")}
     >
       {(close) => <RecordPaymentForm invoiceId={invoiceId} outstandingPaise={outstandingPaise} onDone={close} />}
@@ -379,31 +377,26 @@ function RecordPaymentForm({ invoiceId, outstandingPaise, onDone }: { invoiceId:
   return (
     <form onSubmit={submit} className="flex w-full flex-col gap-2">
       <label className="text-xs font-medium text-[var(--cs-text-muted)]">{t("money.amount")}</label>
-      <input
+      <Input
         autoFocus
         type="number"
         min="0"
         step="0.01"
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
-        className="w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] px-2.5 py-1.5 text-sm outline-none focus:border-[var(--cs-accent)]"
       />
       <label className="text-xs font-medium text-[var(--cs-text-muted)]">{t("money.method")}</label>
       <select
         value={method}
         onChange={(e) => setMethod(e.target.value as any)}
-        className="w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] px-2.5 py-1.5 text-sm outline-none focus:border-[var(--cs-accent)]"
+        className="w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-2.5 py-1.5 text-[13px] text-[var(--cs-text)] outline-none transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] focus:border-[var(--cs-focus)] focus:ring-2 focus:ring-[var(--cs-focus)]/30"
       >
         {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m.replace("_", " ")}</option>)}
       </select>
       {error && <p className="text-xs text-[var(--cs-danger)]">{error}</p>}
       <div className="flex items-center justify-end gap-2 pt-0.5">
-        <button type="button" onClick={onDone} className="rounded-[6px] px-2.5 py-1.5 text-sm text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)]">
-          {t("money.cancel")}
-        </button>
-        <button type="submit" disabled={saving} className="rounded-[6px] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60">
-          {saving ? t("money.saving") : t("money.recordPayment")}
-        </button>
+        <Button type="button" variant="quiet" onClick={onDone}>{t("money.cancel")}</Button>
+        <Button type="submit" disabled={saving}>{saving ? t("money.saving") : t("money.recordPayment")}</Button>
       </div>
     </form>
   );
@@ -417,7 +410,7 @@ function WalletsSegment({ wallets, loading, avgSessionFeePaise }: any) {
 
   if (loading) {
     return (
-      <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] divide-y divide-[var(--cs-border)]">
+      <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] divide-y divide-[var(--cs-border)]">
         {Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)}
       </div>
     );
@@ -428,7 +421,7 @@ function WalletsSegment({ wallets, loading, avgSessionFeePaise }: any) {
   }
 
   return (
-    <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] divide-y divide-[var(--cs-border)]">
+    <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] divide-y divide-[var(--cs-border)]">
       {ranked.map(({ wallet, sessionsCovered, isLow }) => (
         <div key={wallet.studentId} className="flex items-center justify-between px-4 py-3">
           <div>
@@ -456,7 +449,7 @@ function TopUpPopover({ studentId }: { studentId: string }) {
     <Popover
       align="right"
       trigger={t("money.topUp")}
-      triggerClassName="rounded-[6px] border border-[var(--cs-border)] px-2.5 py-1.5 text-xs font-medium hover:bg-[var(--cs-bg)]"
+      triggerClassName="rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] px-2.5 py-1.5 text-xs font-medium text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:border-[var(--cs-border-strong)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)]"
     >
       {(close) => <TopUpForm studentId={studentId} onDone={close} />}
     </Popover>
@@ -493,31 +486,26 @@ function TopUpForm({ studentId, onDone }: { studentId: string; onDone: () => voi
   return (
     <form onSubmit={submit} className="flex flex-col gap-2 w-56">
       <label className="text-xs font-medium text-[var(--cs-text-muted)]">{t("money.amount")}</label>
-      <input
+      <Input
         autoFocus
         type="number"
         min="0"
         step="0.01"
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
-        className="w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] px-2.5 py-1.5 text-sm outline-none focus:border-[var(--cs-accent)]"
       />
       <label className="text-xs font-medium text-[var(--cs-text-muted)]">{t("money.method")}</label>
       <select
         value={method}
         onChange={(e) => setMethod(e.target.value as any)}
-        className="w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] px-2.5 py-1.5 text-sm outline-none focus:border-[var(--cs-accent)]"
+        className="w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-2.5 py-1.5 text-[13px] text-[var(--cs-text)] outline-none transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] focus:border-[var(--cs-focus)] focus:ring-2 focus:ring-[var(--cs-focus)]/30"
       >
         {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m.replace("_", " ")}</option>)}
       </select>
       {error && <p className="text-xs text-[var(--cs-danger)]">{error}</p>}
       <div className="flex items-center justify-end gap-2 pt-0.5">
-        <button type="button" onClick={onDone} className="rounded-[6px] px-2.5 py-1.5 text-sm text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)]">
-          {t("money.cancel")}
-        </button>
-        <button type="submit" disabled={saving} className="rounded-[6px] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60">
-          {saving ? t("money.saving") : t("money.topUp")}
-        </button>
+        <Button type="button" variant="quiet" onClick={onDone}>{t("money.cancel")}</Button>
+        <Button type="submit" disabled={saving}>{saving ? t("money.saving") : t("money.topUp")}</Button>
       </div>
     </form>
   );
@@ -542,35 +530,47 @@ function InsightsSegment({ invoices, payments }: any) {
         <StatChip label={t("money.collectionRate")} value={`${rate}%`} tone={rate >= 80 ? "positive" : rate >= 50 ? "warn" : "danger"} icon={TrendingUp} />
       </div>
 
-      <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4">
+      <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4">
         <h3 className="mb-3 text-sm font-semibold text-[var(--cs-text)]">{t("money.revenueTrend")}</h3>
         <div className="flex gap-3" style={{ height: 140 }}>
-          {trend.map((m) => (
-            <div key={m.month} className="flex flex-1 flex-col items-center gap-1.5">
-              <div className="flex w-full flex-1 items-end">
-                <div
-                  className="w-full rounded-t-[4px] bg-[var(--cs-accent)]"
-                  style={{ height: `${Math.max(4, (m.totalPaise / maxTrend) * 100)}%` }}
-                  title={formatPaise(m.totalPaise)}
-                />
+          {trend.map((m) => {
+            const isPeak = m.totalPaise === maxTrend && maxTrend > 0;
+            return (
+              <div key={m.month} className="flex flex-1 flex-col items-center gap-1.5">
+                <div className="flex w-full flex-1 items-end">
+                  <div
+                    className="w-full rounded-t-[3px]"
+                    style={{
+                      height: `${Math.max(4, (m.totalPaise / maxTrend) * 100)}%`,
+                      backgroundColor: isPeak ? "var(--cs-chart-1)" : "var(--cs-chart-2)",
+                    }}
+                    title={formatPaise(m.totalPaise)}
+                  />
+                </div>
+                <span className="text-[10px] text-[var(--cs-text-muted)]">{m.month.slice(5)}</span>
               </div>
-              <span className="text-[10px] text-[var(--cs-text-muted)]">{m.month.slice(5)}</span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
-      <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4">
+      <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4">
         <h3 className="mb-3 text-sm font-semibold text-[var(--cs-text)]">{t("money.revenueByService")}</h3>
         {byItem.length === 0 ? (
           <p className="text-sm text-[var(--cs-text-muted)]">{t("money.noRevenueYet")}</p>
         ) : (
           <div className="space-y-2.5">
-            {byItem.map((i) => (
+            {byItem.map((i, idx) => (
               <div key={i.label} className="flex items-center gap-3">
                 <span className="w-32 shrink-0 truncate text-xs text-[var(--cs-text-muted)]">{i.label}</span>
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--cs-bg)]">
-                  <div className="h-full rounded-full bg-[var(--cs-accent)]" style={{ width: `${(i.totalPaise / maxItem) * 100}%` }} />
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--cs-surface-2)]">
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${(i.totalPaise / maxItem) * 100}%`,
+                      backgroundColor: idx === 0 ? "var(--cs-chart-1)" : "var(--cs-chart-2)",
+                    }}
+                  />
                 </div>
                 <span className="w-20 shrink-0 text-right text-xs font-medium tabular-nums text-[var(--cs-text)]">{formatPaise(i.totalPaise)}</span>
               </div>
@@ -629,30 +629,34 @@ function InvoiceDetailModal({ invoice, studentName, payments, onClose, onChanged
   };
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 p-4">
-      <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <Modal
+        onClose={onClose}
+        labelledBy="invoice-detail-heading"
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-[var(--cs-radius-container)] bg-[var(--cs-surface)] p-6 shadow-[var(--cs-shadow-pop)] outline-none"
+      >
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">
+            <h2 id="invoice-detail-heading" className="text-lg font-semibold text-[var(--cs-text)]">
               {invoice.invoiceNumber || `INV-${invoice.id.slice(0, 6).toUpperCase()}`}
             </h2>
-            <p className="text-sm text-gray-500">{studentName}</p>
+            <p className="text-sm text-[var(--cs-text-muted)]">{studentName}</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+          <button onClick={onClose} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]"><X className="h-5 w-5" /></button>
         </div>
 
-        <div className="mb-4 grid grid-cols-3 gap-3 rounded-[10px] border border-gray-100 bg-gray-50 p-3 text-center">
+        <div className="mb-4 grid grid-cols-3 gap-3 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface-2)] p-3 text-center">
           <div>
-            <div className="text-xs text-gray-500">{t("money.total")}</div>
-            <div className="text-sm font-semibold">{formatPaise(invoice.totalPaise)}</div>
+            <div className="text-xs text-[var(--cs-text-muted)]">{t("money.total")}</div>
+            <div className="text-sm font-semibold text-[var(--cs-text)]">{formatPaise(invoice.totalPaise)}</div>
           </div>
           <div>
-            <div className="text-xs text-gray-500">{t("money.paid")}</div>
-            <div className="text-sm font-semibold">{formatPaise(invoice.paidPaise)}</div>
+            <div className="text-xs text-[var(--cs-text-muted)]">{t("money.paid")}</div>
+            <div className="text-sm font-semibold text-[var(--cs-text)]">{formatPaise(invoice.paidPaise)}</div>
           </div>
           <div>
-            <div className="text-xs text-gray-500">{t("money.outstanding")}</div>
-            <div className="text-sm font-semibold">{formatPaise(outstandingPaise)}</div>
+            <div className="text-xs text-[var(--cs-text-muted)]">{t("money.outstanding")}</div>
+            <div className="text-sm font-semibold text-[var(--cs-text)]">{formatPaise(outstandingPaise)}</div>
           </div>
         </div>
 
@@ -662,32 +666,31 @@ function InvoiceDetailModal({ invoice, studentName, payments, onClose, onChanged
         </div>
 
         <div className="mb-4 space-y-1.5">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">{t("money.activity")}</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-[0.06em] text-[var(--cs-text-faint)]">{t("money.activity")}</h3>
           {events.map((e, i) => (
             <div key={i} className="flex items-center justify-between text-sm">
-              <span className={e.tone === "danger" ? "text-red-700" : e.tone === "positive" ? "text-green-700" : "text-gray-700"}>{e.label}</span>
-              <span className="text-xs text-gray-400">{formatDate(e.at)}</span>
+              <span className={e.tone === "danger" ? "text-[var(--cs-danger)]" : e.tone === "positive" ? "text-[var(--cs-accent)]" : "text-[var(--cs-text)]"}>{e.label}</span>
+              <span className="text-xs text-[var(--cs-text-faint)]">{formatDate(e.at)}</span>
             </div>
           ))}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-4">
-          <button onClick={download} className="flex items-center gap-1.5 rounded-[6px] border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">
-            <Download className="h-4 w-4" /> {t("money.downloadPdf")}
-          </button>
+        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--cs-border)] pt-4">
+          <Button variant="ghost" icon={Download} onClick={download}>{t("money.downloadPdf")}</Button>
           {outstandingPaise > 0 && (
-            <button onClick={share} className="flex items-center gap-1.5 rounded-[6px] border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">
-              <Share2 className="h-4 w-4" /> {t("money.remind")}
-            </button>
+            <Button variant="ghost" icon={Share2} onClick={share}>{t("money.remind")}</Button>
           )}
           {outstandingPaise > 0 && <RecordPaymentPopover invoiceId={invoice.id} outstandingPaise={outstandingPaise} />}
           {canVoid && (
-            <button onClick={doVoid} className="ml-auto flex items-center gap-1.5 rounded-[6px] px-3 py-1.5 text-sm text-red-600 hover:bg-red-50">
+            <button
+              onClick={doVoid}
+              className="ml-auto flex items-center gap-1.5 rounded-[var(--cs-radius-control)] px-3 py-1.5 text-sm text-[var(--cs-danger)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-danger-soft)]"
+            >
               <XCircle className="h-4 w-4" /> {t("money.void")}
             </button>
           )}
         </div>
-      </div>
+      </Modal>
     </div>
   );
 }
@@ -748,28 +751,36 @@ function CreateInvoiceModal({ students, userOrgId, prefillStudentId, onClose, on
   };
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 p-4">
-      <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <Modal
+        onClose={onClose}
+        labelledBy="create-invoice-heading"
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-[var(--cs-radius-container)] bg-[var(--cs-surface)] p-6 shadow-[var(--cs-shadow-pop)] outline-none"
+      >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">{t("money.generateInvoice")}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+          <h2 id="create-invoice-heading" className="text-lg font-semibold text-[var(--cs-text)]">{t("money.generateInvoice")}</h2>
+          <button onClick={onClose} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]"><X className="h-5 w-5" /></button>
         </div>
         <form onSubmit={submit} className="space-y-4">
-          {error && <div className="rounded-md bg-red-50 p-2 text-sm text-red-700">{error}</div>}
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">{t("money.student")}</label>
-            <select required value={studentId} onChange={(e) => setStudentId(e.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm">
+          {error && <div className="rounded-[var(--cs-radius-control)] bg-[var(--cs-danger-soft)] p-2 text-sm text-[var(--cs-danger)]">{error}</div>}
+          <Field label={t("money.student")} required>
+            <select
+              required
+              value={studentId}
+              onChange={(e) => setStudentId(e.target.value)}
+              className="w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-3 py-1.5 text-[13px] text-[var(--cs-text)] outline-none transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] focus:border-[var(--cs-focus)] focus:ring-2 focus:ring-[var(--cs-focus)]/30"
+            >
               <option value="" disabled>{t("money.selectStudent")}</option>
               {students.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
-          </div>
+          </Field>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">{t("money.lineItems")}</label>
+            <label className="mb-2 block text-xs font-medium text-[var(--cs-text-muted)]">{t("money.lineItems")}</label>
             <div className="space-y-2">
               {lineItems.map((item, i) => (
                 <div key={i} className="flex items-start gap-2">
-                  <input
+                  <Input
                     type="text"
                     list="money-services-list"
                     required
@@ -779,21 +790,25 @@ function CreateInvoiceModal({ students, userOrgId, prefillStudentId, onClose, on
                       if (templates.some((tpl) => `${tpl.type} - ${tpl.pricing_model}` === e.target.value)) selectTemplate(i, e.target.value);
                     }}
                     placeholder={t("money.description")}
-                    className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm"
+                    className="flex-1"
                   />
-                  <input
+                  <Input
                     type="number" required min="1" value={item.quantity}
                     onChange={(e) => setLine(i, "quantity", parseInt(e.target.value) || 1)}
-                    className="w-16 rounded-md border border-gray-300 px-2 py-2 text-sm"
+                    className="w-16"
                   />
-                  <input
+                  <Input
                     type="number" required min="0" step="0.01" value={item.amount}
                     onChange={(e) => setLine(i, "amount", parseFloat(e.target.value) || 0)}
                     placeholder="₹"
-                    className="w-24 rounded-md border border-gray-300 px-2 py-2 text-sm"
+                    className="w-24"
                   />
                   {lineItems.length > 1 && (
-                    <button type="button" onClick={() => removeLine(i)} className="mt-2 text-red-500 hover:text-red-700">
+                    <button
+                      type="button"
+                      onClick={() => removeLine(i)}
+                      className="mt-2 rounded-[var(--cs-radius-control)] text-[var(--cs-danger)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:opacity-80"
+                    >
                       <Trash2 className="h-4 w-4" />
                     </button>
                   )}
@@ -802,39 +817,33 @@ function CreateInvoiceModal({ students, userOrgId, prefillStudentId, onClose, on
               <datalist id="money-services-list">
                 {templates.map((tpl, i) => <option key={i} value={`${tpl.type} - ${tpl.pricing_model}`} />)}
               </datalist>
-              <button type="button" onClick={addLine} className="flex items-center text-sm font-medium text-indigo-600 hover:text-indigo-800">
-                <Plus className="mr-1 h-4 w-4" /> {t("money.addLineItem")}
-              </button>
+              <Button type="button" variant="quiet" size="sm" icon={Plus} className="px-0 hover:bg-transparent hover:text-[var(--cs-accent)]" onClick={addLine}>
+                {t("money.addLineItem")}
+              </Button>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">{t("money.taxPercent")}</label>
-              <input type="number" min="0" max="100" step="0.1" value={taxPercentage} onChange={(e) => setTaxPercentage(parseFloat(e.target.value) || 0)} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">{t("money.dueDate")}</label>
-              <input type="date" required value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
-            </div>
+            <Field label={t("money.taxPercent")}>
+              <Input type="number" min="0" max="100" step="0.1" value={taxPercentage} onChange={(e) => setTaxPercentage(parseFloat(e.target.value) || 0)} />
+            </Field>
+            <Field label={t("money.dueDate")} required>
+              <Input type="date" required value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+            </Field>
           </div>
 
-          <div className="flex flex-col items-end border-t border-gray-100 pt-2">
-            <p className="text-sm text-gray-500">{t("money.subtotal")}: ₹{subtotal.toFixed(2)}</p>
-            {taxPercentage > 0 && <p className="text-sm text-gray-500">{t("money.tax")} ({taxPercentage}%): ₹{taxAmount.toFixed(2)}</p>}
-            <p className="mt-1 text-lg font-bold text-gray-900">{t("money.total")}: ₹{(subtotal + taxAmount).toFixed(2)}</p>
+          <div className="flex flex-col items-end border-t border-[var(--cs-border)] pt-2">
+            <p className="text-sm text-[var(--cs-text-muted)]">{t("money.subtotal")}: ₹{subtotal.toFixed(2)}</p>
+            {taxPercentage > 0 && <p className="text-sm text-[var(--cs-text-muted)]">{t("money.tax")} ({taxPercentage}%): ₹{taxAmount.toFixed(2)}</p>}
+            <p className="mt-1 text-lg font-semibold text-[var(--cs-text)]">{t("money.total")}: ₹{(subtotal + taxAmount).toFixed(2)}</p>
           </div>
 
-          <div className="flex justify-end gap-3 border-t border-gray-200 pt-4">
-            <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-              {t("money.cancel")}
-            </button>
-            <button type="submit" disabled={saving} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
-              {saving ? t("money.saving") : t("money.generateInvoice")}
-            </button>
+          <div className="flex justify-end gap-3 border-t border-[var(--cs-border)] pt-4">
+            <Button type="button" variant="ghost" onClick={onClose}>{t("money.cancel")}</Button>
+            <Button type="submit" disabled={saving}>{saving ? t("money.saving") : t("money.generateInvoice")}</Button>
           </div>
         </form>
-      </div>
+      </Modal>
     </div>
   );
 }
@@ -847,7 +856,7 @@ function SelfMoneyView() {
 
   if (loading) {
     return (
-      <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] divide-y divide-[var(--cs-border)]">
+      <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] divide-y divide-[var(--cs-border)]">
         {Array.from({ length: 3 }).map((_, i) => <SkeletonRow key={i} />)}
       </div>
     );
@@ -867,7 +876,7 @@ function SelfMoneyView() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-[var(--cs-text)]">{t("nav.money")}</h1>
+      <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">{t("nav.money")}</h1>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <StatChip
@@ -882,7 +891,7 @@ function SelfMoneyView() {
         />
       </div>
 
-      <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+      <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
         <h3 className="border-b border-[var(--cs-border)] px-4 py-3 text-sm font-semibold text-[var(--cs-text)]">{t("money.invoices")}</h3>
         {invoices.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[var(--cs-text-muted)]">{t("money.noInvoicesYet")}</p>
@@ -907,7 +916,7 @@ function SelfMoneyView() {
         )}
       </div>
 
-      <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+      <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
         <h3 className="border-b border-[var(--cs-border)] px-4 py-3 text-sm font-semibold text-[var(--cs-text)]">{t("money.ledger")}</h3>
         {ledger.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[var(--cs-text-muted)]">{t("money.noLedgerYet")}</p>
@@ -919,7 +928,7 @@ function SelfMoneyView() {
                   <span className="text-[var(--cs-text)]">{entry.reason}</span>
                   <span className="ml-2 text-xs text-[var(--cs-text-muted)]">{formatDate(entry.at)}</span>
                 </div>
-                <span className={entry.paise > 0 || entry.credits > 0 ? "text-green-700" : "text-red-700"}>
+                <span className={entry.paise > 0 || entry.credits > 0 ? "text-[var(--cs-accent)]" : "text-[var(--cs-danger)]"}>
                   {entry.credits !== 0 ? `${entry.credits > 0 ? "+" : ""}${entry.credits} ${t("money.creditsUnit")}` : `${entry.paise > 0 ? "+" : ""}${formatPaise(entry.paise)}`}
                 </span>
               </div>

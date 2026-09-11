@@ -234,6 +234,7 @@
     "allSettledHint": "No outstanding invoices right now.",
     "due": "Due",
     "generalTuition": "General Tuition",
+    "unknownStudent": "Unknown student",
     "remind": "Remind",
     "reminderFailed": "Could not create a payment link to share",
     "paymentLinkFooter": "\n\n— sent via ClassStackr, fee-collection software for tuition centers: {{url}}",
