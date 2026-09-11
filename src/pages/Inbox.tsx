@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Send, Archive, Clock, Radio, MessageSquare, Inbox as InboxIcon, Plus, X } from "lucide-react";
+import { Send, Archive, Clock, Radio, MessageSquare, Inbox as InboxIcon, Plus, X, ArrowLeft } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { EmptyState, SkeletonRow, ContextCard, Popover, Modal, Button, Input, Field } from "../components/kit";
@@ -202,12 +202,12 @@ export default function Inbox() {
         <Button icon={Plus} onClick={() => setNewMessageOpen(true)}>{t("inbox.newMessage")}</Button>
       </div>
 
-      <div className="flex items-center gap-1 border-b border-[var(--cs-border)] px-1">
+      <div className="flex items-center gap-1 overflow-x-auto border-b border-[var(--cs-border)] px-1">
         {[...SEGMENTS, ...(isStaff ? STAFF_SEGMENTS : [])].map(({ key, labelKey }) => (
           <button
             key={key}
             onClick={() => setSegment(key)}
-            className={`border-b-2 px-3 py-2 text-sm font-medium transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${
+            className={`shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${
               segment === key
                 ? "border-[var(--cs-accent)] text-[var(--cs-accent)]"
                 : "border-transparent text-[var(--cs-text-muted)] hover:text-[var(--cs-text)]"
@@ -223,7 +223,11 @@ export default function Inbox() {
           <BookingRequestsPanel orgId={orgId} />
         ) : (
           <>
-        <div className="w-80 shrink-0 overflow-y-auto border-r border-[var(--cs-border)]">
+        <div
+          className={`${
+            selectedId ? "hidden md:block" : "block"
+          } w-full shrink-0 overflow-y-auto border-r border-[var(--cs-border)] md:w-80`}
+        >
           {conversationsLoading ? (
             <div className="divide-y divide-[var(--cs-border)]">{Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} />)}</div>
           ) : visibleItems.length === 0 ? (
@@ -246,9 +250,13 @@ export default function Inbox() {
           )}
         </div>
 
-        <div className="flex-1 overflow-hidden">
+        <div
+          className={`${
+            selectedId ? "block" : "hidden md:block"
+          } w-full flex-1 overflow-hidden`}
+        >
           {selectedThread ? (
-            <ThreadView thread={selectedThread} currentUserId={user.id} />
+            <ThreadView thread={selectedThread} currentUserId={user.id} onBack={() => setSelectedId(null)} />
           ) : (
             <div className="flex h-full items-center justify-center">
               <EmptyState icon={MessageSquare} title={t("inbox.selectThread")} />
@@ -345,7 +353,15 @@ function NotificationRow({ item }: { item: Extract<InboxItem, { kind: "notificat
   );
 }
 
-function ThreadView({ thread, currentUserId }: { thread: InboxConversation; currentUserId: string }) {
+function ThreadView({
+  thread,
+  currentUserId,
+  onBack,
+}: {
+  thread: InboxConversation;
+  currentUserId: string;
+  onBack: () => void;
+}) {
   const { t } = useTranslation();
   const { data: messages } = useMessagesForConversation(thread.id);
   const { context } = useAnchorContext(thread.anchorType, thread.anchorId);
@@ -385,9 +401,18 @@ function ThreadView({ thread, currentUserId }: { thread: InboxConversation; curr
     <div className="flex h-full flex-col">
       <div className="border-b border-[var(--cs-border)] p-3">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium text-[var(--cs-text)]">
-            {thread.kind === "class_channel" ? t("inbox.classChannel") : t("inbox.directMessage")}
-          </span>
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              onClick={onBack}
+              aria-label={t("common.back")}
+              className="-ml-1.5 rounded-[var(--cs-radius-control)] p-1.5 text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)] md:hidden"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <span className="truncate text-sm font-medium text-[var(--cs-text)]">
+              {thread.kind === "class_channel" ? t("inbox.classChannel") : t("inbox.directMessage")}
+            </span>
+          </div>
           <div className="flex items-center gap-1">
             <SnoozeButton conversationId={thread.id} currentUserId={currentUserId} />
             <ArchiveButton conversationId={thread.id} currentUserId={currentUserId} />
