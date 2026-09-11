@@ -2,6 +2,13 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabase";
 import { Save, AlertCircle, CheckCircle } from "lucide-react";
+import { Button } from "./kit";
+
+// Matches kit Input's skin for the native <input>/<select>/<textarea>
+// elements this settings form doesn't route through the kit wrapper for
+// (same recipe as People.tsx/Schedule.tsx's SELECT_CLASS).
+const FIELD_CLASS =
+  "mt-1 block w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] py-1.5 px-3 text-[13px] text-[var(--cs-text)] outline-none transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] focus:border-[var(--cs-focus)] focus:ring-2 focus:ring-[var(--cs-focus)]/30";
 
 export default function TutorProfileSettings() {
   const { user } = useAuth();
@@ -101,39 +108,34 @@ export default function TutorProfileSettings() {
   return (
     <div className="space-y-6">
       {error && (
-        <div className="bg-red-50 border border-red-200 text-[var(--cs-danger)] px-4 py-3 rounded-[6px] text-sm flex items-center">
-          <AlertCircle className="w-5 h-5 mr-2" />
+        <div className="flex items-center rounded-[var(--cs-radius-control)] bg-[var(--cs-danger-soft)] px-4 py-3 text-sm text-[var(--cs-danger)]">
+          <AlertCircle className="mr-2 h-5 w-5" strokeWidth={1.75} />
           {error}
         </div>
       )}
 
       {success && (
-        <div className="bg-green-50 border border-green-200 text-[var(--cs-ok)] px-4 py-3 rounded-[6px] text-sm flex items-center">
-          <CheckCircle className="w-5 h-5 mr-2" />
+        <div className="flex items-center rounded-[var(--cs-radius-control)] bg-[var(--cs-accent-soft)] px-4 py-3 text-sm text-[var(--cs-accent)]">
+          <CheckCircle className="mr-2 h-5 w-5" strokeWidth={1.75} />
           {success}
         </div>
       )}
 
-      <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden">
-        <div className="px-6 py-4 border-b border-[var(--cs-border)] flex justify-between items-center bg-[var(--cs-bg)]">
+      <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+        <div className="flex items-center justify-between border-b border-[var(--cs-border)] px-4 py-3">
           <div>
-            <h2 className="text-lg font-semibold text-[var(--cs-text)]">Tutor Marketplace Profile</h2>
-            <p className="text-sm text-[var(--cs-text-muted)]">This information will be displayed on your public profile in the tutor marketplace.</p>
+            <h2 className="text-sm font-semibold text-[var(--cs-text)]">Tutor marketplace profile</h2>
+            <p className="text-xs text-[var(--cs-text-muted)]">This information will be displayed on your public profile in the tutor marketplace.</p>
           </div>
-          <button
-            onClick={handleSave}
-            disabled={loading}
-            className="flex items-center rounded-[6px] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-          >
-            <Save className="w-4 h-4 mr-2" />
-            {loading ? "Saving..." : "Save Profile"}
-          </button>
+          <Button onClick={handleSave} disabled={loading} icon={Save}>
+            {loading ? "Saving…" : "Save profile"}
+          </Button>
         </div>
 
         <div className="p-6 space-y-8">
           {/* Basic Info */}
           <section>
-            <h3 className="text-md font-semibold text-[var(--cs-text)] mb-4 border-b border-[var(--cs-border)] pb-2">Basic Information</h3>
+            <h3 className="mb-4 border-b border-[var(--cs-border)] pb-2 text-sm font-semibold text-[var(--cs-text)]">Basic Information</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Full Name</label>
@@ -141,7 +143,7 @@ export default function TutorProfileSettings() {
                   type="text"
                   value={profile.full_name}
                   onChange={(e) => handleChange('full_name', e.target.value)}
-                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                  className={FIELD_CLASS}
                   placeholder="e.g. Jane Doe"
                 />
               </div>
@@ -152,7 +154,7 @@ export default function TutorProfileSettings() {
                   rows={4}
                   value={profile.bio}
                   onChange={(e) => handleChange('bio', e.target.value)}
-                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                  className={FIELD_CLASS}
                   placeholder="I am a passionate math tutor with over 5 years of experience..."
                 />
               </div>
@@ -163,7 +165,7 @@ export default function TutorProfileSettings() {
                   min="0"
                   value={profile.experience_years}
                   onChange={(e) => handleChange('experience_years', e.target.value)}
-                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                  className={FIELD_CLASS}
                 />
               </div>
               <div>
@@ -172,7 +174,7 @@ export default function TutorProfileSettings() {
                   type="text"
                   value={profile.qualification}
                   onChange={(e) => handleChange('qualification', e.target.value)}
-                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                  className={FIELD_CLASS}
                   placeholder="e.g. M.Sc. in Mathematics"
                 />
               </div>
@@ -181,7 +183,7 @@ export default function TutorProfileSettings() {
 
           {/* Teaching Details */}
           <section>
-            <h3 className="text-md font-semibold text-[var(--cs-text)] mb-4 border-b border-[var(--cs-border)] pb-2">Teaching Details</h3>
+            <h3 className="mb-4 border-b border-[var(--cs-border)] pb-2 text-sm font-semibold text-[var(--cs-text)]">Teaching Details</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Subjects Taught (comma separated)</label>
@@ -189,7 +191,7 @@ export default function TutorProfileSettings() {
                   type="text"
                   value={profile.subjects}
                   onChange={(e) => handleChange('subjects', e.target.value)}
-                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                  className={FIELD_CLASS}
                   placeholder="e.g. Algebra, Physics, Chemistry"
                 />
               </div>
@@ -199,7 +201,7 @@ export default function TutorProfileSettings() {
                   type="text"
                   value={profile.grades}
                   onChange={(e) => handleChange('grades', e.target.value)}
-                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                  className={FIELD_CLASS}
                   placeholder="e.g. High School, College, Grade 10"
                 />
               </div>
@@ -208,7 +210,7 @@ export default function TutorProfileSettings() {
                 <select
                   value={profile.teaching_mode}
                   onChange={(e) => handleChange('teaching_mode', e.target.value)}
-                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                  className={FIELD_CLASS}
                 >
                   <option value="online">Online Only</option>
                   <option value="offline">In-Person Only</option>
@@ -221,7 +223,7 @@ export default function TutorProfileSettings() {
                   type="text"
                   value={profile.location}
                   onChange={(e) => handleChange('location', e.target.value)}
-                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                  className={FIELD_CLASS}
                   placeholder="e.g. San Francisco, CA"
                 />
               </div>
@@ -230,14 +232,14 @@ export default function TutorProfileSettings() {
 
           {/* Pricing & Capacity */}
           <section>
-            <h3 className="text-md font-semibold text-[var(--cs-text)] mb-4 border-b border-[var(--cs-border)] pb-2">Pricing & Capacity</h3>
+            <h3 className="mb-4 border-b border-[var(--cs-border)] pb-2 text-sm font-semibold text-[var(--cs-text)]">Pricing & Capacity</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div>
                 <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Pricing Model</label>
                 <select
                   value={profile.price_model}
                   onChange={(e) => handleChange('price_model', e.target.value)}
-                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                  className={FIELD_CLASS}
                 >
                   <option value="hourly">Hourly Rate</option>
                   <option value="per_session">Per Session</option>
@@ -251,7 +253,7 @@ export default function TutorProfileSettings() {
                   min="0"
                   value={profile.price_range_min}
                   onChange={(e) => handleChange('price_range_min', e.target.value)}
-                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                  className={FIELD_CLASS}
                 />
               </div>
               <div>
@@ -261,7 +263,7 @@ export default function TutorProfileSettings() {
                   min="0"
                   value={profile.price_range_max}
                   onChange={(e) => handleChange('price_range_max', e.target.value)}
-                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                  className={FIELD_CLASS}
                 />
               </div>
               <div>
@@ -272,7 +274,7 @@ export default function TutorProfileSettings() {
                   min="1"
                   value={profile.max_batch_size}
                   onChange={(e) => handleChange('max_batch_size', e.target.value)}
-                  className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                  className={FIELD_CLASS}
                 />
               </div>
             </div>

@@ -4,13 +4,12 @@ import { CreditCard, AlertTriangle } from "lucide-react";
 import { useSubscription } from "../hooks/useSubscription";
 import {
   PLAN_CATALOG,
-  usagePercent,
   isNearLimit,
   isOverLimit,
   formatPlanPrice,
   upgradeOptions,
 } from "../lib/subscription";
-import { Skeleton } from "./kit";
+import { Skeleton, StatusChip, CapacityMeter, Button } from "./kit";
 
 // Stage 3 SaaS subscription billing panel (DEV_PLAN §5). Upgrade is built to
 // completion but degrades to a manual-contact message until a platform
@@ -22,7 +21,7 @@ export default function SubscriptionSettings() {
 
   if (loading) {
     return (
-      <div className="bg-[var(--cs-surface)] rounded-[10px] shadow-sm border border-[var(--cs-border)] p-6 space-y-3">
+      <div className="space-y-3 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-6">
         <Skeleton className="h-6 w-40" />
         <Skeleton className="h-4 w-full" />
         <Skeleton className="h-4 w-2/3" />
@@ -32,14 +31,13 @@ export default function SubscriptionSettings() {
 
   if (error || !subscription) {
     return (
-      <div className="bg-[var(--cs-surface)] rounded-[10px] shadow-sm border border-[var(--cs-border)] p-6 text-sm text-[var(--cs-text-muted)]">
+      <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-6 text-sm text-[var(--cs-text-muted)]">
         {error || "Couldn't load your plan."}
       </div>
     );
   }
 
   const plan = PLAN_CATALOG[subscription.plan];
-  const percent = usagePercent(subscription.activeStudentCount, subscription.studentLimit);
   const near = isNearLimit(subscription.activeStudentCount, subscription.studentLimit);
   const over = isOverLimit(subscription.activeStudentCount, subscription.studentLimit);
   const options = upgradeOptions(subscription.plan);
@@ -61,75 +59,64 @@ export default function SubscriptionSettings() {
   };
 
   return (
-    <div className="bg-[var(--cs-surface)] rounded-[10px] shadow-sm border border-[var(--cs-border)] overflow-hidden">
-      <div className="px-6 py-4 border-b border-[var(--cs-border)]">
-        <h2 className="text-lg font-semibold text-[var(--cs-text)]">Plan & Billing</h2>
-        <p className="mt-1 text-sm text-[var(--cs-text-muted)]">Your current plan and active-student usage.</p>
+    <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+      <div className="border-b border-[var(--cs-border)] px-4 py-3">
+        <h2 className="text-sm font-semibold text-[var(--cs-text)]">Plan & billing</h2>
+        <p className="mt-1 text-xs text-[var(--cs-text-muted)]">Your current plan and active-student usage.</p>
       </div>
 
-      <div className="p-6 space-y-6">
+      <div className="space-y-6 p-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-[var(--cs-accent-soft)] rounded-[6px]">
-              <CreditCard className="w-6 h-6 text-[var(--cs-accent)]" />
+            <div className="rounded-[var(--cs-radius-control)] bg-[var(--cs-accent-soft)] p-2">
+              <CreditCard className="h-6 w-6 text-[var(--cs-accent)]" strokeWidth={1.75} />
             </div>
             <div>
               <h3 className="text-sm font-medium text-[var(--cs-text)]">{plan.name} plan</h3>
               <p className="text-sm text-[var(--cs-text-muted)]">{formatPlanPrice(subscription.pricePaise)} · {plan.tagline}</p>
             </div>
           </div>
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-[var(--cs-ok)] capitalize">
-            {subscription.status}
-          </span>
+          <StatusChip label={subscription.status} tone="positive" className="capitalize" />
         </div>
 
         <div>
-          <div className="flex items-center justify-between text-sm mb-1">
+          <div className="mb-1 flex items-center justify-between text-sm">
             <span className="text-[var(--cs-text-muted)]">Active students</span>
-            <span className={over ? "text-[var(--cs-danger)] font-medium" : near ? "text-[var(--cs-warn)] font-medium" : "text-[var(--cs-text)]"}>
+            <span className={over ? "font-medium text-[var(--cs-danger)]" : "font-medium text-[var(--cs-text)]"}>
               {subscription.activeStudentCount}
               {subscription.studentLimit !== null ? ` / ${subscription.studentLimit}` : " (unlimited)"}
             </span>
           </div>
           {subscription.studentLimit !== null && (
-            <div className="h-2 rounded-full bg-[var(--cs-bg)] overflow-hidden">
-              <div
-                className={`h-full rounded-full ${over ? "bg-[var(--cs-danger)]" : near ? "bg-[var(--cs-warn)]" : "bg-[var(--cs-accent)]"}`}
-                style={{ width: `${percent}%` }}
-              />
-            </div>
+            <CapacityMeter filled={subscription.activeStudentCount} capacity={subscription.studentLimit} compact />
           )}
           {over && (
-            <p className="mt-2 text-sm text-[var(--cs-danger)] flex items-center gap-1.5">
-              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-              You're at your plan's limit — adding a new student will be blocked until you upgrade.
+            <p className="mt-2 flex items-center gap-1.5 text-sm text-[var(--cs-danger)]">
+              <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+              You're at your plan's limit. Adding a new student will be blocked until you upgrade.
             </p>
           )}
           {!over && near && (
-            <p className="mt-2 text-sm text-[var(--cs-warn)]">You're close to your plan's student limit.</p>
+            <p className="mt-2 text-sm text-[var(--cs-text-muted)]">You're close to your plan's student limit.</p>
           )}
         </div>
 
         {options.length > 0 && (
           <div className="border-t border-[var(--cs-border)] pt-4">
-            <h4 className="text-sm font-medium text-[var(--cs-text)] mb-3">Upgrade</h4>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <h4 className="mb-3 text-sm font-medium text-[var(--cs-text)]">Upgrade</h4>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {options.map((planId) => {
                 const def = PLAN_CATALOG[planId];
                 return (
-                  <div key={planId} className="border border-[var(--cs-border)] rounded-[6px] p-4 flex flex-col justify-between">
+                  <div key={planId} className="flex flex-col justify-between rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] p-4">
                     <div>
                       <p className="text-sm font-medium text-[var(--cs-text)]">{def.name}</p>
                       <p className="text-sm text-[var(--cs-text-muted)]">{def.tagline}</p>
                       <p className="mt-1 text-sm font-medium text-[var(--cs-text-muted)]">{formatPlanPrice(def.pricePaise)}</p>
                     </div>
-                    <button
-                      onClick={() => handleUpgrade(planId)}
-                      disabled={upgrading !== null}
-                      className="mt-3 inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-[6px] text-white bg-[var(--cs-accent)] hover:opacity-90 disabled:opacity-50"
-                    >
-                      {upgrading === planId ? "Starting..." : `Upgrade to ${def.name}`}
-                    </button>
+                    <Button onClick={() => handleUpgrade(planId)} disabled={upgrading !== null} className="mt-3">
+                      {upgrading === planId ? "Starting…" : `Upgrade to ${def.name}`}
+                    </Button>
                   </div>
                 );
               })}

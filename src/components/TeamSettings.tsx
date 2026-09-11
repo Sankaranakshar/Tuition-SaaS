@@ -4,6 +4,10 @@ import { supabase } from "../supabase";
 import { toast } from "sonner";
 import { UserPlus, Copy } from "lucide-react";
 import { createStaffInvite, type InvitableStaffRole } from "../lib/api";
+import { Button } from "./kit";
+
+const SELECT_CLASS =
+  "mt-1 block rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-3 py-1.5 text-[13px] text-[var(--cs-text)] outline-none transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] focus:border-[var(--cs-focus)] focus:ring-2 focus:ring-[var(--cs-focus)]/30";
 
 // Tech Debt #1: no org could ever get a second staff member because there was
 // no invite UI. Members list is a direct client read (org_members_select RLS
@@ -94,12 +98,12 @@ export default function TeamSettings() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-[var(--cs-surface)] rounded-[10px] shadow-sm border border-[var(--cs-border)] overflow-hidden">
-        <div className="px-6 py-4 border-b border-[var(--cs-border)]">
-          <h2 className="text-lg font-semibold text-[var(--cs-text)]">Team Members</h2>
-          <p className="mt-1 text-sm text-[var(--cs-text-muted)]">Everyone with access to this organization.</p>
+      <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+        <div className="border-b border-[var(--cs-border)] px-4 py-3">
+          <h2 className="text-sm font-semibold text-[var(--cs-text)]">Team members</h2>
+          <p className="mt-1 text-xs text-[var(--cs-text-muted)]">Everyone with access to this organization.</p>
         </div>
-        <div className="p-6">
+        <div className="p-4">
           {loading ? (
             <p className="text-sm text-[var(--cs-text-muted)]">Loading…</p>
           ) : members.length === 0 ? (
@@ -112,7 +116,7 @@ export default function TeamSettings() {
                     <div className="text-sm font-medium text-[var(--cs-text)]">{m.name}</div>
                     <div className="text-xs text-[var(--cs-text-muted)]">{m.email}</div>
                   </div>
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--cs-bg)] text-[var(--cs-text-muted)] capitalize">
+                  <span className="inline-flex items-center rounded-full bg-[var(--cs-surface-2)] px-2.5 py-0.5 text-xs font-medium capitalize text-[var(--cs-text-muted)]">
                     {ROLE_LABELS[m.role] || m.role}
                   </span>
                 </li>
@@ -122,14 +126,14 @@ export default function TeamSettings() {
         </div>
       </div>
 
-      <div className="bg-[var(--cs-surface)] rounded-[10px] shadow-sm border border-[var(--cs-border)] overflow-hidden">
-        <div className="px-6 py-4 border-b border-[var(--cs-border)]">
-          <h2 className="text-lg font-semibold text-[var(--cs-text)] flex items-center gap-2">
-            <UserPlus className="w-5 h-5" /> Invite a staff member
+      <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+        <div className="border-b border-[var(--cs-border)] px-4 py-3">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-[var(--cs-text)]">
+            <UserPlus className="h-5 w-5" strokeWidth={1.75} /> Invite a staff member
           </h2>
-          <p className="mt-1 text-sm text-[var(--cs-text-muted)]">Generate a one-time link that grants the selected role once redeemed.</p>
+          <p className="mt-1 text-xs text-[var(--cs-text-muted)]">Generate a one-time link that grants the selected role once redeemed.</p>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="space-y-4 p-4">
           <div className="flex items-end gap-3">
             <div>
               <label htmlFor="team-invite-role" className="block text-sm font-medium text-[var(--cs-text-muted)]">Role</label>
@@ -140,7 +144,7 @@ export default function TeamSettings() {
                   setInviteRole(e.target.value as InvitableStaffRole);
                   setInviteLink(null);
                 }}
-                className="mt-1 block rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]"
+                className={SELECT_CLASS}
               >
                 <option value="tutor">Tutor</option>
                 <option value="frontdesk">Front Desk</option>
@@ -148,22 +152,16 @@ export default function TeamSettings() {
                 {isOwner && <option value="admin">Admin</option>}
               </select>
             </div>
-            <button
-              onClick={generateInvite}
-              disabled={generating}
-              className="rounded-[6px] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-            >
+            <Button onClick={generateInvite} disabled={generating}>
               {generating ? "Generating…" : "Generate invite link"}
-            </button>
+            </Button>
           </div>
 
           {inviteLink && (
             <div className="space-y-1">
               <div className="flex gap-2">
-                <input readOnly value={inviteLink} className="w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] px-3 py-2 text-xs text-[var(--cs-text-muted)]" />
-                <button onClick={copyLink} className="shrink-0 rounded-[6px] border border-[var(--cs-border)] px-3 py-2 text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)]">
-                  <Copy className="h-4 w-4" />
-                </button>
+                <input readOnly value={inviteLink} className="w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface-2)] px-3 py-2 text-xs text-[var(--cs-text-muted)]" />
+                <Button variant="ghost" onClick={copyLink} icon={Copy} aria-label="Copy invite link" />
               </div>
               {expiresAt && <p className="text-xs text-[var(--cs-text-muted)]">Expires {new Date(expiresAt).toLocaleDateString()}</p>}
             </div>
