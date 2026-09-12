@@ -825,7 +825,15 @@ function TutorsLens({ search, user, t }: any) {
 
   const setVerified = async (userId: string, isVerified: boolean) => {
     try {
-      const { error } = await supabase.from("tutor_profiles").update({ is_verified: isVerified }).eq("user_id", userId);
+      // organization_id is required here now that tutor_profiles is keyed
+      // per (user_id, organization_id) (EXECUTION_PLAN.md Step 15) — without
+      // it, verifying a tutor who also teaches at a second org would flip
+      // is_verified for every org they belong to, not just this one.
+      const { error } = await supabase
+        .from("tutor_profiles")
+        .update({ is_verified: isVerified })
+        .eq("user_id", userId)
+        .eq("organization_id", user?.organizationId);
       if (error) throw error;
       refetch();
     } catch (err: any) {

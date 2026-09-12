@@ -370,6 +370,38 @@ describe("C5: tutor profiles are org-scoped", () => {
       ));
     })
   );
+
+  // B-06a (EXECUTION_PLAN.md Step 15): tutor_profiles is now keyed per
+  // (user_id, organization_id) instead of bare user_id, specifically so a
+  // person can hold a role-profile at more than one org. This is the
+  // regression test for that: proves the fork is actually gone, not just
+  // that the migration applied without error.
+  it(
+    "a tutor who joins a second org can hold a second tutor_profiles row without disturbing the first",
+    withFixtures(async (tx, as) => {
+      await as(null, "service_role");
+      await tx.query(
+        `insert into organization_members (organization_id, user_id, role) values ($1, $2, 'tutor')`,
+        [OTHER_ORG, uids.tutor]
+      );
+
+      await as(uids.tutor, "authenticated");
+      await tx.query(
+        `insert into tutor_profiles (user_id, organization_id, full_name) values ($1, $2, 'Tutor T at Org B')`,
+        [uids.tutor, OTHER_ORG]
+      );
+
+      const rows = await tx.query(
+        `select organization_id, full_name from tutor_profiles where user_id = $1 order by organization_id`,
+        [uids.tutor]
+      );
+      expect(rows.rows.length).toBe(2);
+      const byOrg = rows.rows as { organization_id: string; full_name: string }[];
+      expect(byOrg.map((r) => r.organization_id).sort()).toEqual([ORG, OTHER_ORG].sort());
+      // The original org's row (seeded by fixtures.ts) is untouched.
+      expect(byOrg.find((r) => r.organization_id === ORG)?.full_name).toBe("Tutor T");
+    })
+  );
 });
 
 // ===================================================================

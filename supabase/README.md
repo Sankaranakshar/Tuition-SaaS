@@ -15,14 +15,34 @@ plus the `auth.*` and `storage.*` schemas that hosted Supabase provides out of t
 box, so they apply with no changes to either.
 
 **Staging** exists to rehearse migrations and browser-verify parent/student-facing
-flows without touching production — see HANDOFF.md §4 for why it was stood up and
-what's still open (a Vercel preview environment pointed at it). To target it locally
+flows without touching production — see HANDOFF.md §4 for why it was stood up. As of
+2026-09-12 it is wired up end to end: the `tuition-saas` Vercel project's Preview
+environment (Production is untouched) carries staging's env vars, so any push to a
+non-`main` branch auto-deploys a preview build against it. To target it locally
 instead of production, use its API URL/keys/DB connection string in your `.env`
 (get them from Dashboard → Project Settings → API/Database on the `classstackr-staging`
 project, or ask whoever provisioned it for the local `.env.staging` they used — it is
 gitignored and never committed). All 33 migrations have been applied to it from an
 empty database with `supabase db push --db-url <staging connection string>`, which
 also serves as the from-zero rehearsal that production's own history never got.
+
+### Targeting staging locally
+
+Copy these five vars out of `.env.staging` into your `.env` (same names either way —
+only the values change): `SUPABASE_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`. Everything else in `.env` (`JWT_SECRET`,
+`ENCRYPTION_KEY`, `CRON_SECRET`, etc.) stays whatever you already have — those aren't
+per-project.
+
+**Pooler gotcha, load-bearing for `DATABASE_URL`:** the direct-connection host
+(`db.<ref>.supabase.co`) is IPv6-only. It works from most local machines but is
+unreachable from Vercel's serverless functions — this was hit and fixed while
+wiring up the staging Preview environment (HANDOFF.md §4). Use the
+connection-pooler host instead, `aws-0-ap-south-1.pooler.supabase.com:5432`, with
+username `postgres.<ref>` (not bare `postgres`). `.env.staging`'s `DATABASE_URL`
+already has this corrected form; copy it as-is rather than reconstructing it from
+the Dashboard's default connection-string snippet, which offers the direct host
+first.
 
 ## 1. Apply the migrations (CLI, tracked)
 

@@ -10,6 +10,8 @@ _Re-run 2026-09-05 on branch `cleanup-post-r1` after a post-R1 cleanup pass: fix
 
 _Re-run 2026-09-12 after merging the ClassStackr UI overhaul (13 steps, `design/token-foundation` through `design/admin`, plus the standalone `/contact` route fix, `fix/contact-route`) to `main`. This is a visual + interaction retone (near-monochrome `--cs-*` tokens, real dark mode, no workspace/hierarchy restructuring) — see §6 for the engineering rules it establishes and §9 for the folded-in verification detail. All seven gates re-run green: 211 / 89 / 252, build 184.4 KB, **bundle 203.6 KB** (up from 200.7 KB — expected growth from the new kit primitives and token plumbing, not a regression), API 16/16._
 
+_Re-run 2026-09-12 after EXECUTION_PLAN.md **Step 15 (B-06a: multi-membership profile schema)** — `tutor_profiles`/`parent_profiles`/`student_profiles` re-keyed from `primary key (user_id)` to `primary key (user_id, organization_id)` (migration `20260912100000_multi_membership_profiles.sql`), so one person can hold a role-profile at more than one org, per MASTER_PLAN.md §3 R2/B-06. Rehearsed clean on `classstackr-staging` first, then pushed to production — both re-checked directly afterward (constraint shape + row counts, no data loss). Fixed the one real cross-org bug the migration would otherwise have introduced: `People.tsx`'s tutor-verify toggle updated `tutor_profiles` by `user_id` alone with no `organization_id` filter, which would have flipped `is_verified` across every org a multi-org tutor belongs to. `TutorProfileSettings.tsx`'s read/write also picked up an explicit `organization_id` filter/conflict-target for the same reason. All seven gates re-run green: 211 unit, **90 RLS** (+1 — a new permanent regression test proving the fork is actually gone, not just that the migration applied), 252 contract, build 184.4 KB, bundle 203.6 KB, API 16/16, `api/index.js` byte-identical._
+
 ---
 
 ## 1. The product in a paragraph
@@ -28,13 +30,13 @@ Multi-tenant SaaS for Indian tuition centers: INR, GST invoices, UPI/Razorpay co
 | 4 | Mobile polish (done); growth-loop payment-link footer (done, not live-verified — no Razorpay creds locally); reporting (done); AI morning brief deferred by founder (2026-08-02); activation-funnel analytics not started | **Active**, see MASTER_PLAN.md §3 R4 |
 | External | Razorpay live keys, Google OAuth, phone OTP, Sentry, legal, AI integrations | Deferred by founder, see §7. **Staging (B-10) is done as of 2026-09-12 — see §4**, no longer in this deferred bucket. |
 
-**Gates, all re-run and green on 2026-09-12 (after merging the 13-step UI overhaul + the `/contact` route fix to `main` — same numbers as 2026-09-05 except the bundle, which grew as expected from the new kit primitives and token plumbing):**
+**Gates, all re-run and green on 2026-09-12 (after EXECUTION_PLAN.md Step 15's multi-membership migration — RLS count is up by 1 for the new regression test, everything else unchanged from the UI-overhaul re-run):**
 
 | Gate | Command | Result |
 |---|---|---|
 | Typecheck | `npm run lint` | clean |
 | Unit | `npm test` | 211/211 (20 files) |
-| RLS / authorization | `npm run test:rls` | 89/89 (5 files) |
+| RLS / authorization | `npm run test:rls` | 90/90 (5 files) |
 | Route contracts | `npm run test:contract` | 252/252 (19 files) |
 | Build | `npm run build` | passes, server bundle 184.4 KB (`dist/server.js`) |
 | Bundle budget | `npm run check:bundle-size` | 203.6 KB gzip, budget 260 KB |
@@ -70,9 +72,11 @@ tests/        unit/ · integration/ (RLS) · contract/ (supertest) · load/ (k6)
 
 **Live:** `https://tuition-saas-two.vercel.app` (Vercel project `tuition-saas`) against Supabase Cloud `cwugpiernnwrhcximjwh` (ap-south-1). Repo `Sankaranakshar/Tuition-SaaS`, branch `main`, push auto-deploys.
 
-**Staging exists as of 2026-09-12** (B-10, EXECUTION_PLAN.md Step 11 — the founder's 2026-09-05 hold was for R1, then re-opened as R2's first work item per MASTER_PLAN.md §10). Second Supabase Cloud project `classstackr-staging` (ref `fcshxorkxsaerwnuqrjh`, same org, same ap-south-1 region). All 33 migrations were pushed to it from an empty database via `supabase db push --db-url ...` — the first-ever from-zero application of the full migration set, and it applied clean with zero errors. Seeded (including a demo parent + student, same `scripts/seed.ts`) and a real Storage upload → signed URL → fetch → delete round trip was verified against its `documents` bucket. The `supabase_realtime` publication carries all 21 expected tables, confirming every realtime-publication migration re-applies correctly from zero, not just incrementally on top of production's history. **What's still open:** a second Vercel preview environment pointed at this project (needs an interactive Vercel login, not yet done), and `supabase/README.md`/`.env.example` don't yet document how to target it (see below). Credentials for it live in a local, gitignored `.env.staging` — not committed, ask whoever ran the provisioning for a copy.
+**Staging exists as of 2026-09-12** (B-10, EXECUTION_PLAN.md Step 11 — the founder's 2026-09-05 hold was for R1, then re-opened as R2's first work item per MASTER_PLAN.md §10). Second Supabase Cloud project `classstackr-staging` (ref `fcshxorkxsaerwnuqrjh`, same org, same ap-south-1 region). All 33 migrations were pushed to it from an empty database via `supabase db push --db-url ...` — the first-ever from-zero application of the full migration set, and it applied clean with zero errors. Seeded (including a demo parent + student, same `scripts/seed.ts`) and a real Storage upload → signed URL → fetch → delete round trip was verified against its `documents` bucket. The `supabase_realtime` publication carries all 21 expected tables, confirming every realtime-publication migration re-applies correctly from zero, not just incrementally on top of production's history.
 
-**Local dev still points at the production Supabase project by default** (`.env`) — staging is additive, not a replacement, until the Vercel side exists. Be deliberate about test data on whichever project `.env` targets and clean up after walkthroughs.
+**The Vercel side is done as of 2026-09-12.** The `tuition-saas` Vercel project's Preview environment (not a second project — Production is untouched) now carries `SUPABASE_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `DATABASE_URL` pointed at `fcshxorkxsaerwnuqrjh`, so any push to a non-`main` branch auto-deploys a preview build wired to staging. One gotcha hit and fixed along the way: the direct-connection Postgres host (`db.<ref>.supabase.co`) is IPv6-only and unreachable from Vercel's serverless functions — `DATABASE_URL` must use the connection-pooler host instead (`aws-0-ap-south-1.pooler.supabase.com:5432`, username `postgres.<ref>`), per `supabase/README.md`'s existing pooler guidance. Verified end-to-end against a real preview deployment: signed in as the seeded demo tutor, hit an auth-gated route, confirmed the JWT verified via staging's JWKS and the query executed against staging Postgres via the pooler. `supabase/README.md` and `.env.example` now document how to target staging locally, including the pooler-host gotcha above. Credentials for it live in a local, gitignored `.env.staging` — not committed, ask whoever ran the provisioning for a copy.
+
+**Local dev still points at the production Supabase project by default** (`.env`) — staging is additive, not a replacement. Be deliberate about test data on whichever project `.env` targets and clean up after walkthroughs.
 
 ```bash
 npm install

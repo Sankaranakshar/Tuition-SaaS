@@ -36,7 +36,16 @@ export default function TutorProfileSettings() {
     
     const fetchProfile = async () => {
       try {
-        const { data, error } = await supabase.from("tutor_profiles").select("*").eq("user_id", user.id).maybeSingle();
+        // organization_id is required here now that tutor_profiles is keyed
+        // per (user_id, organization_id) (EXECUTION_PLAN.md Step 15) —
+        // without it, a tutor with a profile at a second org would get
+        // whichever row Postgres happened to return first.
+        const { data, error } = await supabase
+          .from("tutor_profiles")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("organization_id", user.organizationId)
+          .maybeSingle();
         if (error) throw error;
         if (data) {
           setProfile({
@@ -61,7 +70,7 @@ export default function TutorProfileSettings() {
       }
     };
     fetchProfile();
-  }, [user?.id, user?.name]);
+  }, [user?.id, user?.name, user?.organizationId]);
 
   const handleSave = async () => {
     if (!user?.id) return;
@@ -87,7 +96,7 @@ export default function TutorProfileSettings() {
         max_batch_size: Number(profile.max_batch_size),
       };
 
-      const { error } = await supabase.from("tutor_profiles").upsert(profileData, { onConflict: "user_id" });
+      const { error } = await supabase.from("tutor_profiles").upsert(profileData, { onConflict: "user_id,organization_id" });
       if (error) throw error;
       setSuccess("Tutor profile saved successfully.");
     } catch (err: any) {
