@@ -23,7 +23,7 @@ npm run seed                  # idempotent demo org, tutor, courses, students, s
 
 Secrets: generate `JWT_SECRET`, `ENCRYPTION_KEY`, and `CRON_SECRET` with `openssl rand -hex 32`. In production these belong in your host's secret manager.
 
-**There is no staging environment.** Local dev points at the production Supabase project — be deliberate about test data and clean up after walkthroughs.
+**A staging Supabase project exists** (`classstackr-staging`, ref `fcshxorkxsaerwnuqrjh` — see supabase/README.md), but there's no Vercel environment for it yet, so local dev still points at the production Supabase project by default. Be deliberate about test data on whichever project your `.env` targets and clean up after walkthroughs.
 
 ## Testing
 
