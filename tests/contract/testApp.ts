@@ -30,7 +30,7 @@ export function authHeader(userId: string | null, email?: string): [string, stri
  */
 export async function createTestApp() {
   const db: PGlite = await bootDb();
-  setBackend(db);
+  await setBackend(db);
   await seed(db as any);
 
   // Imported dynamically, after the mocks in setup.ts and the backend above

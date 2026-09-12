@@ -1,12 +1,13 @@
 import express from "express";
 import crypto from "node:crypto";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
-import { withTransaction } from "../db.ts";
+import { withTransaction, pool } from "../db.ts";
 import { authenticateToken, requireRole, requireOrg, invalidateMembership, type AuthRequest, type Role } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
 import {
   setMemberRoleRequestSchema, bootstrapOrgRequestSchema,
   createStaffInviteRequestSchema, staffRedeemRequestSchema,
+  setActiveOrganizationRequestSchema,
 } from "../../shared/schemas/members.ts";
 
 const router = express.Router();
@@ -21,13 +22,35 @@ export async function setMembership(orgId: string, userId: string, role: Role, _
     .upsert({ organization_id: orgId, user_id: userId, role }, { onConflict: "organization_id,user_id" });
   if (error) throw error;
   invalidateMembership(userId);
+}
 
-  // profiles.organization_id is client-immutable (20260709021200) and not
-  // authorization-bearing itself, but Today.tsx's admin-lanes tutor-name
-  // lookup reads it — keep it in sync with the real membership here, the one
-  // place both bootstrap and role changes flow through.
-  const { error: profileErr } = await supabaseAdmin.from("profiles").update({ organization_id: orgId }).eq("id", userId);
-  if (profileErr) throw profileErr;
+// profiles.organization_id is client-immutable (20260709021200) and not
+// authorization-bearing itself, but Today.tsx's admin-lanes tutor-name
+// lookup reads it. Split out of setMembership() (B-06b, EXECUTION_PLAN.md
+// Step 16): a user can now hold more than one membership, so writing this
+// unconditionally on every setMembership() call — including an owner/admin
+// changing *someone else's* role via PUT / below — silently reassigned an
+// existing member's home org out from under them. Callers that actually mean
+// "the caller is now acting in this org" (bootstrap, each invite-redeem's own
+// success path, and the explicit route below) call this directly instead.
+export async function setActiveOrganization(userId: string, orgId: string) {
+  const { error } = await supabaseAdmin.from("profiles").update({ organization_id: orgId }).eq("id", userId);
+  if (error) throw error;
+}
+
+// The real duplicate-membership guard (B-06b): true only if the user already
+// has a row for this *specific* org, not merely because they belong to some
+// other org too. Used by the three invite-redeem routes (here, parents.ts,
+// students.ts) to replace the old "you may only ever belong to one org" check.
+export async function hasMembership(userId: string, orgId: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from("organization_members")
+    .select("organization_id")
+    .eq("user_id", userId)
+    .eq("organization_id", orgId)
+    .maybeSingle();
+  if (error) throw error;
+  return !!data;
 }
 
 // Bootstrap: a user with no org creates one and becomes its owner.
@@ -46,6 +69,7 @@ router.post("/bootstrap", authenticateToken, async (req: AuthRequest, res, next)
     if (orgErr) throw orgErr;
 
     await setMembership(org.id, req.user!.id, "owner", req.user!.id);
+    await setActiveOrganization(req.user!.id, org.id);
     await writeAudit(org.id, req.user!.id, "org.create", "organizations", org.id, { name: body.organizationName });
 
     res.status(201).json({ organizationId: org.id });
@@ -150,11 +174,11 @@ router.post("/invites/redeem", authenticateToken, async (req: AuthRequest, res, 
 
     const invite = await loadStaffInvite(body.token);
 
-    // A user belongs to one organization. Block redeeming an invite from a
-    // different org than one they're already linked into, same posture as
-    // the parent/student invite conflict check.
-    if (req.user!.organizationId && req.user!.organizationId !== invite.organization_id) {
-      return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to a different organization" } });
+    // A user may hold more than one org membership (B-06b, Step 16). Block
+    // only a real duplicate — redeeming an invite for an org this user is
+    // already a member of — not merely belonging to some other org too.
+    if (await hasMembership(uid, invite.organization_id)) {
+      return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to this organization" } });
     }
 
     await withTransaction(async (client) => {
@@ -166,9 +190,52 @@ router.post("/invites/redeem", authenticateToken, async (req: AuthRequest, res, 
     });
 
     await setMembership(invite.organization_id, uid, invite.role as Role, uid);
+    await setActiveOrganization(uid, invite.organization_id);
     await writeAudit(invite.organization_id, uid, "staff_invite.redeem", "organization_members", `${invite.organization_id}_${uid}`, { role: invite.role });
 
     res.json({ ok: true, organizationId: invite.organization_id, role: invite.role as Role });
+  } catch (err) { next(err); }
+});
+
+// B-06b (EXECUTION_PLAN.md Step 16): every membership the caller holds, so a
+// client can know a second org exists at all before any switcher UI (B-07)
+// consumes it. Ordered like loadMembership's own earliest-first pick, so a
+// client resolving "default active org" from this list independently lands
+// on the same org the server would pick with no X-Organization-Id header.
+router.get("/me/organizations", authenticateToken, async (req: AuthRequest, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `select om.organization_id, o.name as organization_name, om.role
+       from organization_members om
+       join organizations o on o.id = om.organization_id
+       where om.user_id = $1
+       order by om.created_at asc`,
+      [req.user!.id]
+    );
+    res.json({
+      ok: true,
+      organizations: rows.map((r) => ({
+        organizationId: r.organization_id,
+        organizationName: r.organization_name as string | null,
+        role: r.role as Role,
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+// B-06b (EXECUTION_PLAN.md Step 16): explicit replacement for setMembership()'s
+// old implicit profiles.organization_id write — the caller picks which of
+// their own memberships is active, 403s for any org they don't belong to.
+router.put("/me/active-organization", authenticateToken, async (req: AuthRequest, res, next) => {
+  try {
+    const body = setActiveOrganizationRequestSchema.parse(req.body);
+    const uid = req.user!.id;
+
+    if (!(await hasMembership(uid, body.organizationId))) {
+      return res.status(403).json({ error: { code: "forbidden", message: "Not a member of this organization" } });
+    }
+    await setActiveOrganization(uid, body.organizationId);
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 

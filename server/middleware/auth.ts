@@ -65,6 +65,8 @@ interface Membership {
   organizationStatus?: string;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Optional in-process membership cache. OFF by default (ttl 0), because
 // caching this weakens the guarantee documented on loadMembership below: a
 // removed member would keep access for up to the TTL. Operators who would
@@ -99,7 +101,31 @@ export function invalidateAllMemberships() {
 // call to the Supabase REST API on each hop, which dwarfs the query itself.
 // The join replaces PostgREST's `organizations(status)` embed and is covered
 // by idx_org_members_user.
-async function loadMembership(userId: string): Promise<Membership> {
+async function loadMembership(userId: string, preferredOrgId?: string): Promise<Membership> {
+  // B-06b (EXECUTION_PLAN.md Step 16): a caller can now ask for a specific
+  // org via authenticateToken's X-Organization-Id header. Validate it's a
+  // real membership before trusting it — bypasses the cache entirely (org
+  // preference is per-request, not worth the cache-key complexity) and, if
+  // it's not a real row for this user (removed member, typo, someone else's
+  // org id), falls through to today's deterministic earliest-row behavior
+  // unchanged, exactly as if no header had been sent.
+  if (preferredOrgId) {
+    const { rows } = await pool.query(
+      `select om.organization_id, om.role, o.status as organization_status
+       from organization_members om
+       join organizations o on o.id = om.organization_id
+       where om.user_id = $1 and om.organization_id = $2`,
+      [userId, preferredOrgId]
+    );
+    if (rows[0]) {
+      return {
+        organizationId: rows[0].organization_id,
+        role: rows[0].role as Role,
+        organizationStatus: rows[0].organization_status,
+      };
+    }
+  }
+
   if (MEMBERSHIP_TTL_MS > 0) {
     const hit = membershipCache.get(userId);
     if (hit && hit.expiresAt > Date.now()) return hit.value;
@@ -108,9 +134,9 @@ async function loadMembership(userId: string): Promise<Membership> {
   // organization_members' primary key is (organization_id, user_id), so a
   // user genuinely can hold more than one row (e.g. a tutor working at two
   // centers) — without this order by, an unordered `limit 1` could pick a
-  // different row per request. There is no org-switcher UI yet, so this
-  // deterministically picks the earliest (first-joined) org as "home" until
-  // one exists. See DEV_PLAN Tech Debt #5.
+  // different row per request. This deterministically picks the earliest
+  // (first-joined) org as "home" whenever no valid X-Organization-Id header
+  // was sent. See DEV_PLAN Tech Debt #5.
   const { rows } = await pool.query(
     `select om.organization_id, om.role, o.status as organization_status
      from organization_members om
@@ -174,7 +200,14 @@ export const authenticateToken = async (
 
   try {
     const { sub: userId, email } = await verifyAccessToken(token);
-    const membership = await loadMembership(userId);
+
+    // B-06b (EXECUTION_PLAN.md Step 16): a client can request a specific org
+    // context via X-Organization-Id — no header (every existing caller,
+    // today) means unchanged behavior. Malformed/absent values are treated
+    // identically to "no header" rather than erroring the request.
+    const orgHeader = req.headers["x-organization-id"];
+    const preferredOrgId = typeof orgHeader === "string" && UUID_RE.test(orgHeader) ? orgHeader : undefined;
+    const membership = await loadMembership(userId, preferredOrgId);
 
     req.user = {
       id: userId,

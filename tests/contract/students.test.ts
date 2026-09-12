@@ -3,7 +3,7 @@ import request from "supertest";
 import crypto from "node:crypto";
 import type { PGlite } from "@electric-sql/pglite";
 import { createTestApp, authHeader } from "./testApp.ts";
-import { ORG, uids } from "../integration/fixtures.ts";
+import { ORG, OTHER_ORG, uids } from "../integration/fixtures.ts";
 
 let app: any;
 let db: PGlite;
@@ -179,6 +179,45 @@ describe("POST /api/v1/students/redeem", () => {
       .send({ token: secondInvite });
     expectStatus(res, 409);
     expect(res.body.error.code).toBe("already_linked");
+  });
+
+  // B-06b (EXECUTION_PLAN.md Step 16): belonging to a *different* org no
+  // longer blocks redeeming a student invite — it now succeeds and adds a
+  // second organization_members row, leaving the original org untouched.
+  it("200s and adds a second membership when the caller already belongs to a different organization", async () => {
+    const freshStudentId = crypto.randomUUID();
+    await db.query(`insert into students (id, organization_id, name) values ($1, $2, 'Fresh Invite Student')`, [freshStudentId, ORG]);
+    const invite = await insertInvite({ studentId: freshStudentId });
+
+    const res = await request(app)
+      .post("/api/v1/students/redeem")
+      .set(...authHeader(uids.outsider)) // already owner of OTHER_ORG
+      .send({ token: invite });
+    expectStatus(res, 200);
+    expect(res.body.organizationId).toBe(ORG);
+
+    const memberships = await db.query<any>(
+      `select organization_id, role from organization_members where user_id = $1 order by organization_id`,
+      [uids.outsider]
+    );
+    expect(memberships.rows).toHaveLength(2);
+    expect(memberships.rows.find((r: any) => r.organization_id === OTHER_ORG)?.role).toBe("owner");
+    expect(memberships.rows.find((r: any) => r.organization_id === ORG)?.role).toBe("student");
+  });
+
+  // The real duplicate case: a caller already a member of this specific org
+  // still 409s, even against a completely fresh, unclaimed student invite.
+  it("409s org_conflict when the caller is already a member of this specific organization", async () => {
+    const freshStudentId = crypto.randomUUID();
+    await db.query(`insert into students (id, organization_id, name) values ($1, $2, 'Another Fresh Student')`, [freshStudentId, ORG]);
+    const invite = await insertInvite({ studentId: freshStudentId });
+
+    const res = await request(app)
+      .post("/api/v1/students/redeem")
+      .set(...authHeader(uids.student)) // already an ORG member
+      .send({ token: invite });
+    expectStatus(res, 409);
+    expect(res.body.error.code).toBe("org_conflict");
   });
 
   it("410s redeeming an already-used invite", async () => {

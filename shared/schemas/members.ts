@@ -28,3 +28,8 @@ export type CreateStaffInviteRequest = z.infer<typeof createStaffInviteRequestSc
 
 export const staffRedeemRequestSchema = z.object({ token: z.string().min(10) });
 export type StaffRedeemRequest = z.infer<typeof staffRedeemRequestSchema>;
+
+// B-06b (EXECUTION_PLAN.md Step 16): explicit "make this org active" request,
+// split out of setMembership()'s old implicit profiles.organization_id write.
+export const setActiveOrganizationRequestSchema = z.object({ organizationId: z.string().uuid() });
+export type SetActiveOrganizationRequest = z.infer<typeof setActiveOrganizationRequestSchema>;

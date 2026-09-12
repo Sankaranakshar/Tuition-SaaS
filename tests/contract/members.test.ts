@@ -3,7 +3,7 @@ import request from "supertest";
 import crypto from "node:crypto";
 import type { PGlite } from "@electric-sql/pglite";
 import { createTestApp, authHeader } from "./testApp.ts";
-import { ORG, uids } from "../integration/fixtures.ts";
+import { ORG, OTHER_ORG, uids } from "../integration/fixtures.ts";
 
 let app: any;
 let db: PGlite;
@@ -287,14 +287,46 @@ describe("POST /api/v1/members/invites/redeem", () => {
     expectStatus(res, 404);
   });
 
-  it("409s when the caller already belongs to a different organization", async () => {
-    const invite = await insertStaffInvite();
+  // B-06b (EXECUTION_PLAN.md Step 16): belonging to a *different* org no
+  // longer blocks redeeming an invite — it now succeeds and adds a second
+  // organization_members row, leaving the caller's original org untouched.
+  it("200s and adds a second membership when the caller already belongs to a different organization", async () => {
+    const invite = await insertStaffInvite({ role: "tutor" });
     const res = await request(app)
       .post("/api/v1/members/invites/redeem")
-      .set(...authHeader(uids.outsider)) // member of OTHER_ORG
+      .set(...authHeader(uids.outsider)) // already owner of OTHER_ORG
       .send({ token: invite });
-    expectStatus(res, 409);
-    expect(res.body.error.code).toBe("org_conflict");
+    expectStatus(res, 200);
+    expect(res.body.organizationId).toBe(ORG);
+
+    const memberships = await db.query<any>(
+      `select organization_id, role from organization_members where user_id = $1 order by organization_id`,
+      [uids.outsider]
+    );
+    expect(memberships.rows).toHaveLength(2);
+    expect(memberships.rows.find((r: any) => r.organization_id === OTHER_ORG)?.role).toBe("owner");
+    expect(memberships.rows.find((r: any) => r.organization_id === ORG)?.role).toBe("tutor");
+  });
+
+  // The real duplicate case: redeeming a second invite for an org the caller
+  // is already a member of still 409s.
+  it("409s when the caller is already a member of this specific organization", async () => {
+    const redeemerId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [redeemerId]);
+    const firstInvite = await insertStaffInvite({ role: "frontdesk" });
+    const first = await request(app)
+      .post("/api/v1/members/invites/redeem")
+      .set(...authHeader(redeemerId))
+      .send({ token: firstInvite });
+    expectStatus(first, 200);
+
+    const secondInvite = await insertStaffInvite({ role: "accountant" });
+    const second = await request(app)
+      .post("/api/v1/members/invites/redeem")
+      .set(...authHeader(redeemerId))
+      .send({ token: secondInvite });
+    expectStatus(second, 409);
+    expect(second.body.error.code).toBe("org_conflict");
   });
 
   it("200s and grants org membership for a fresh user, and burns the invite", async () => {
@@ -336,5 +368,159 @@ describe("POST /api/v1/members/invites/redeem", () => {
       .send({ token: invite });
     expectStatus(second, 410);
     expect(second.body.error.code).toBe("invite_used");
+  });
+});
+
+// B-06b (EXECUTION_PLAN.md Step 16): a multi-org user, one membership per org,
+// created in a controlled order so "earliest membership" is deterministic.
+async function makeMultiOrgUser() {
+  const userId = crypto.randomUUID();
+  await db.query(`insert into auth.users (id) values ($1)`, [userId]);
+  await db.query(
+    `insert into organization_members (organization_id, user_id, role, created_at) values ($1, $2, 'owner', now() - interval '1 day')`,
+    [ORG, userId]
+  );
+  await db.query(
+    `insert into organization_members (organization_id, user_id, role, created_at) values ($1, $2, 'frontdesk', now())`,
+    [OTHER_ORG, userId]
+  );
+  return userId;
+}
+
+describe("X-Organization-Id header (authenticateToken org preference)", () => {
+  it("with no header, resolves to the earliest-created membership (ORG, owner)", async () => {
+    const userId = await makeMultiOrgUser();
+    const targetId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [targetId]);
+
+    // PUT /api/v1/members requires owner/admin in req.user.organizationId's
+    // org — owner-in-ORG should be allowed to grant a role.
+    const res = await request(app)
+      .put("/api/v1/members")
+      .set(...authHeader(userId))
+      .send({ userId: targetId, role: "accountant" });
+    expectStatus(res, 200);
+
+    const row = await db.query<any>(`select organization_id from organization_members where user_id = $1 and role = 'accountant'`, [targetId]);
+    expect(row.rows[0].organization_id).toBe(ORG);
+  });
+
+  it("with a valid header for an org the caller belongs to, resolves to that org's role instead", async () => {
+    const userId = await makeMultiOrgUser();
+    const targetId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [targetId]);
+
+    // Same user, but frontdesk-in-OTHER_ORG cannot grant roles — should 403,
+    // proving the header (not the earliest row) drove the resolution.
+    const res = await request(app)
+      .put("/api/v1/members")
+      .set(...authHeader(userId))
+      .set("X-Organization-Id", OTHER_ORG)
+      .send({ userId: targetId, role: "accountant" });
+    expectStatus(res, 403);
+  });
+
+  it("with a header for an org the caller does NOT belong to, falls back to the earliest membership unchanged", async () => {
+    const userId = await makeMultiOrgUser();
+    const targetId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [targetId]);
+
+    const res = await request(app)
+      .put("/api/v1/members")
+      .set(...authHeader(userId))
+      .set("X-Organization-Id", crypto.randomUUID()) // real uuid, but no membership row
+      .send({ userId: targetId, role: "accountant" });
+    expectStatus(res, 200); // falls back to owner-in-ORG, same as no header
+
+    const row = await db.query<any>(`select organization_id from organization_members where user_id = $1 and role = 'accountant'`, [targetId]);
+    expect(row.rows[0].organization_id).toBe(ORG);
+  });
+
+  it("with a malformed header value, falls back to the earliest membership unchanged", async () => {
+    const userId = await makeMultiOrgUser();
+    const targetId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [targetId]);
+
+    const res = await request(app)
+      .put("/api/v1/members")
+      .set(...authHeader(userId))
+      .set("X-Organization-Id", "not-a-uuid")
+      .send({ userId: targetId, role: "accountant" });
+    expectStatus(res, 200);
+  });
+});
+
+describe("GET /api/v1/members/me/organizations", () => {
+  it("401s with no token", async () => {
+    const res = await request(app).get("/api/v1/members/me/organizations");
+    expectStatus(res, 401);
+  });
+
+  it("returns a single-membership user's one org", async () => {
+    const res = await request(app)
+      .get("/api/v1/members/me/organizations")
+      .set(...authHeader(uids.tutor));
+    expectStatus(res, 200);
+    expect(res.body.organizations).toHaveLength(1);
+    expect(res.body.organizations[0].organizationId).toBe(ORG);
+    expect(res.body.organizations[0].role).toBe("tutor");
+  });
+
+  it("returns all memberships for a multi-org user, earliest first", async () => {
+    const userId = await makeMultiOrgUser();
+    const res = await request(app)
+      .get("/api/v1/members/me/organizations")
+      .set(...authHeader(userId));
+    expectStatus(res, 200);
+    expect(res.body.organizations).toHaveLength(2);
+    expect(res.body.organizations[0].organizationId).toBe(ORG);
+    expect(res.body.organizations[0].role).toBe("owner");
+    expect(res.body.organizations[1].organizationId).toBe(OTHER_ORG);
+    expect(res.body.organizations[1].role).toBe("frontdesk");
+  });
+});
+
+describe("PUT /api/v1/members/me/active-organization", () => {
+  it("401s with no token", async () => {
+    const res = await request(app).put("/api/v1/members/me/active-organization").send({ organizationId: ORG });
+    expectStatus(res, 401);
+  });
+
+  it("422s on a malformed body", async () => {
+    const res = await request(app)
+      .put("/api/v1/members/me/active-organization")
+      .set(...authHeader(uids.tutor))
+      .send({ organizationId: "not-a-uuid" });
+    expectStatus(res, 422);
+  });
+
+  it("403s for an org the caller isn't a member of", async () => {
+    const res = await request(app)
+      .put("/api/v1/members/me/active-organization")
+      .set(...authHeader(uids.tutor))
+      .send({ organizationId: crypto.randomUUID() });
+    expectStatus(res, 403);
+  });
+
+  it("200s and updates profiles.organization_id for an org the caller belongs to", async () => {
+    // fixtures.ts's ORG/OTHER_ORG ids aren't valid v1-8 uuids (see
+    // parents.test.ts's header comment), and this route's body is
+    // zod-validated with .uuid() — insert a real second org with a real v4 id.
+    const secondOrgId = crypto.randomUUID();
+    await db.query(`insert into organizations (id, name) values ($1, 'Second Org')`, [secondOrgId]);
+
+    const userId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [userId]);
+    await db.query(`insert into profiles (id, organization_id) values ($1, $2)`, [userId, ORG]);
+    await db.query(`insert into organization_members (organization_id, user_id, role) values ($1, $2, 'owner'), ($3, $2, 'tutor')`, [ORG, userId, secondOrgId]);
+
+    const res = await request(app)
+      .put("/api/v1/members/me/active-organization")
+      .set(...authHeader(userId))
+      .send({ organizationId: secondOrgId });
+    expectStatus(res, 200);
+
+    const row = await db.query<any>(`select organization_id from profiles where id = $1`, [userId]);
+    expect(row.rows[0].organization_id).toBe(secondOrgId);
   });
 });

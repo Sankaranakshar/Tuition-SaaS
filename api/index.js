@@ -90,6 +90,7 @@ async function verifyAccessToken(token) {
   if (!payload.sub) throw new Error("Missing sub claim");
   return { sub: payload.sub, email: payload.email };
 }
+var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var MEMBERSHIP_TTL_MS = Number(process.env.AUTH_CACHE_TTL_MS) || 0;
 var membershipCache = /* @__PURE__ */ new Map();
 function invalidateMembership(userId) {
@@ -98,7 +99,23 @@ function invalidateMembership(userId) {
 function invalidateAllMemberships() {
   membershipCache.clear();
 }
-async function loadMembership(userId) {
+async function loadMembership(userId, preferredOrgId) {
+  if (preferredOrgId) {
+    const { rows: rows2 } = await pool.query(
+      `select om.organization_id, om.role, o.status as organization_status
+       from organization_members om
+       join organizations o on o.id = om.organization_id
+       where om.user_id = $1 and om.organization_id = $2`,
+      [userId, preferredOrgId]
+    );
+    if (rows2[0]) {
+      return {
+        organizationId: rows2[0].organization_id,
+        role: rows2[0].role,
+        organizationStatus: rows2[0].organization_status
+      };
+    }
+  }
   if (MEMBERSHIP_TTL_MS > 0) {
     const hit = membershipCache.get(userId);
     if (hit && hit.expiresAt > Date.now()) return hit.value;
@@ -143,7 +160,9 @@ var authenticateToken = async (req, res, next) => {
   }
   try {
     const { sub: userId, email } = await verifyAccessToken(token);
-    const membership = await loadMembership(userId);
+    const orgHeader = req.headers["x-organization-id"];
+    const preferredOrgId = typeof orgHeader === "string" && UUID_RE.test(orgHeader) ? orgHeader : void 0;
+    const membership = await loadMembership(userId, preferredOrgId);
     req.user = {
       id: userId,
       email,
@@ -376,6 +395,7 @@ var bootstrapOrgRequestSchema = z.object({ organizationName: z.string().min(2).m
 var INVITABLE_STAFF_ROLES = ["admin", "tutor", "frontdesk", "accountant"];
 var createStaffInviteRequestSchema = z.object({ role: z.enum(INVITABLE_STAFF_ROLES) });
 var staffRedeemRequestSchema = z.object({ token: z.string().min(10) });
+var setActiveOrganizationRequestSchema = z.object({ organizationId: z.string().uuid() });
 
 // server/routes/members.ts
 var router2 = express2.Router();
@@ -384,8 +404,15 @@ async function setMembership(orgId, userId, role, _actorId) {
   const { error } = await supabaseAdmin.from("organization_members").upsert({ organization_id: orgId, user_id: userId, role }, { onConflict: "organization_id,user_id" });
   if (error) throw error;
   invalidateMembership(userId);
-  const { error: profileErr } = await supabaseAdmin.from("profiles").update({ organization_id: orgId }).eq("id", userId);
-  if (profileErr) throw profileErr;
+}
+async function setActiveOrganization(userId, orgId) {
+  const { error } = await supabaseAdmin.from("profiles").update({ organization_id: orgId }).eq("id", userId);
+  if (error) throw error;
+}
+async function hasMembership(userId, orgId) {
+  const { data, error } = await supabaseAdmin.from("organization_members").select("organization_id").eq("user_id", userId).eq("organization_id", orgId).maybeSingle();
+  if (error) throw error;
+  return !!data;
 }
 router2.post("/bootstrap", authenticateToken, async (req, res, next) => {
   try {
@@ -396,6 +423,7 @@ router2.post("/bootstrap", authenticateToken, async (req, res, next) => {
     const { data: org, error: orgErr } = await supabaseAdmin.from("organizations").insert({ name: body.organizationName }).select("id").single();
     if (orgErr) throw orgErr;
     await setMembership(org.id, req.user.id, "owner", req.user.id);
+    await setActiveOrganization(req.user.id, org.id);
     await writeAudit(org.id, req.user.id, "org.create", "organizations", org.id, { name: body.organizationName });
     res.status(201).json({ organizationId: org.id });
   } catch (err) {
@@ -483,8 +511,8 @@ router2.post("/invites/redeem", authenticateToken, async (req, res, next) => {
     const body = staffRedeemRequestSchema.parse(req.body);
     const uid = req.user.id;
     const invite = await loadStaffInvite(body.token);
-    if (req.user.organizationId && req.user.organizationId !== invite.organization_id) {
-      return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to a different organization" } });
+    if (await hasMembership(uid, invite.organization_id)) {
+      return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to this organization" } });
     }
     await withTransaction(async (client) => {
       const freshInvite = await client.query(`select used_at from staff_invites where token = $1 for update`, [body.token]);
@@ -494,8 +522,44 @@ router2.post("/invites/redeem", authenticateToken, async (req, res, next) => {
       await client.query(`update staff_invites set used_at = now(), used_by = $1 where token = $2`, [uid, body.token]);
     });
     await setMembership(invite.organization_id, uid, invite.role, uid);
+    await setActiveOrganization(uid, invite.organization_id);
     await writeAudit(invite.organization_id, uid, "staff_invite.redeem", "organization_members", `${invite.organization_id}_${uid}`, { role: invite.role });
     res.json({ ok: true, organizationId: invite.organization_id, role: invite.role });
+  } catch (err) {
+    next(err);
+  }
+});
+router2.get("/me/organizations", authenticateToken, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `select om.organization_id, o.name as organization_name, om.role
+       from organization_members om
+       join organizations o on o.id = om.organization_id
+       where om.user_id = $1
+       order by om.created_at asc`,
+      [req.user.id]
+    );
+    res.json({
+      ok: true,
+      organizations: rows.map((r) => ({
+        organizationId: r.organization_id,
+        organizationName: r.organization_name,
+        role: r.role
+      }))
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+router2.put("/me/active-organization", authenticateToken, async (req, res, next) => {
+  try {
+    const body = setActiveOrganizationRequestSchema.parse(req.body);
+    const uid = req.user.id;
+    if (!await hasMembership(uid, body.organizationId)) {
+      return res.status(403).json({ error: { code: "forbidden", message: "Not a member of this organization" } });
+    }
+    await setActiveOrganization(uid, body.organizationId);
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -1849,8 +1913,8 @@ router5.post("/redeem", async (req, res, next) => {
     const body = parentRedeemRequestSchema.parse(req.body);
     const uid = req.user.id;
     const invite = await loadInvite(body.token);
-    if (req.user.organizationId && req.user.organizationId !== invite.organization_id) {
-      return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to a different organization" } });
+    if (await hasMembership(uid, invite.organization_id)) {
+      return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to this organization" } });
     }
     await withTransaction(async (client) => {
       const freshInvite = await client.query(`select used_at from parent_invites where token = $1 for update`, [body.token]);
@@ -1879,6 +1943,7 @@ router5.post("/redeem", async (req, res, next) => {
       );
     });
     await setMembership(invite.organization_id, uid, "parent", uid);
+    await setActiveOrganization(uid, invite.organization_id);
     await writeAudit(invite.organization_id, uid, "parent_invite.redeem", "parent_links", `${uid}_${invite.student_id}`, {
       studentId: invite.student_id
     });
@@ -2224,8 +2289,8 @@ router6.post("/redeem", async (req, res, next) => {
     const body = studentRedeemRequestSchema.parse(req.body);
     const uid = req.user.id;
     const invite = await loadInvite2(body.token);
-    if (req.user.organizationId && req.user.organizationId !== invite.organization_id) {
-      return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to a different organization" } });
+    if (await hasMembership(uid, invite.organization_id)) {
+      return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to this organization" } });
     }
     await withTransaction(async (client) => {
       const freshInvite = await client.query(`select used_at from student_invites where token = $1 for update`, [body.token]);
@@ -2256,6 +2321,7 @@ router6.post("/redeem", async (req, res, next) => {
       );
     });
     await setMembership(invite.organization_id, uid, "student", uid);
+    await setActiveOrganization(uid, invite.organization_id);
     await writeAudit(invite.organization_id, uid, "student_invite.redeem", "students", invite.student_id, {});
     res.json({ ok: true, organizationId: invite.organization_id, studentId: invite.student_id });
   } catch (err) {

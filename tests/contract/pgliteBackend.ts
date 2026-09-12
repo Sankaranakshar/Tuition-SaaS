@@ -6,8 +6,19 @@ import type { PGlite } from "@electric-sql/pglite";
 // whatever PGlite instance the current test file registered here.
 let current: PGlite | null = null;
 
-export function setBackend(db: PGlite) {
+// Every contract-test query represents server-trusted access (pool/
+// withTransaction's direct-Postgres connection, or supabaseAdmin's
+// service-role client) — never a real end-user session. Actually setting
+// the session's `role` GUC to `service_role` (created with `bypassrls` by
+// supabase/test/auth_shim.sql, same role the RLS suite switches to via
+// scenario()'s `as()`) matters beyond RLS bypass: a `current_setting('role',
+// true) = 'service_role'` check inside a trigger (see
+// 20260709021200_profiles_org_immutable.sql) only reads true this way — a
+// bare superuser connection with no role set doesn't satisfy it, unlike a
+// real production request through Supabase's service-role key.
+export async function setBackend(db: PGlite) {
   current = db;
+  await db.query("set role service_role");
 }
 
 export interface QueryResult {

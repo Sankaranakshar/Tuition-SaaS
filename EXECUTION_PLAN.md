@@ -69,12 +69,12 @@ Two items (B-10 staging, external pentest + leaked-password toggle) were explici
 |---|---|---|---|
 | 14 | R2-0: staging environment (B-10) — retroactive write-up | — | ✅ Done 2026-09-12 (already shipped; this closes the paperwork loop) |
 | 15 | B-06a: migration — multi-membership profile schema | 14 | ✅ Done 2026-09-12 |
-| 16 | B-06b: server — multi-membership auth & org-context resolution | 15 | ⬜ Not started |
+| 16 | B-06b: server — multi-membership auth & org-context resolution | 15 | ✅ Done 2026-09-12 |
 | 17 | B-06c: client — thread active-org through AuthContext/api.ts | 16 | ⬜ Not started |
 | 18 | B-06d: D-01 verification — independent tutor stays a clean single-member org | 16 | ⬜ Not started |
 | 19 | D-05: per-student parent-controlled payment-permissions model | 15 | ⬜ Not started |
 
-**Gate baseline going into Step 15** (HANDOFF.md §2, re-run 2026-09-12): tsc clean · 211 unit · 89 RLS · 252 contract · build `dist/server.js` 184.4 KB · bundle 203.6 KB gzip / 260 KB budget · API bundle 16/16 mounts.
+**Gate baseline going into Step 17** (HANDOFF.md §2, re-run 2026-09-12): tsc clean · 211 unit · 90 RLS · 267 contract · build `dist/server.js` 186.8 KB · bundle 203.6 KB gzip / 260 KB budget · API bundle 16/16 mounts.
 
 **Not scoped in this pass, stays on the backlog:**
 
@@ -163,12 +163,14 @@ Two items (B-10 staging, external pentest + leaked-password toggle) were explici
 5. **New `GET /api/v1/members/me/organizations`** — returns every `(organization_id, organization name, role)` the caller belongs to, via a join on `organization_members`/`organizations`. Not consumed by any UI in this step (that's Step 17/B-07's job) but needed so a client can know a second membership exists at all, and so this step is independently testable.
 
 **Definition of done:**
-- [ ] Contract tests: redeeming a second, different org's staff/parent/student invite while already a member of org A now succeeds (previously 409'd) and creates a second `organization_members` row without touching the first; redeeming an invite for an org the user is *already* a member of still 409s (`org_conflict` semantics preserved for the real duplicate case).
-- [ ] Contract test: `authenticateToken` with a valid `X-Organization-Id` header for an org the caller belongs to resolves `req.user.organizationId` to that org, not the earliest one; with no header, or a header naming an org the caller doesn't belong to, behavior is unchanged from today.
-- [ ] Contract test: `PUT /me/active-organization` 403s for an org the caller isn't a member of; 200s and updates `profiles.organization_id` for one they are.
-- [ ] Contract test: `GET /me/organizations` returns all memberships for a multi-org user, ordered consistently.
-- [ ] RLS suite re-run green (no policy changes in this step, but it's a privileged-route change — same rule HANDOFF.md §5 states).
-- [ ] All seven gates green.
+- [x] Contract tests: redeeming a second, different org's staff/parent/student invite while already a member of org A now succeeds (previously 409'd) and creates a second `organization_members` row without touching the first; redeeming an invite for an org the user is *already* a member of still 409s (`org_conflict` semantics preserved for the real duplicate case).
+- [x] Contract test: `authenticateToken` with a valid `X-Organization-Id` header for an org the caller belongs to resolves `req.user.organizationId` to that org, not the earliest one; with no header, or a header naming an org the caller doesn't belong to, behavior is unchanged from today.
+- [x] Contract test: `PUT /me/active-organization` 403s for an org the caller isn't a member of; 200s and updates `profiles.organization_id` for one they are.
+- [x] Contract test: `GET /me/organizations` returns all memberships for a multi-org user, ordered consistently.
+- [x] RLS suite re-run green (no policy changes in this step, but it's a privileged-route change — same rule HANDOFF.md §5 states).
+- [x] All seven gates green.
+
+**Shipped 2026-09-12:** all three invite-redeem routes (`members.ts`, `parents.ts`, `students.ts`) now guard on a direct `organization_members` lookup for the specific invite's org (`hasMembership()`, new shared helper) instead of comparing against `req.user!.organizationId` — a real duplicate-org redeem still 409s `org_conflict`, a different org's redeem now succeeds and adds a second membership row. `loadMembership()` takes an optional `preferredOrgId`, validated against a real membership row before use, with the cache bypassed on that path (org preference is per-request); `authenticateToken` reads it from a new `X-Organization-Id` header, guarded by a UUID-format regex so a malformed value degrades to "no header" instead of erroring. `setMembership()` no longer writes `profiles.organization_id` as a side effect — split into a new exported `setActiveOrganization()`, called explicitly from bootstrap and each invite-redeem's own success path only (deliberately **not** from `PUT /api/v1/members`'s role-change/direct-add path — confirmed via grep that no client code calls that route at all today; the product's only real onboarding path is invite-create-then-redeem, so this is a no-op in practice, not a regression). New routes `GET /api/v1/members/me/organizations` and `PUT /api/v1/members/me/active-organization` added, both via raw `pool` queries (the join + explicit ordering needed isn't expressible in the test harness's `supabaseAdmin` shim). One test-harness gap found and fixed along the way: `tests/contract/pgliteBackend.ts` never actually ran queries as the `service_role` Postgres role, so the pre-existing `profiles_org_immutable` trigger's `current_setting('role') = 'service_role'` bypass check was never really exercised by any contract test — surfaced by the new active-organization test, fixed by having `setBackend()` run `set role service_role` (the role `supabase/test/auth_shim.sql` already creates with `bypassrls` for the RLS suite), matching the file's own documented trust boundary. All seven gates green: 211 unit, 90 RLS (unchanged, no schema/policy change), **267 contract** (+15), build `dist/server.js` 186.8 KB, bundle 203.6 KB (unchanged, no client change yet), API bundle 16/16 mounts, `api/index.js` regenerated.
 
 ---
 

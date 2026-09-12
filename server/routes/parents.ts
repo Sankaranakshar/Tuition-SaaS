@@ -4,7 +4,7 @@ import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { withTransaction } from "../db.ts";
 import { authenticateToken, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
-import { setMembership } from "./members.ts";
+import { setMembership, setActiveOrganization, hasMembership } from "./members.ts";
 import { parentInviteRequestSchema, parentRedeemRequestSchema } from "../../shared/schemas/parents.ts";
 import { CONSENT_VERSION } from "../../shared/consent.ts";
 
@@ -94,11 +94,11 @@ router.post("/redeem", async (req: AuthRequest, res, next) => {
 
     const invite = await loadInvite(body.token);
 
-    // A parent belongs to one organization. Block redeeming an invite from a
-    // different org than one they're already linked into, same posture as
-    // the tutor/admin bootstrap conflict check.
-    if (req.user!.organizationId && req.user!.organizationId !== invite.organization_id) {
-      return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to a different organization" } });
+    // A parent may hold more than one org membership (B-06b, Step 16). Block
+    // only a real duplicate — redeeming an invite for an org they're already
+    // a member of — not merely belonging to some other org too.
+    if (await hasMembership(uid, invite.organization_id)) {
+      return res.status(409).json({ error: { code: "org_conflict", message: "Account is already linked to this organization" } });
     }
 
     await withTransaction(async (client) => {
@@ -135,6 +135,7 @@ router.post("/redeem", async (req: AuthRequest, res, next) => {
     });
 
     await setMembership(invite.organization_id, uid, "parent", uid);
+    await setActiveOrganization(uid, invite.organization_id);
     await writeAudit(invite.organization_id, uid, "parent_invite.redeem", "parent_links", `${uid}_${invite.student_id}`, {
       studentId: invite.student_id,
     });

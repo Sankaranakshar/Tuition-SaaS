@@ -3,7 +3,7 @@ import request from "supertest";
 import crypto from "node:crypto";
 import type { PGlite } from "@electric-sql/pglite";
 import { createTestApp, authHeader } from "./testApp.ts";
-import { ORG, uids } from "../integration/fixtures.ts";
+import { ORG, OTHER_ORG, uids } from "../integration/fixtures.ts";
 
 let app: any;
 let db: PGlite;
@@ -173,14 +173,53 @@ describe("POST /api/v1/parents/redeem", () => {
     expectStatus(res, 404);
   });
 
-  it("409s when the caller already belongs to a different organization", async () => {
-    const invite = await insertInvite();
+  // B-06b (EXECUTION_PLAN.md Step 16): belonging to a *different* org no
+  // longer blocks redeeming a parent invite — it now succeeds and adds a
+  // second organization_members row, leaving the original org untouched.
+  it("200s and adds a second membership when the caller already belongs to a different organization", async () => {
+    const secondStudentId = crypto.randomUUID();
+    await db.query(`insert into students (id, organization_id, name) values ($1, $2, 'Second Invite Student')`, [secondStudentId, ORG]);
+    const invite = await insertInvite({ studentId: secondStudentId });
+
     const res = await request(app)
       .post("/api/v1/parents/redeem")
-      .set(...authHeader(uids.outsider)) // member of OTHER_ORG
+      .set(...authHeader(uids.outsider)) // already owner of OTHER_ORG
       .send({ token: invite, consent: true });
-    expectStatus(res, 409);
-    expect(res.body.error.code).toBe("org_conflict");
+    expectStatus(res, 200);
+    expect(res.body.organizationId).toBe(ORG);
+
+    const memberships = await db.query<any>(
+      `select organization_id, role from organization_members where user_id = $1 order by organization_id`,
+      [uids.outsider]
+    );
+    expect(memberships.rows).toHaveLength(2);
+    expect(memberships.rows.find((r: any) => r.organization_id === OTHER_ORG)?.role).toBe("owner");
+    expect(memberships.rows.find((r: any) => r.organization_id === ORG)?.role).toBe("parent");
+  });
+
+  // The real duplicate case: redeeming a second parent invite for an org the
+  // caller is already a member of still 409s.
+  it("409s when the caller is already a member of this specific organization", async () => {
+    const redeemerId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [redeemerId]);
+    const firstStudentId = crypto.randomUUID();
+    await db.query(`insert into students (id, organization_id, name) values ($1, $2, 'First Invite Student')`, [firstStudentId, ORG]);
+    const firstInvite = await insertInvite({ studentId: firstStudentId });
+    const first = await request(app)
+      .post("/api/v1/parents/redeem")
+      .set(...authHeader(redeemerId))
+      .send({ token: firstInvite, consent: true });
+    expectStatus(first, 200);
+
+    const secondStudentId = crypto.randomUUID();
+    await db.query(`insert into students (id, organization_id, name) values ($1, $2, 'Another Invite Student')`, [secondStudentId, ORG]);
+    const secondInvite = await insertInvite({ studentId: secondStudentId });
+    const second = await request(app)
+      .post("/api/v1/parents/redeem")
+      .set(...authHeader(redeemerId))
+      .send({ token: secondInvite, consent: true });
+    expectStatus(second, 409);
+    expect(second.body.error.code).toBe("org_conflict");
   });
 
   it("200s and creates parent_links + org membership for a fresh user, and burns the invite", async () => {
