@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   Video,
   MapPin,
@@ -20,7 +21,7 @@ import {
 } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
-import { StatChip, StatusChip, AgedBadge, EmptyState, SkeletonRow, Skeleton, Popover, BottomSheet } from "../components/kit";
+import { StatChip, StatusChip, AgedBadge, EmptyState, SkeletonRow, Skeleton, Popover, BottomSheet, Button } from "../components/kit";
 import { formatPaise, formatTime } from "../lib/format";
 import { markAttendance, type AttendanceStatus } from "../lib/api";
 import { debounce } from "../lib/debounce";
@@ -48,8 +49,10 @@ import {
 // The Today workspace (DEV_PLAN Epic 9): the tutor/owner's home. The Line of
 // today's sessions with one-tap attendance, the rules-based attention queue,
 // the three-number Pulse, and an attendance-debt counter. Money and attendance
-// still mutate only through the server API (src/lib/api.ts) — this page reads
+// still mutate only through the server API (src/lib/api.ts); this page reads
 // live and writes exactly one thing: attendance, optimistically with undo.
+
+type Translate = (key: string, opts?: Record<string, unknown>) => string;
 
 // --- Supabase row -> TodayX shape mappers (rows are snake_case; the rest of
 // this page and lib/today.ts speak the camelCase shapes below unchanged). ---
@@ -116,12 +119,21 @@ function rowToAttendance(row: any): TodayAttendance {
 }
 
 const STATUS_CYCLE: AttendanceStatus[] = ["present", "absent", "late", "excused"];
-const STATUS_META: Record<AttendanceStatus, { label: string; tone: "positive" | "danger" | "warn" | "neutral" }> = {
-  present: { label: "Present", tone: "positive" },
-  absent: { label: "Absent", tone: "danger" },
-  late: { label: "Late", tone: "warn" },
-  excused: { label: "Excused", tone: "neutral" },
+const STATUS_TONE: Record<AttendanceStatus, "positive" | "danger" | "warn" | "neutral"> = {
+  present: "positive",
+  absent: "danger",
+  late: "warn",
+  excused: "neutral",
 };
+const STATUS_LABEL_KEY: Record<AttendanceStatus, string> = {
+  present: "today.statusPresent",
+  absent: "today.statusAbsent",
+  late: "today.statusLate",
+  excused: "today.statusExcused",
+};
+
+// Shared section label (direction.html .section > .label): 12/600, tracked, faint.
+const SECTION_LABEL = "mb-3 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--cs-text-faint)]";
 
 export default function Today() {
   const { user, currentRole } = useAuth();
@@ -135,6 +147,7 @@ export default function Today() {
 }
 
 function StaffToday({ user, currentRole }: { user: any; currentRole: string | null }) {
+  const { t } = useTranslation();
   const orgId = user?.organizationId as string | undefined;
   const isTutor = (currentRole || user?.role) === "tutor";
   const isAdminTier = user?.organizationRole === "owner" || user?.organizationRole === "admin";
@@ -194,7 +207,7 @@ function StaffToday({ user, currentRole }: { user: any; currentRole: string | nu
         try {
           localStorage.setItem(hiddenKey, JSON.stringify(next));
         } catch {
-          /* storage full / disabled — snooze is best-effort */
+          /* storage full / disabled; snooze is best-effort */
         }
         return next;
       });
@@ -372,17 +385,17 @@ function StaffToday({ user, currentRole }: { user: any; currentRole: string | nu
               delete next[session.id];
               return next;
             });
-            toast.error(err?.message || "Could not save attendance");
+            toast.error(err?.message || t("today.markError"));
           }
         }
       };
       const timer = setTimeout(flush, 5000);
       pending.current.set(session.id, { timer, flush });
 
-      toast.success(`Marked · ${presentCount}/${records.length} present`, {
+      toast.success(t("today.markToast", { present: presentCount, total: records.length }), {
         duration: 5000,
         action: {
-          label: "Undo",
+          label: t("common.undo"),
           onClick: () => {
             const p = pending.current.get(session.id);
             if (p) clearTimeout(p.timer);
@@ -396,7 +409,7 @@ function StaffToday({ user, currentRole }: { user: any; currentRole: string | nu
         },
       });
     },
-    []
+    [t]
   );
 
   if (!orgId) {
@@ -404,63 +417,62 @@ function StaffToday({ user, currentRole }: { user: any; currentRole: string | nu
       <div className="mx-auto max-w-md py-16">
         <EmptyState
           icon={Inbox}
-          title="Setting up your workspace"
-          description="We're finishing your organization setup. Refresh in a moment if this doesn't clear."
+          title={t("today.settingUpTitle")}
+          description={t("today.settingUpDesc")}
         />
       </div>
     );
   }
 
   const loading = sessions === null;
-  const greeting = greetFor(now, user?.name);
+  const greeting = greetFor(now, user?.name, t);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-16">
       {/* Header + attendance-debt counter (E9.5) */}
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-[var(--cs-text)]">{greeting}</h1>
-          <p className="mt-0.5 text-sm text-[var(--cs-text-muted)]">
+          <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">{greeting}</h1>
+          <p className="mt-0.5 text-[13px] text-[var(--cs-text-muted)]">
             {todaySessions.length === 0
-              ? "No sessions on the calendar today."
-              : `${todaySessions.length} session${todaySessions.length === 1 ? "" : "s"} today.`}
+              ? t("today.noSessionsToday")
+              : t("today.sessionsToday", { count: todaySessions.length })}
           </p>
         </div>
         {debt.length > 0 && (
+          // Aging never shouts (direction.html .chip.warn): a neutral grey chip
+          // with a dot and a plain count, not an amber alert.
           <a
             href="#queue"
-            // text-[var(--cs-warn)] (#d97706) on this tinted background measured
-            // 2.75:1 contrast (WCAG AA needs 4.5:1 for normal text) — amber-800
-            // keeps the same hue family but passes.
-            className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--cs-warn)]/40 bg-[var(--cs-warn)]/10 px-3 py-2 text-sm font-medium text-amber-800"
+            className="inline-flex items-center gap-2 rounded-full bg-[var(--cs-surface-2)] px-3 py-1.5 text-[13px] font-medium text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:text-[var(--cs-text)]"
           >
-            <CalendarClock className="h-4 w-4" strokeWidth={1.75} />
-            {debt.length} unmarked session{debt.length === 1 ? "" : "s"}
+            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+            {t("today.unmarkedSessions", { count: debt.length })}
           </a>
         )}
       </header>
 
       {/* The Pulse (E9.4): three numbers, no charts */}
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatChip label="Collected this month" value={formatPaise(pulse.collectedPaise)} icon={Receipt} tone="positive" />
+        <StatChip label={t("today.collectedThisMonth")} value={formatPaise(pulse.collectedPaise)} icon={Receipt} />
         <StatChip
-          label="Outstanding"
+          label={t("today.outstanding")}
           value={formatPaise(pulse.outstandingPaise)}
           tone={pulse.outstandingPaise > 0 ? "warn" : "default"}
         />
         <StatChip
-          label="Sessions this week"
+          label={t("today.sessionsThisWeek")}
           value={pulse.sessionsThisWeek}
-          hint={weekDeltaHint(pulse.sessionsThisWeek, pulse.sessionsLastWeek)}
+          hint={weekDeltaHint(pulse.sessionsThisWeek, pulse.sessionsLastWeek, t)}
         />
       </section>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
         {/* The Line */}
         <section>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--cs-text-muted)]">Today's line</h2>
+          <h2 className={SECTION_LABEL}>{t("today.lineHeading")}</h2>
           {loading ? (
-            <div className="divide-y divide-[var(--cs-border)] rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+            <div className="divide-y divide-[var(--cs-border)] rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
               <SkeletonRow />
               <SkeletonRow />
               <SkeletonRow />
@@ -468,8 +480,8 @@ function StaffToday({ user, currentRole }: { user: any; currentRole: string | nu
           ) : todaySessions.length === 0 ? (
             <EmptyState
               icon={CheckCircle2}
-              title="Nothing scheduled today"
-              description="Enjoy the quiet, or schedule a class from the calendar."
+              title={t("today.lineEmptyTitle")}
+              description={t("today.lineEmptyDesc")}
             />
           ) : isAdminTier ? (
             <AdminLanes
@@ -493,19 +505,20 @@ function StaffToday({ user, currentRole }: { user: any; currentRole: string | nu
 
         {/* Attention queue */}
         <section id="queue">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--cs-text-muted)]">
-            Needs you {queue.length > 0 && <span className="text-[var(--cs-danger)]">· {queue.length}</span>}
+          <h2 className={SECTION_LABEL}>
+            {t("today.queueHeading")}{" "}
+            {queue.length > 0 && <span className="text-[var(--cs-text-muted)]">· {queue.length}</span>}
           </h2>
           {loading ? (
             <div className="space-y-2">
-              <Skeleton className="h-16 w-full rounded-[10px]" />
-              <Skeleton className="h-16 w-full rounded-[10px]" />
+              <Skeleton className="h-16 w-full rounded-[var(--cs-radius-container)]" />
+              <Skeleton className="h-16 w-full rounded-[var(--cs-radius-container)]" />
             </div>
           ) : queue.length === 0 ? (
             <EmptyState
               icon={CheckCircle2}
-              title="All clear"
-              description="Nothing needs you right now. Nicely done."
+              title={t("today.queueEmptyTitle")}
+              description={t("today.queueEmptyDesc")}
             />
           ) : (
             <ul className="space-y-2">
@@ -541,7 +554,7 @@ function Line({
   const showCursor = cursor < sessions.length && sessions.some((s) => new Date(s.startTime).toDateString() === now.toDateString());
 
   return (
-    <div className="divide-y divide-[var(--cs-border)] rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+    <div className="divide-y divide-[var(--cs-border)] rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
       {sessions.map((s, i) => (
         <div key={s.id}>
           {showCursor && i === cursor && <NowCursor now={now} />}
@@ -553,11 +566,20 @@ function Line({
   );
 }
 
+// The now-cursor (E9.1): a live divider between the sessions that have started
+// and the ones still to come. Small: a pinging accent dot, the time, a
+// hairline. The ping is CSS-only and the global reduced-motion guard collapses
+// it (src/index.css).
 function NowCursor({ now }: { now: Date }) {
+  const { t } = useTranslation();
   return (
-    <div className="flex items-center gap-2 px-4 py-1" aria-label="Current time">
+    <div className="flex items-center gap-2 px-4 py-1.5" aria-label={t("today.currentTime")}>
+      <span className="relative flex h-2 w-2 shrink-0 items-center justify-center">
+        <span className="cs-now-ping absolute h-2 w-2 rounded-full bg-[var(--cs-accent)]" />
+        <span className="relative h-2 w-2 rounded-full bg-[var(--cs-accent)]" />
+      </span>
       <span className="text-[11px] font-semibold tabular-nums text-[var(--cs-accent)]">{formatTime(now)}</span>
-      <span className="h-px flex-1 bg-[var(--cs-accent)]" />
+      <span className="h-px flex-1 bg-[var(--cs-accent)] opacity-40" />
     </div>
   );
 }
@@ -578,6 +600,7 @@ function AdminLanes({
   markedLocally: Record<string, boolean>;
   onCommit: (s: TodaySession, r: { studentId: string; status: AttendanceStatus }[]) => void;
 }) {
+  const { t } = useTranslation();
   const lanes = useMemo(() => {
     const byTutor = new Map<string, TodaySession[]>();
     for (const s of sessions) {
@@ -601,7 +624,7 @@ function AdminLanes({
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--cs-accent-soft)] text-[11px] font-semibold text-[var(--cs-accent)]">
               {(tutorNames[tutorId] || "T").charAt(0).toUpperCase()}
             </span>
-            {tutorNames[tutorId] || (tutorId === "unassigned" ? "Unassigned" : "Tutor")}
+            {tutorNames[tutorId] || (tutorId === "unassigned" ? t("today.unassigned") : t("today.tutorFallback"))}
             <span className="text-xs font-normal text-[var(--cs-text-muted)]">· {laneSessions.length}</span>
           </div>
           <Line sessions={laneSessions} now={now} nameOf={nameOf} markedLocally={markedLocally} onCommit={onCommit} />
@@ -624,11 +647,17 @@ function SessionBlock({
   markedLocally: Record<string, boolean>;
   onCommit: (s: TodaySession, r: { studentId: string; status: AttendanceStatus }[]) => void;
 }) {
+  const { t } = useTranslation();
   const overlaid = markedLocally[session.id];
   const phase: SessionPhase = overlaid ? "done" : sessionPhase(session, now);
   const ids = session.studentIds || [];
   const roster = ids.map((id) => nameOf.get(id) || "Student");
-  const title = roster.length === 0 ? "Session" : roster.length <= 2 ? roster.join(", ") : `${roster[0]} +${roster.length - 1} more`;
+  const title =
+    roster.length === 0
+      ? t("today.sessionFallback")
+      : roster.length <= 2
+        ? roster.join(", ")
+        : t("today.rosterMore", { name: roster[0], count: roster.length - 1 });
   const cancelled = phase === "cancelled";
 
   const isMobile = useIsMobile();
@@ -660,14 +689,15 @@ function SessionBlock({
         <div className="flex items-center gap-1.5 text-xs text-[var(--cs-text-muted)]">
           {session.isOnline ? (
             <>
-              <Video className="h-3 w-3" strokeWidth={1.75} /> Online
+              <Video className="h-3 w-3" strokeWidth={1.75} /> {t("today.online")}
             </>
           ) : (
             <>
-              <MapPin className="h-3 w-3" strokeWidth={1.75} /> {session.roomNumber ? `Room ${session.roomNumber}` : "In person"}
+              <MapPin className="h-3 w-3" strokeWidth={1.75} />{" "}
+              {session.roomNumber ? t("today.room", { room: session.roomNumber }) : t("today.inPerson")}
             </>
           )}
-          {ids.length > 0 && <span>· {ids.length} student{ids.length === 1 ? "" : "s"}</span>}
+          {ids.length > 0 && <span>· {t("today.studentCount", { count: ids.length })}</span>}
         </div>
       </div>
 
@@ -683,11 +713,11 @@ function SessionBlock({
     <>
       <div className="relative overflow-hidden">
         <div className="absolute inset-0 flex">
-          <div className="flex w-1/2 items-center gap-1.5 pl-4 text-sm font-medium text-white" style={{ backgroundColor: "var(--cs-ok)" }}>
-            <Check className="h-4 w-4" strokeWidth={2.5} /> All present
+          <div className="flex w-1/2 items-center gap-1.5 pl-4 text-sm font-medium text-[var(--cs-accent-contrast)]" style={{ backgroundColor: "var(--cs-ok)" }}>
+            <Check className="h-4 w-4" strokeWidth={2.5} /> {t("today.allPresent")}
           </div>
-          <div className="flex w-1/2 items-center justify-end gap-1.5 pr-4 text-sm font-medium text-[var(--cs-text)]" style={{ backgroundColor: "var(--cs-bg)" }}>
-            <Users className="h-4 w-4" strokeWidth={1.75} /> Roster
+          <div className="flex w-1/2 items-center justify-end gap-1.5 pr-4 text-sm font-medium text-[var(--cs-text)]" style={{ backgroundColor: "var(--cs-surface-2)" }}>
+            <Users className="h-4 w-4" strokeWidth={1.75} /> {t("today.roster")}
           </div>
         </div>
         <div
@@ -696,14 +726,14 @@ function SessionBlock({
           className="relative touch-pan-y bg-[var(--cs-surface)]"
           style={{
             transform: `translateX(${swipe.offsetX}px)`,
-            transition: swipe.dragging ? "none" : "transform 200ms ease-out",
+            transition: swipe.dragging ? "none" : "transform var(--cs-motion-structural) var(--cs-ease-out)",
           }}
         >
           {row}
         </div>
       </div>
       {mobileRosterOpen && (
-        <BottomSheet onClose={() => setMobileRosterOpen(false)} label="Mark attendance">
+        <BottomSheet onClose={() => setMobileRosterOpen(false)} label={t("today.markAttendance")}>
           <div className="px-4 pb-4">
             <RosterForm
               ids={ids}
@@ -735,8 +765,9 @@ function SessionAction({
   roster: string[];
   onCommit: (s: TodaySession, r: { studentId: string; status: AttendanceStatus }[]) => void;
 }) {
-  if (phase === "cancelled") return <StatusChip label="Cancelled" tone="neutral" />;
-  if (phase === "done") return <StatusChip label="Marked" tone="positive" />;
+  const { t } = useTranslation();
+  if (phase === "cancelled") return <StatusChip label={t("today.cancelled")} tone="neutral" />;
+  if (phase === "done") return <StatusChip label={t("today.marked")} tone="positive" />;
 
   const joinBtn =
     session.isOnline && session.meetingLink ? (
@@ -744,13 +775,13 @@ function SessionAction({
         href={session.meetingLink}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 rounded-[6px] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+        className="inline-flex items-center gap-1.5 rounded-[var(--cs-radius-control)] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-[var(--cs-accent-contrast)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-accent-hover)]"
       >
-        <Video className="h-3.5 w-3.5" strokeWidth={2} /> Join
+        <Video className="h-3.5 w-3.5" strokeWidth={2} /> {t("today.join")}
       </a>
     ) : session.isOnline ? (
-      <span className="text-xs text-[var(--cs-text-muted)]" title="A real Meet link is attached when Google Calendar sync is connected (Epic 8).">
-        Link pending
+      <span className="text-xs text-[var(--cs-text-muted)]" title={t("today.linkPendingHint")}>
+        {t("today.linkPending")}
       </span>
     ) : null;
 
@@ -761,7 +792,7 @@ function SessionAction({
     return (
       <span className="inline-flex items-center gap-1 text-xs text-[var(--cs-text-muted)]">
         <Clock className="h-3.5 w-3.5" strokeWidth={1.75} />
-        {mins <= 0 ? "now" : `in ${mins} min`}
+        {mins <= 0 ? t("today.now") : t("today.inMinutes", { count: mins })}
       </span>
     );
   }
@@ -787,27 +818,28 @@ function RosterPopover({
   onCommit: (s: TodaySession, r: { studentId: string; status: AttendanceStatus }[]) => void;
   unmarkedNudge: boolean;
 }) {
+  const { t } = useTranslation();
   const ids = session.studentIds || [];
 
   const triggerContent = (
     <>
       <Check className="h-3.5 w-3.5" strokeWidth={2} />
-      {unmarkedNudge ? "Mark attendance" : "Mark"}
+      {unmarkedNudge ? t("today.markAttendance") : t("today.mark")}
     </>
   );
 
   if (ids.length === 0) {
     // Nothing to mark; expose a disabled hint instead of an empty popover.
-    return <span className="text-xs text-[var(--cs-text-muted)]">No roster</span>;
+    return <span className="text-xs text-[var(--cs-text-muted)]">{t("today.noRoster")}</span>;
   }
 
   return (
     <Popover
       trigger={triggerContent}
-      triggerClassName={`inline-flex items-center gap-1.5 rounded-[6px] px-3 py-1.5 text-sm font-medium ${
+      triggerClassName={`inline-flex items-center gap-1.5 rounded-[var(--cs-radius-control)] px-3 py-1.5 text-sm font-medium transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${
         unmarkedNudge
-          ? "bg-[var(--cs-accent)] text-white hover:opacity-90"
-          : "border border-[var(--cs-border)] text-[var(--cs-text)] hover:bg-[var(--cs-bg)]"
+          ? "bg-[var(--cs-accent)] text-[var(--cs-accent-contrast)] hover:bg-[var(--cs-accent-hover)]"
+          : "border border-[var(--cs-border)] text-[var(--cs-text)] hover:bg-[var(--cs-surface-2)]"
       }`}
       align="right"
       className="w-72"
@@ -828,6 +860,7 @@ function RosterForm({
   onConfirm: (records: { studentId: string; status: AttendanceStatus }[]) => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation();
   // All-present by default; tapping a row cycles the exception.
   const [statuses, setStatuses] = useState<Record<string, AttendanceStatus>>(() =>
     Object.fromEntries(ids.map((id) => [id, "present" as AttendanceStatus]))
@@ -846,41 +879,41 @@ function RosterForm({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-[var(--cs-text)]">Mark attendance</span>
+        <span className="text-xs font-semibold text-[var(--cs-text)]">{t("today.markAttendance")}</span>
         <button onClick={setAllPresent} className="text-[11px] text-[var(--cs-accent)] hover:underline">
-          All present
+          {t("today.allPresent")}
         </button>
       </div>
       <div className="max-h-56 space-y-1 overflow-y-auto">
         {ids.map((id, i) => {
           const st = statuses[id] || "present";
-          const meta = STATUS_META[st];
           return (
             <button
               key={id}
               onClick={() => cycle(id)}
-              className="flex w-full items-center justify-between gap-2 rounded-[6px] px-2 py-1.5 text-left hover:bg-[var(--cs-bg)]"
+              className="flex w-full items-center justify-between gap-2 rounded-[var(--cs-radius-control)] px-2 py-1.5 text-left transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)]"
             >
               <span className="truncate text-sm text-[var(--cs-text)]">{roster[i] || "Student"}</span>
-              <StatusChip label={meta.label} tone={meta.tone} />
+              <StatusChip label={t(STATUS_LABEL_KEY[st])} tone={STATUS_TONE[st]} />
             </button>
           );
         })}
       </div>
       <div className="flex items-center justify-between border-t border-[var(--cs-border)] pt-2">
         <span className="text-[11px] text-[var(--cs-text-muted)]">
-          {exceptions === 0 ? "All present" : `${exceptions} exception${exceptions === 1 ? "" : "s"}`}
+          {exceptions === 0 ? t("today.allPresent") : t("today.exceptions", { count: exceptions })}
         </span>
         <div className="flex gap-1.5">
-          <button onClick={onCancel} className="rounded-[6px] px-2.5 py-1.5 text-sm text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)]">
-            Cancel
-          </button>
-          <button
+          <Button variant="quiet" size="sm" onClick={onCancel}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
             onClick={() => onConfirm(ids.map((id) => ({ studentId: id, status: statuses[id] || "present" })))}
-            className="rounded-[6px] bg-[var(--cs-accent)] px-2.5 py-1.5 text-sm font-medium text-white hover:opacity-90"
           >
-            Confirm
-          </button>
+            {t("today.confirm")}
+          </Button>
         </div>
       </div>
     </div>
@@ -907,17 +940,20 @@ function QueueRow({
   phoneOf: Map<string, string>;
   onHide: (id: string, ms: number) => void;
 }) {
-  const tone =
+  const { t } = useTranslation();
+  // The bar carries the only colour on the row (direction.html .qitem .bar):
+  // danger red, else a neutral strong hairline. Aging stays grey.
+  const bar =
     item.tone === "danger"
       ? "border-l-[var(--cs-danger)]"
       : item.tone === "warn"
-        ? "border-l-[var(--cs-warn)]"
+        ? "border-l-[var(--cs-border-strong)]"
         : "border-l-[var(--cs-accent)]";
 
   return (
-    <div className={`rounded-[10px] border border-l-2 border-[var(--cs-border)] bg-[var(--cs-surface)] px-3 py-2.5 ${tone}`}>
+    <div className={`rounded-[var(--cs-radius-container)] border border-l-2 border-[var(--cs-border)] bg-[var(--cs-surface)] px-3 py-2.5 ${bar}`}>
       <div className="flex items-start gap-2.5">
-        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-[var(--cs-bg)] text-[var(--cs-text-muted)]">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--cs-radius-control)] bg-[var(--cs-surface-2)] text-[var(--cs-text-muted)]">
           {QUEUE_ICON[item.kind]}
         </div>
         <div className="min-w-0 flex-1">
@@ -933,16 +969,16 @@ function QueueRow({
         <div className="flex shrink-0 items-center gap-1">
           <QueueAction item={item} phone={item.phone || phoneOf.get(item.studentId || "") || ""} />
           <button
-            title="Snooze for a day"
+            title={t("today.snooze")}
             onClick={() => onHide(item.id, 24 * 3600 * 1000)}
-            className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)]"
+            className="flex h-7 w-7 items-center justify-center rounded-[var(--cs-radius-control)] text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)]"
           >
             <BellOff className="h-3.5 w-3.5" strokeWidth={1.75} />
           </button>
           <button
-            title="Dismiss"
+            title={t("today.dismiss")}
             onClick={() => onHide(item.id, 30 * 24 * 3600 * 1000)}
-            className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)]"
+            className="flex h-7 w-7 items-center justify-center rounded-[var(--cs-radius-control)] text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)]"
           >
             <X className="h-3.5 w-3.5" strokeWidth={1.75} />
           </button>
@@ -953,43 +989,44 @@ function QueueRow({
 }
 
 function QueueAction({ item, phone }: { item: QueueItem; phone: string }) {
+  const { t } = useTranslation();
   const base =
-    "inline-flex items-center gap-1 rounded-[6px] border border-[var(--cs-border)] px-2.5 py-1.5 text-xs font-medium text-[var(--cs-text)] hover:bg-[var(--cs-bg)]";
+    "inline-flex items-center gap-1 rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] px-2.5 py-1.5 text-xs font-medium text-[var(--cs-text)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)]";
 
   switch (item.kind) {
     case "overdue_invoice":
       return (
         <Link to="/app/money" className={base}>
-          <Receipt className="h-3.5 w-3.5" strokeWidth={1.75} /> Collect
+          <Receipt className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("today.actionCollect")}
         </Link>
       );
     case "unmarked_session":
       // The session is on the Line/debt window; jump to the calendar to mark.
       return (
         <Link to="/app/schedule" className={base}>
-          <Check className="h-3.5 w-3.5" strokeWidth={1.75} /> Mark
+          <Check className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("today.mark")}
         </Link>
       );
     case "absence_streak":
       return phone ? (
         <a href={`tel:${phone}`} className={base}>
-          <Phone className="h-3.5 w-3.5" strokeWidth={1.75} /> Call
+          <Phone className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("today.actionCall")}
         </a>
       ) : (
         <Link to={item.studentId ? `/app/students/${item.studentId}` : "/app/people?lens=students"} className={base}>
-          Open
+          {t("today.actionOpen")}
         </Link>
       );
     case "quiet_lead":
       return (
         <Link to="/app/people?lens=leads" className={base}>
-          <Flame className="h-3.5 w-3.5" strokeWidth={1.75} /> Follow up
+          <Flame className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("today.actionFollowUp")}
         </Link>
       );
     case "schedule_conflict":
       return (
         <Link to="/app/schedule" className={base}>
-          Resolve
+          {t("today.actionResolve")}
         </Link>
       );
     default:
@@ -999,16 +1036,16 @@ function QueueAction({ item, phone }: { item: QueueItem; phone: string }) {
 
 // --- small helpers ----------------------------------------------------------
 
-function greetFor(now: Date, name?: string): string {
+function greetFor(now: Date, name: string | undefined, t: Translate): string {
   const h = now.getHours();
-  const part = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+  const part = h < 12 ? t("today.greetMorning") : h < 17 ? t("today.greetAfternoon") : t("today.greetEvening");
   const first = name ? name.split(" ")[0] : "";
-  return first ? `${part}, ${first}` : `${part}`;
+  return first ? t("today.greetNamed", { part, name: first }) : part;
 }
 
-function weekDeltaHint(thisWeek: number, lastWeek: number): string {
+function weekDeltaHint(thisWeek: number, lastWeek: number, t: Translate): string {
   const delta = thisWeek - lastWeek;
-  if (lastWeek === 0 && thisWeek === 0) return "No sessions last week";
-  if (delta === 0) return "Same as last week";
-  return delta > 0 ? `+${delta} vs last week` : `${delta} vs last week`;
+  if (lastWeek === 0 && thisWeek === 0) return t("today.deltaNoneLastWeek");
+  if (delta === 0) return t("today.deltaSame");
+  return delta > 0 ? t("today.deltaUp", { count: delta }) : t("today.deltaDown", { count: delta });
 }

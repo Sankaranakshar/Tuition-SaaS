@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Command } from "cmdk";
 import {
   LayoutDashboard,
@@ -27,10 +28,21 @@ interface PaletteProps {
   onOpenChange: (open: boolean) => void;
 }
 
+// Shared row / heading styling. Active row is accent-soft bg + accent text
+// (direction.html); motion via the shell's --cs-motion-fast tier.
+const ROW =
+  "flex cursor-pointer items-center gap-3 rounded-[var(--cs-radius-control)] px-3 py-2 text-sm text-[var(--cs-text)] " +
+  "transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] " +
+  "data-[selected=true]:bg-[var(--cs-accent-soft)] data-[selected=true]:text-[var(--cs-accent)]";
+const HEADING =
+  "[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs " +
+  "[&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-[var(--cs-text-muted)]";
+
 // The palette is the primary navigation (DEV_PLAN E5.3): every workspace,
 // every person, and the common create actions are one keystroke away.
 export default function CommandPalette({ open, onOpenChange }: PaletteProps) {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const { user, currentRole } = useAuth();
   const [students, setStudents] = useState<{ id: string; name: string }[]>([]);
 
@@ -93,30 +105,30 @@ export default function CommandPalette({ open, onOpenChange }: PaletteProps) {
   const navItems = useMemo(() => {
     if (!isStaff) {
       return [
-        { label: "Today", to: "/app", icon: LayoutDashboard },
-        { label: "Schedule", to: "/app/my-schedule", icon: Calendar },
-        { label: "Study material", to: "/app/study-material", icon: BookOpen },
-        { label: "Academic progress", to: "/app/academic-progress", icon: GraduationCap },
-        { label: "Money", to: "/app/money", icon: Wallet },
-        { label: "Inbox", to: "/app/inbox", icon: MessageSquare },
-        { label: "Profile", to: "/app/profile", icon: UserIcon },
+        { label: t("nav.today"), to: "/app", icon: LayoutDashboard },
+        { label: t("nav.schedule"), to: "/app/my-schedule", icon: Calendar },
+        { label: t("nav.studyMaterial"), to: "/app/study-material", icon: BookOpen },
+        { label: t("nav.academicProgress"), to: "/app/academic-progress", icon: GraduationCap },
+        { label: t("nav.money"), to: "/app/money", icon: Wallet },
+        { label: t("nav.inbox"), to: "/app/inbox", icon: MessageSquare },
+        { label: t("nav.profile"), to: "/app/profile", icon: UserIcon },
       ];
     }
     const items = [
-      { label: "Today", to: "/app", icon: LayoutDashboard },
-      { label: "People", to: "/app/people?lens=students", icon: Users },
-      { label: "Schedule", to: "/app/schedule", icon: Calendar },
-      { label: "Courses", to: "/app/courses", icon: Layers },
-      { label: "Money", to: "/app/money", icon: Wallet },
-      { label: "Inbox", to: "/app/inbox", icon: MessageSquare },
-      { label: "Leads", to: "/app/people?lens=leads", icon: TrendingUp },
-      { label: "Tutors", to: "/app/people?lens=tutors", icon: Shield },
-      { label: "Documents", to: "/app/documents", icon: BookOpen },
-      { label: "Settings", to: "/app/settings", icon: Settings },
+      { label: t("nav.today"), to: "/app", icon: LayoutDashboard },
+      { label: t("nav.people"), to: "/app/people?lens=students", icon: Users },
+      { label: t("nav.schedule"), to: "/app/schedule", icon: Calendar },
+      { label: t("palette.courses"), to: "/app/courses", icon: Layers },
+      { label: t("nav.money"), to: "/app/money", icon: Wallet },
+      { label: t("nav.inbox"), to: "/app/inbox", icon: MessageSquare },
+      { label: t("palette.leads"), to: "/app/people?lens=leads", icon: TrendingUp },
+      { label: t("palette.tutors"), to: "/app/people?lens=tutors", icon: Shield },
+      { label: t("palette.documents"), to: "/app/documents", icon: BookOpen },
+      { label: t("common.settings"), to: "/app/settings", icon: Settings },
     ];
-    items.push({ label: "Component kit", to: "/app/kit", icon: LayoutGrid });
+    items.push({ label: t("palette.componentKit"), to: "/app/kit", icon: LayoutGrid });
     return items;
-  }, [isStaff, currentRole]);
+  }, [isStaff, currentRole, t]);
 
   if (!open) return null;
 
@@ -127,26 +139,26 @@ export default function CommandPalette({ open, onOpenChange }: PaletteProps) {
     >
       <Command
         label="Command palette"
-        className="w-full max-w-lg overflow-hidden rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] shadow-2xl"
+        className="w-full max-w-lg overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] shadow-[var(--cs-shadow-pop)]"
         onKeyDown={(e) => { if (e.key === "Escape") onOpenChange(false); }}
       >
         <Command.Input
           autoFocus
-          placeholder="Search or jump to…"
+          placeholder={t("common.search")}
           className="w-full border-b border-[var(--cs-border)] bg-transparent px-4 py-3 text-sm text-[var(--cs-text)] outline-none placeholder:text-[var(--cs-text-muted)]"
         />
         <Command.List className="max-h-80 overflow-y-auto p-2">
           <Command.Empty className="px-3 py-6 text-center text-sm text-[var(--cs-text-muted)]">
-            Nothing matches.
+            {t("palette.empty")}
           </Command.Empty>
 
-          <Command.Group heading="Go to" className="[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-[var(--cs-text-muted)]">
+          <Command.Group heading={t("palette.goTo")} className={HEADING}>
             {navItems.map((item) => (
               <Command.Item
                 key={item.to}
                 value={`go ${item.label}`}
                 onSelect={() => go(item.to)}
-                className="flex cursor-pointer items-center gap-3 rounded-[6px] px-3 py-2 text-sm text-[var(--cs-text)] data-[selected=true]:bg-[var(--cs-accent-soft)]"
+                className={ROW}
               >
                 <item.icon className="h-4 w-4 text-[var(--cs-text-muted)]" strokeWidth={1.75} />
                 {item.label}
@@ -155,33 +167,30 @@ export default function CommandPalette({ open, onOpenChange }: PaletteProps) {
           </Command.Group>
 
           {isStaff && (
-            <Command.Group heading="Create" className="[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-[var(--cs-text-muted)]">
-              <Command.Item value="create new student" onSelect={() => go("/app/students?new=1")}
-                className="flex cursor-pointer items-center gap-3 rounded-[6px] px-3 py-2 text-sm text-[var(--cs-text)] data-[selected=true]:bg-[var(--cs-accent-soft)]">
+            <Command.Group heading={t("palette.create")} className={HEADING}>
+              <Command.Item value="create new student" onSelect={() => go("/app/students?new=1")} className={ROW}>
                 <UserPlus className="h-4 w-4 text-[var(--cs-text-muted)]" strokeWidth={1.75} />
-                New student
+                {t("palette.newStudent")}
               </Command.Item>
-              <Command.Item value="create schedule class" onSelect={() => go("/app/schedule?new=1")}
-                className="flex cursor-pointer items-center gap-3 rounded-[6px] px-3 py-2 text-sm text-[var(--cs-text)] data-[selected=true]:bg-[var(--cs-accent-soft)]">
+              <Command.Item value="create schedule class" onSelect={() => go("/app/schedule?new=1")} className={ROW}>
                 <CalendarPlus className="h-4 w-4 text-[var(--cs-text-muted)]" strokeWidth={1.75} />
-                Schedule a class
+                {t("palette.scheduleClass")}
               </Command.Item>
-              <Command.Item value="create new lead" onSelect={() => go("/app/leads?new=1")}
-                className="flex cursor-pointer items-center gap-3 rounded-[6px] px-3 py-2 text-sm text-[var(--cs-text)] data-[selected=true]:bg-[var(--cs-accent-soft)]">
+              <Command.Item value="create new lead" onSelect={() => go("/app/leads?new=1")} className={ROW}>
                 <TrendingUp className="h-4 w-4 text-[var(--cs-text-muted)]" strokeWidth={1.75} />
-                New lead
+                {t("palette.newLead")}
               </Command.Item>
             </Command.Group>
           )}
 
           {isStaff && students.length > 0 && (
-            <Command.Group heading="Students" className="[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-[var(--cs-text-muted)]">
+            <Command.Group heading={t("palette.students")} className={HEADING}>
               {students.map((s) => (
                 <Command.Item
                   key={s.id}
                   value={`student ${s.name}`}
                   onSelect={() => go(`/app/students/${s.id}`)}
-                  className="flex cursor-pointer items-center gap-3 rounded-[6px] px-3 py-2 text-sm text-[var(--cs-text)] data-[selected=true]:bg-[var(--cs-accent-soft)]"
+                  className={ROW}
                 >
                   <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--cs-accent-soft)] text-[10px] font-semibold text-[var(--cs-accent)]">
                     {s.name.charAt(0).toUpperCase()}
@@ -193,7 +202,7 @@ export default function CommandPalette({ open, onOpenChange }: PaletteProps) {
           )}
         </Command.List>
         <div className="flex items-center justify-between border-t border-[var(--cs-border)] px-4 py-2 text-[11px] text-[var(--cs-text-muted)]">
-          <span>↑↓ navigate · ↵ open · esc close</span>
+          <span>{t("palette.hint")}</span>
           <span>⌘K</span>
         </div>
       </Command>

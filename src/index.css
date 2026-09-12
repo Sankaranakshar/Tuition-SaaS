@@ -1,7 +1,9 @@
+/* Font import first: after Tailwind's @import expands inline it must still
+   precede all statements (CSS spec; Vite/postcss enforces it). */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 @custom-variant dark (&:is(.dark *));
 
@@ -115,73 +117,134 @@
     --color-blue-900: #194185;
 }
 
+/* ============================================================================
+   ClassStackr design tokens — the single source of truth for the whole look.
+
+   Agreed direction (2026-09-09, see docs/design/direction.html + REDESIGN §13):
+   warm off-white ground, ink text, ONE deep pine-green accent. Near-monochrome
+   — only the accent and a muted brick red carry hue; aging / at-risk read as
+   neutral grey + a text label, never amber. Tight radii, borders over shadows.
+
+   Change the palette in :root here and it flows through every surface, every
+   shadcn/ui component (their vars are mapped to --cs-* below), and dark mode.
+   ============================================================================ */
 :root {
-    --background: #F9FAFB;
-    --foreground: #101828;
-    --card: #ffffff;
-    --card-foreground: #101828;
-    --popover: #ffffff;
-    --popover-foreground: #101828;
-    --primary: #7F56D9;
-    --primary-foreground: #ffffff;
-    --secondary: #F2F4F7;
-    --secondary-foreground: #344054;
-    --muted: #F2F4F7;
-    --muted-foreground: #667085;
-    --accent: #F9FAFB;
-    --accent-foreground: #101828;
-    --destructive: #D92D20;
-    --border: #EAECF0;
-    --input: #D0D5DD;
-    --ring: #D6BBFB;
-    --chart-1: #7F56D9;
-    --chart-2: #06AED4;
-    --chart-3: #12B76A;
-    --chart-4: #F79009;
-    --chart-5: #F04438;
-    --radius: 0.5rem;
-    --sidebar: #ffffff;
-    --sidebar-foreground: #101828;
-    --sidebar-primary: #7F56D9;
-    --sidebar-primary-foreground: #ffffff;
-    --sidebar-accent: #F9FAFB;
-    --sidebar-accent-foreground: #101828;
-    --sidebar-border: #EAECF0;
-    --sidebar-ring: #D6BBFB;
+  /* ground + ink */
+  --cs-bg: #f7f7f5;
+  --cs-surface: #ffffff;
+  --cs-surface-2: #f1f1ee;
+  --cs-border: #e3e3df;
+  --cs-border-strong: #cfcfca;
+  --cs-text: #1f211f;
+  --cs-text-muted: #6d716c;
+  --cs-text-faint: #969a94;
+
+  /* one brand accent — buttons, active nav, links, focus, "paid/enrolled" */
+  --cs-accent: #315c52;
+  --cs-accent-hover: #264b42;
+  --cs-accent-soft: #e5eeeb;
+  --cs-accent-contrast: #ffffff;
+  --cs-focus: #315c52;
+
+  /* semantic — danger is the ONLY non-accent hue. --cs-warn / --cs-ok are
+     deliberate aliases (grey / accent) so existing var(--cs-warn|--cs-ok)
+     call sites stop rendering amber / a second green (REDESIGN §13). */
+  --cs-danger: #b54747;
+  --cs-danger-soft: #f6e8e8;
+  --cs-warn: #6d716c;
+  --cs-warn-soft: #f1f1ee;
+  --cs-ok: #315c52;
+  --cs-ok-soft: #e5eeeb;
+
+  /* charts — accent + neutral steps, never a rainbow */
+  --cs-chart-1: #315c52;
+  --cs-chart-2: #7a9c92;
+  --cs-chart-3: #b6c3bd;
+  --cs-chart-4: #dcdedb;
+
+  /* form + depth */
+  --cs-radius-control: 5px;
+  --cs-radius-container: 8px;
+  --cs-shadow-pop: 0 8px 24px -6px rgb(20 22 20 / 0.18), 0 2px 6px -2px rgb(20 22 20 / 0.10);
+
+  /* motion (REDESIGN §12) */
+  --cs-motion-fast: 120ms;
+  --cs-motion-structural: 180ms;
+  --cs-motion-spatial: 240ms;
+  --cs-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+/* Dark theme — same tokens, warm near-black ground + a lifted accent.
+   Applied by <html data-theme="dark"> plus the .dark class (kept in sync for
+   Tailwind's `dark:` variant), set before first paint by the boot script in
+   index.html and at runtime by src/lib/theme.ts. A React SPA renders nothing
+   without JS, so there is no no-JS fallback to maintain here. */
+:root[data-theme="dark"],
 .dark {
-    --background: #101828;
-    --foreground: #F9FAFB;
-    --card: #1D2939;
-    --card-foreground: #F9FAFB;
-    --popover: #1D2939;
-    --popover-foreground: #F9FAFB;
-    --primary: #7F56D9;
-    --primary-foreground: #ffffff;
-    --secondary: #1D2939;
-    --secondary-foreground: #F9FAFB;
-    --muted: #1D2939;
-    --muted-foreground: #98A2B3;
-    --accent: #1D2939;
-    --accent-foreground: #F9FAFB;
-    --destructive: #F04438;
-    --border: #344054;
-    --input: #344054;
-    --ring: #6941C6;
-    --chart-1: #7F56D9;
-    --chart-2: #06AED4;
-    --chart-3: #12B76A;
-    --chart-4: #F79009;
-    --chart-5: #F04438;
-    --sidebar: #101828;
-    --sidebar-foreground: #F9FAFB;
-    --sidebar-primary: #7F56D9;
-    --sidebar-primary-foreground: #ffffff;
-    --sidebar-accent: #1D2939;
-    --sidebar-accent-foreground: #F9FAFB;
-    --sidebar-border: #344054;
-    --sidebar-ring: #6941C6;
+  --cs-bg: #151513;
+  --cs-surface: #1d1d1a;
+  --cs-surface-2: #262622;
+  --cs-border: #33332e;
+  --cs-border-strong: #47473f;
+  --cs-text: #ecebe6;
+  --cs-text-muted: #a3a49c;
+  --cs-text-faint: #75766e;
+
+  --cs-accent: #6faa94;
+  --cs-accent-hover: #82bda6;
+  --cs-accent-soft: #1d312b;
+  --cs-accent-contrast: #0a1512;
+  --cs-focus: #6faa94;
+
+  --cs-danger: #d98a8a;
+  --cs-danger-soft: #3a2020;
+  --cs-warn: #a3a49c;
+  --cs-warn-soft: #262622;
+  --cs-ok: #6faa94;
+  --cs-ok-soft: #1d312b;
+
+  --cs-chart-1: #6faa94;
+  --cs-chart-2: #4c6a61;
+  --cs-chart-3: #3c4b45;
+  --cs-chart-4: #2c322e;
+}
+
+/* shadcn/ui variables mapped onto --cs-*, so anything using bg-background /
+   text-primary / border-border (the src/components/ui/* primitives and any
+   legacy class) inherits the ClassStackr system and dark mode for free. */
+:root {
+  --background: var(--cs-bg);
+  --foreground: var(--cs-text);
+  --card: var(--cs-surface);
+  --card-foreground: var(--cs-text);
+  --popover: var(--cs-surface);
+  --popover-foreground: var(--cs-text);
+  --primary: var(--cs-accent);
+  --primary-foreground: var(--cs-accent-contrast);
+  --secondary: var(--cs-surface-2);
+  --secondary-foreground: var(--cs-text);
+  --muted: var(--cs-surface-2);
+  --muted-foreground: var(--cs-text-muted);
+  --accent: var(--cs-surface-2);
+  --accent-foreground: var(--cs-text);
+  --destructive: var(--cs-danger);
+  --border: var(--cs-border);
+  --input: var(--cs-border-strong);
+  --ring: var(--cs-focus);
+  --chart-1: var(--cs-chart-1);
+  --chart-2: var(--cs-chart-2);
+  --chart-3: var(--cs-chart-3);
+  --chart-4: var(--cs-chart-4);
+  --chart-5: var(--cs-danger);
+  --radius: 0.5rem;
+  --sidebar: var(--cs-surface);
+  --sidebar-foreground: var(--cs-text);
+  --sidebar-primary: var(--cs-accent);
+  --sidebar-primary-foreground: var(--cs-accent-contrast);
+  --sidebar-accent: var(--cs-surface-2);
+  --sidebar-accent-foreground: var(--cs-text);
+  --sidebar-border: var(--cs-border);
+  --sidebar-ring: var(--cs-focus);
 }
 
 @layer base {
@@ -190,41 +253,31 @@
     }
   body {
     @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
     }
   html {
     @apply font-sans;
+    background: var(--cs-bg);
     }
-}
-/* ================================================================
-   ClassStackr design tokens (DEV_PLAN E5.1)
-   Slate base, one indigo accent, semantic color only for state.
-   ================================================================ */
-:root {
-  --cs-accent: #4f46e5;
-  --cs-accent-soft: #eef2ff;
-  --cs-surface: #ffffff;
-  --cs-bg: #fafaf9;
-  --cs-border: #e7e5e4;
-  --cs-text: #1c1917;
-  --cs-text-muted: #78716c;
-  --cs-danger: #dc2626;
-  --cs-warn: #d97706;
-  --cs-ok: #16a34a;
-  --cs-radius-control: 6px;
-  --cs-radius-container: 10px;
-}
-
-.dark {
-  --cs-accent: #818cf8;
-  --cs-accent-soft: #1e1b4b;
-  --cs-surface: #1c1917;
-  --cs-bg: #0c0a09;
-  --cs-border: #292524;
-  --cs-text: #fafaf9;
-  --cs-text-muted: #a8a29e;
+  /* REDESIGN §12: prefers-reduced-motion collapses everything to opacity. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
 /* Money and metrics always align; never let digits jitter. */
 .tabular-nums, [data-money] {
   font-variant-numeric: tabular-nums;
 }
+
+/* Today: the now-cursor's live ping. The reduced-motion guard above stops it. */
+@keyframes cs-now-ping {
+  0%        { transform: scale(1);   opacity: 0.55; }
+  70%, 100% { transform: scale(2.4); opacity: 0; }
+}
+.cs-now-ping { animation: cs-now-ping 2.8s var(--cs-ease-out) infinite; }

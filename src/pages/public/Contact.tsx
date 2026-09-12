@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { Mail, Phone, MapPin, Send } from 'lucide-react';
 
+const FIELD_CLASS =
+  "w-full px-4 py-3 border border-[var(--cs-border-strong)] rounded-[var(--cs-radius-control)] outline-none focus:ring-2 focus:ring-[var(--cs-focus)]/30 focus:border-[var(--cs-focus)] transition-colors duration-[var(--cs-motion-fast)] bg-[var(--cs-surface-2)]";
+
 export default function Contact() {
   const [formData, setFormData] = useState({
     name: '',
@@ -22,14 +25,14 @@ export default function Contact() {
   };
 
   return (
-    <div className="bg-gray-50 min-h-screen pb-24">
+    <div className="bg-[var(--cs-surface-2)] min-h-screen pb-24">
       {/* Header */}
       <section className="pt-24 pb-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h1 className="text-4xl md:text-5xl font-extrabold text-gray-900 tracking-tight mb-6">
+          <h1 className="text-4xl md:text-5xl font-semibold text-[var(--cs-text)] tracking-tight mb-6">
             See how it works
           </h1>
-          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+          <p className="text-xl text-[var(--cs-text-muted)] max-w-3xl mx-auto">
             Request a personalized demo and discover how we can help grow your tuition business.
           </p>
         </div>
@@ -38,18 +41,18 @@ export default function Contact() {
       <section className="py-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid md:grid-cols-2 gap-16 max-w-5xl mx-auto">
-            
+
             {/* Demo Form */}
-            <div className="bg-white p-8 md:p-10 rounded-3xl shadow-xl border border-gray-100">
-              <h2 className="text-2xl font-bold text-gray-900 mb-8">Request a Demo</h2>
+            <div className="bg-[var(--cs-surface)] p-8 md:p-10 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)]">
+              <h2 className="text-2xl font-semibold text-[var(--cs-text)] mb-8">Request a Demo</h2>
               {submitted && (
-              <div className="mb-6 rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
+              <div className="mb-6 rounded-[var(--cs-radius-control)] bg-[var(--cs-accent-soft)] px-4 py-3 text-sm text-[var(--cs-accent)]">
                 Thank you! We will contact you shortly to schedule your demo.
               </div>
             )}
             <form onSubmit={handleSubmit} className="space-y-6">
                 <div>
-                  <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="name" className="block text-sm font-medium text-[var(--cs-text-muted)] mb-2">
                     Full Name
                   </label>
                   <input
@@ -59,13 +62,13 @@ export default function Contact() {
                     value={formData.name}
                     onChange={handleChange}
                     required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors bg-gray-50"
+                    className={FIELD_CLASS}
                     placeholder="John Doe"
                   />
                 </div>
-                
+
                 <div>
-                  <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="email" className="block text-sm font-medium text-[var(--cs-text-muted)] mb-2">
                     Email Address
                   </label>
                   <input
@@ -75,13 +78,13 @@ export default function Contact() {
                     value={formData.email}
                     onChange={handleChange}
                     required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors bg-gray-50"
+                    className={FIELD_CLASS}
                     placeholder="john@example.com"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="phone" className="block text-sm font-medium text-[var(--cs-text-muted)] mb-2">
                     Phone Number
                   </label>
                   <input
@@ -91,13 +94,13 @@ export default function Contact() {
                     value={formData.phone}
                     onChange={handleChange}
                     required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors bg-gray-50"
+                    className={FIELD_CLASS}
                     placeholder="+1 (555) 000-0000"
                   />
                 </div>
-                
+
                 <div>
-                  <label htmlFor="role" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="role" className="block text-sm font-medium text-[var(--cs-text-muted)] mb-2">
                     I am a...
                   </label>
                   <select
@@ -105,7 +108,7 @@ export default function Contact() {
                     name="role"
                     value={formData.role}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors bg-gray-50"
+                    className={FIELD_CLASS}
                   >
                     <option value="tutor">Independent Tutor</option>
                     <option value="center">Tuition Center Owner</option>
@@ -113,12 +116,12 @@ export default function Contact() {
                     <option value="other">Other</option>
                   </select>
                 </div>
-                
+
                 <button
                   type="submit"
-                  className="w-full px-8 py-4 bg-indigo-600 text-white rounded-xl font-bold text-lg hover:bg-indigo-700 transition-colors shadow-md flex items-center justify-center mt-8"
+                  className="w-full px-8 py-4 bg-[var(--cs-accent)] text-[var(--cs-accent-contrast)] rounded-[var(--cs-radius-control)] font-semibold text-lg transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-accent-hover)] flex items-center justify-center mt-8"
                 >
-                  <Send className="w-5 h-5 mr-2" />
+                  <Send className="w-5 h-5 mr-2" strokeWidth={1.75} />
                   Request Demo
                 </button>
               </form>
@@ -127,48 +130,48 @@ export default function Contact() {
             {/* Contact Info */}
             <div className="flex flex-col justify-center space-y-12">
               <div>
-                <h2 className="text-3xl font-bold text-gray-900 mb-6">Get in touch</h2>
-                <p className="text-lg text-gray-600 mb-8">
+                <h2 className="text-3xl font-semibold text-[var(--cs-text)] mb-6">Get in touch</h2>
+                <p className="text-lg text-[var(--cs-text-muted)] mb-8">
                   Have questions before booking a demo? Our team is here to help you find the best solution for your tuition business.
                 </p>
-                
+
                 <div className="space-y-6">
                   <div className="flex items-start">
-                    <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center flex-shrink-0 mr-4">
-                      <Mail className="w-6 h-6 text-indigo-600" />
+                    <div className="w-12 h-12 bg-[var(--cs-accent-soft)] rounded-full flex items-center justify-center flex-shrink-0 mr-4">
+                      <Mail className="w-6 h-6 text-[var(--cs-accent)]" strokeWidth={1.75} />
                     </div>
                     <div>
-                      <h3 className="text-lg font-bold text-gray-900">Email Us</h3>
-                      <p className="text-gray-600 mt-1">support@example.com</p>
+                      <h3 className="text-lg font-semibold text-[var(--cs-text)]">Email Us</h3>
+                      <p className="text-[var(--cs-text-muted)] mt-1">support@example.com</p>
                     </div>
                   </div>
 
                   <div className="flex items-start">
-                    <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center flex-shrink-0 mr-4">
-                      <Phone className="w-6 h-6 text-indigo-600" />
+                    <div className="w-12 h-12 bg-[var(--cs-accent-soft)] rounded-full flex items-center justify-center flex-shrink-0 mr-4">
+                      <Phone className="w-6 h-6 text-[var(--cs-accent)]" strokeWidth={1.75} />
                     </div>
                     <div>
-                      <h3 className="text-lg font-bold text-gray-900">Call Us</h3>
-                      <p className="text-gray-600 mt-1">+1 234 567 890</p>
+                      <h3 className="text-lg font-semibold text-[var(--cs-text)]">Call Us</h3>
+                      <p className="text-[var(--cs-text-muted)] mt-1">+1 234 567 890</p>
                     </div>
                   </div>
 
                   <div className="flex items-start">
-                    <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center flex-shrink-0 mr-4">
-                      <MapPin className="w-6 h-6 text-indigo-600" />
+                    <div className="w-12 h-12 bg-[var(--cs-accent-soft)] rounded-full flex items-center justify-center flex-shrink-0 mr-4">
+                      <MapPin className="w-6 h-6 text-[var(--cs-accent)]" strokeWidth={1.75} />
                     </div>
                     <div>
-                      <h3 className="text-lg font-bold text-gray-900">Visit Us</h3>
-                      <p className="text-gray-600 mt-1">123 Education St<br/>Learning City, LC 12345</p>
+                      <h3 className="text-lg font-semibold text-[var(--cs-text)]">Visit Us</h3>
+                      <p className="text-[var(--cs-text-muted)] mt-1">123 Education St<br/>Learning City, LC 12345</p>
                     </div>
                   </div>
                 </div>
               </div>
-              
-              <div className="bg-indigo-900 rounded-3xl p-8 text-white">
-                <h3 className="text-xl font-bold mb-3">Ready to start immediately?</h3>
-                <p className="text-indigo-200 mb-6">Skip the demo and start your 14-day free trial right now.</p>
-                <a href="/login" className="inline-block px-6 py-3 bg-white text-indigo-900 rounded-xl font-bold hover:bg-indigo-50 transition-colors">
+
+              <div className="bg-[var(--cs-text)] rounded-[var(--cs-radius-container)] p-8 text-[var(--cs-bg)]">
+                <h3 className="text-xl font-semibold mb-3">Ready to start immediately?</h3>
+                <p className="text-[var(--cs-bg)]/70 mb-6">Skip the demo and start your 14-day free trial right now.</p>
+                <a href="/login" className="inline-block px-6 py-3 bg-[var(--cs-bg)] text-[var(--cs-text)] rounded-[var(--cs-radius-control)] font-semibold transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-bg)]/90">
                   Start Free Trial
                 </a>
               </div>

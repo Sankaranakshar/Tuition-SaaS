@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { User, Mail, Phone, MapPin, Users, Edit2, Save } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
-import { StatusChip } from "../components/kit";
+import { StatusChip, Button, Field, Input } from "../components/kit";
 
 export default function Profile() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -53,87 +55,101 @@ export default function Profile() {
     }
   };
 
-  if (loading) return <div className="text-sm text-[var(--cs-text-muted)]">Loading profile...</div>;
+  if (loading) return <div className="text-sm text-[var(--cs-text-muted)]">{t("profile.loading")}</div>;
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-[var(--cs-text)]">Account Details</h1>
+    <div className="mx-auto max-w-4xl space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">{t("profile.title")}</h1>
         {isEditing ? (
-          <button onClick={handleSave} className="flex items-center rounded-[6px] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity">
-            <Save className="w-4 h-4 mr-2" />
-            Save Changes
-          </button>
+          <Button icon={Save} onClick={handleSave}>{t("profile.saveChanges")}</Button>
         ) : (
-          <button onClick={() => setIsEditing(true)} className="flex items-center rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] px-4 py-2 text-sm font-medium text-[var(--cs-text)] hover:bg-[var(--cs-bg)] transition-colors">
-            <Edit2 className="w-4 h-4 mr-2" />
-            Edit Profile
-          </button>
+          <Button variant="ghost" icon={Edit2} onClick={() => setIsEditing(true)}>{t("profile.editProfile")}</Button>
         )}
       </div>
 
-      <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden">
-        <div className="px-6 py-4 border-b border-[var(--cs-border)] flex justify-between items-center">
-          <h2 className="text-lg font-semibold text-[var(--cs-text)] flex items-center">
-            <User className="w-5 h-5 mr-2 text-[var(--cs-accent)]" />
-            Personal Info
-          </h2>
-        </div>
+      <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+        <h2 className="border-b border-[var(--cs-border)] px-4 py-3 text-sm font-semibold text-[var(--cs-text)]">
+          {t("profile.personalInfo")}
+        </h2>
 
-        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-6 p-6 md:grid-cols-2">
+          {isEditing ? (
+            <Field
+              label={t("profile.fullName")}
+              renderControl={(id) => (
+                <Input id={id} value={formData.name || ""} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
+              )}
+            />
+          ) : (
+            <div>
+              <p className="text-xs font-medium text-[var(--cs-text-muted)]">{t("profile.fullName")}</p>
+              <p className="mt-1 flex items-center text-sm font-medium text-[var(--cs-text)]">
+                <User className="mr-2 h-4 w-4 text-[var(--cs-text-muted)]" strokeWidth={1.75} /> {profile?.name || t("profile.notProvided")}
+              </p>
+            </div>
+          )}
+
           <div>
-            <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Full Name</label>
-            {isEditing ? (
-              <input type="text" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]" />
-            ) : (
-              <p className="mt-1 text-sm text-[var(--cs-text)] font-medium flex items-center"><User className="w-4 h-4 mr-2 text-[var(--cs-text-muted)]" /> {profile?.name || 'Not provided'}</p>
-            )}
+            <p className="text-xs font-medium text-[var(--cs-text-muted)]">{t("profile.email")}</p>
+            <p className="mt-1 flex items-center text-sm font-medium text-[var(--cs-text)]">
+              <Mail className="mr-2 h-4 w-4 text-[var(--cs-text-muted)]" strokeWidth={1.75} /> {profile?.email || t("profile.notProvided")}
+            </p>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Email Address</label>
-            <p className="mt-1 text-sm text-[var(--cs-text)] font-medium flex items-center"><Mail className="w-4 h-4 mr-2 text-[var(--cs-text-muted)]" /> {profile?.email || 'Not provided'}</p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Phone Number</label>
-            {isEditing ? (
-              <input type="text" value={formData.phone_number || ''} onChange={e => setFormData({...formData, phone_number: e.target.value})} className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]" />
-            ) : (
-              <p className="mt-1 text-sm text-[var(--cs-text)] font-medium flex items-center"><Phone className="w-4 h-4 mr-2 text-[var(--cs-text-muted)]" /> {profile?.phone_number || 'Not provided'}</p>
-            )}
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-[var(--cs-text-muted)]">School / Institution</label>
-            {isEditing ? (
-              <input type="text" value={formData.school || ''} onChange={e => setFormData({...formData, school: e.target.value})} className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 px-3 text-sm outline-none focus:border-[var(--cs-accent)]" />
-            ) : (
-              <p className="mt-1 text-sm text-[var(--cs-text)] font-medium flex items-center"><MapPin className="w-4 h-4 mr-2 text-[var(--cs-text-muted)]" /> {profile?.school || 'Not provided'}</p>
-            )}
-          </div>
+
+          {isEditing ? (
+            <Field
+              label={t("profile.phone")}
+              renderControl={(id) => (
+                <Input id={id} value={formData.phone_number || ""} onChange={(e) => setFormData({ ...formData, phone_number: e.target.value })} />
+              )}
+            />
+          ) : (
+            <div>
+              <p className="text-xs font-medium text-[var(--cs-text-muted)]">{t("profile.phone")}</p>
+              <p className="mt-1 flex items-center text-sm font-medium text-[var(--cs-text)]">
+                <Phone className="mr-2 h-4 w-4 text-[var(--cs-text-muted)]" strokeWidth={1.75} /> {profile?.phone_number || t("profile.notProvided")}
+              </p>
+            </div>
+          )}
+
+          {isEditing ? (
+            <Field
+              label={t("profile.school")}
+              renderControl={(id) => (
+                <Input id={id} value={formData.school || ""} onChange={(e) => setFormData({ ...formData, school: e.target.value })} />
+              )}
+            />
+          ) : (
+            <div>
+              <p className="text-xs font-medium text-[var(--cs-text-muted)]">{t("profile.school")}</p>
+              <p className="mt-1 flex items-center text-sm font-medium text-[var(--cs-text)]">
+                <MapPin className="mr-2 h-4 w-4 text-[var(--cs-text-muted)]" strokeWidth={1.75} /> {profile?.school || t("profile.notProvided")}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden">
-        <div className="px-6 py-4 border-b border-[var(--cs-border)] flex justify-between items-center">
-          <h2 className="text-lg font-semibold text-[var(--cs-text)] flex items-center">
-            <Users className="w-5 h-5 mr-2 text-[var(--cs-accent)]" />
-            Family Linking
-          </h2>
-        </div>
+      <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+        <h2 className="border-b border-[var(--cs-border)] px-4 py-3 text-sm font-semibold text-[var(--cs-text)]">
+          {t("profile.familyLinking")}
+        </h2>
 
         <div className="p-6">
-          <p className="text-sm text-[var(--cs-text-muted)] mb-4">Manage linked parent/guardian profiles and emergency contacts.</p>
+          <p className="mb-4 text-sm text-[var(--cs-text-muted)]">{t("profile.familyLinkingDescription")}</p>
 
-          <div className="bg-[var(--cs-bg)] p-4 rounded-[6px] border border-[var(--cs-border)] flex items-center justify-between">
+          <div className="flex items-center justify-between rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] bg-[var(--cs-surface-2)] p-4">
             <div className="flex items-center">
-              <div className="w-10 h-10 bg-[var(--cs-accent-soft)] rounded-full flex items-center justify-center text-[var(--cs-accent)] font-bold mr-4">
-                P
+              <div className="mr-4 flex h-10 w-10 items-center justify-center rounded-full bg-[var(--cs-accent-soft)] font-semibold text-[var(--cs-accent)]">
+                <Users className="h-4 w-4" strokeWidth={1.75} />
               </div>
               <div>
-                <p className="text-sm font-medium text-[var(--cs-text)]">Parent / Guardian</p>
+                <p className="text-sm font-medium text-[var(--cs-text)]">{t("profile.parentGuardian")}</p>
                 <p className="text-xs text-[var(--cs-text-muted)]">parent@example.com</p>
               </div>
             </div>
-            <StatusChip label="Linked" tone="positive" />
+            <StatusChip label={t("profile.linked")} tone="positive" />
           </div>
         </div>
       </div>

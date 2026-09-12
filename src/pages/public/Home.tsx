@@ -6,31 +6,31 @@ export default function Home() {
   const [learningFormat, setLearningFormat] = useState<'1on1' | 'group'>('1on1');
 
   return (
-    <div className="bg-white">
+    <div className="bg-[var(--cs-bg)]">
       {/* Hero Section: "Learn Your Way" */}
-      <div className="relative overflow-hidden bg-gradient-to-b from-indigo-50 to-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-20 text-center">
-          <h1 className="text-5xl md:text-6xl font-extrabold text-gray-900 tracking-tight mb-6">
+      <div className="relative overflow-hidden bg-[var(--cs-accent-soft)]">
+        <div className="mx-auto max-w-7xl px-4 pb-20 pt-24 text-center sm:px-6 lg:px-8">
+          <h1 className="mb-6 text-5xl font-semibold tracking-tight text-[var(--cs-text)] md:text-6xl">
             Master Any Subject with <br className="hidden md:block" />
-            <span className="text-indigo-600">1-on-1 Focus or Group Energy.</span>
+            <span className="text-[var(--cs-accent)]">1-on-1 Focus or Group Energy.</span>
           </h1>
-          <p className="mt-4 text-xl text-gray-600 max-w-3xl mx-auto mb-10">
+          <p className="mx-auto mb-10 mt-4 max-w-3xl text-xl text-[var(--cs-text-muted)]">
             Connect with verified experts for personalized attention or collaborative group batches. Find the perfect fit for your learning style and budget.
           </p>
-          
+
           {/* Massive Search Bar */}
-          <div className="max-w-3xl mx-auto bg-white rounded-full shadow-xl p-2 flex flex-col sm:flex-row items-center border border-gray-100">
-            <div className="flex-1 flex items-center px-4 py-2 w-full sm:w-auto border-b sm:border-b-0 sm:border-r border-gray-200">
-              <Search className="w-5 h-5 text-gray-400 mr-3" />
-              <input 
-                type="text" 
-                placeholder="What do you want to learn? (e.g. Math, Python)" 
-                className="w-full focus:outline-none text-gray-700 text-lg bg-transparent"
+          <div className="mx-auto flex max-w-3xl flex-col items-center rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-2 shadow-[var(--cs-shadow-pop)] sm:flex-row">
+            <div className="flex w-full flex-1 items-center border-b border-[var(--cs-border)] px-4 py-2 sm:w-auto sm:border-b-0 sm:border-r">
+              <Search className="mr-3 h-5 w-5 text-[var(--cs-text-faint)]" strokeWidth={1.75} />
+              <input
+                type="text"
+                placeholder="What do you want to learn? (e.g. Math, Python)"
+                className="w-full bg-transparent text-lg text-[var(--cs-text)] focus:outline-none"
               />
             </div>
-            <div className="flex-1 flex items-center px-4 py-2 w-full sm:w-auto mt-2 sm:mt-0">
-              <BookOpen className="w-5 h-5 text-gray-400 mr-3" />
-              <select className="w-full focus:outline-none text-gray-700 text-lg bg-transparent appearance-none cursor-pointer">
+            <div className="mt-2 flex w-full flex-1 items-center px-4 py-2 sm:mt-0 sm:w-auto">
+              <BookOpen className="mr-3 h-5 w-5 text-[var(--cs-text-faint)]" strokeWidth={1.75} />
+              <select className="w-full cursor-pointer appearance-none bg-transparent text-lg text-[var(--cs-text)] focus:outline-none">
                 <option value="">Any Grade Level</option>
                 <option value="elementary">Elementary School</option>
                 <option value="middle">Middle School</option>
@@ -39,7 +39,7 @@ export default function Home() {
                 <option value="adult">Adult Learning</option>
               </select>
             </div>
-            <Link to="/login" className="w-full sm:w-auto mt-2 sm:mt-0 px-8 py-4 bg-indigo-600 text-white rounded-full font-bold text-lg hover:bg-indigo-700 transition-colors flex items-center justify-center">
+            <Link to="/login" className="mt-2 flex w-full items-center justify-center rounded-[var(--cs-radius-control)] bg-[var(--cs-accent)] px-8 py-4 text-lg font-semibold text-[var(--cs-accent-contrast)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-accent-hover)] sm:mt-0 sm:w-auto">
               Search
             </Link>
           </div>
@@ -47,31 +47,31 @@ export default function Home() {
       </div>
 
       {/* The "Learning Format" Toggle */}
-      <div className="py-20 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Choose Your Learning Format</h2>
-            <p className="text-xl text-gray-600">Tailor your educational journey to your specific needs.</p>
+      <div className="bg-[var(--cs-bg)] py-20">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="mb-12 text-center">
+            <h2 className="mb-4 text-3xl font-semibold text-[var(--cs-text)] md:text-4xl">Choose Your Learning Format</h2>
+            <p className="text-xl text-[var(--cs-text-muted)]">Tailor your educational journey to your specific needs.</p>
           </div>
 
-          <div className="flex justify-center mb-12">
-            <div className="bg-gray-100 p-1 rounded-xl inline-flex">
+          <div className="mb-12 flex justify-center">
+            <div className="inline-flex rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface-2)] p-1">
               <button
                 onClick={() => setLearningFormat('1on1')}
-                className={`px-8 py-3 rounded-lg font-semibold text-lg transition-all ${
-                  learningFormat === '1on1' 
-                    ? 'bg-white text-indigo-600 shadow-sm' 
-                    : 'text-gray-600 hover:text-gray-900'
+                className={`rounded-[var(--cs-radius-control)] px-8 py-3 text-lg font-semibold transition-colors duration-[var(--cs-motion-fast)] ${
+                  learningFormat === '1on1'
+                    ? 'bg-[var(--cs-surface)] text-[var(--cs-accent)]'
+                    : 'text-[var(--cs-text-muted)] hover:text-[var(--cs-text)]'
                 }`}
               >
                 1-on-1 Sessions
               </button>
               <button
                 onClick={() => setLearningFormat('group')}
-                className={`px-8 py-3 rounded-lg font-semibold text-lg transition-all ${
-                  learningFormat === 'group' 
-                    ? 'bg-white text-indigo-600 shadow-sm' 
-                    : 'text-gray-600 hover:text-gray-900'
+                className={`rounded-[var(--cs-radius-control)] px-8 py-3 text-lg font-semibold transition-colors duration-[var(--cs-motion-fast)] ${
+                  learningFormat === 'group'
+                    ? 'bg-[var(--cs-surface)] text-[var(--cs-accent)]'
+                    : 'text-[var(--cs-text-muted)] hover:text-[var(--cs-text)]'
                 }`}
               >
                 Group Batches
@@ -79,29 +79,29 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="max-w-4xl mx-auto">
+          <div className="mx-auto max-w-4xl">
             {learningFormat === '1on1' ? (
-              <div className="bg-indigo-50 rounded-2xl p-8 md:p-12 flex flex-col md:flex-row items-center gap-8 border border-indigo-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="flex flex-col items-center gap-8 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface-2)] p-8 duration-500 animate-in fade-in slide-in-from-bottom-4 md:flex-row md:p-12">
                 <div className="flex-1">
-                  <div className="w-16 h-16 bg-indigo-100 rounded-2xl flex items-center justify-center mb-6">
-                    <User className="w-8 h-8 text-indigo-600" />
+                  <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-[var(--cs-radius-container)] bg-[var(--cs-accent-soft)]">
+                    <User className="h-8 w-8 text-[var(--cs-accent)]" strokeWidth={1.75} />
                   </div>
-                  <h3 className="text-2xl font-bold text-gray-900 mb-4">Personalized Pace & Focus</h3>
-                  <ul className="space-y-4 mb-8">
-                    <li className="flex items-start"><CheckCircle className="w-6 h-6 text-green-500 mr-3 shrink-0" /><span className="text-gray-700 text-lg">100% customized curriculum tailored to your exact needs.</span></li>
-                    <li className="flex items-start"><CheckCircle className="w-6 h-6 text-green-500 mr-3 shrink-0" /><span className="text-gray-700 text-lg">Flexible scheduling that fits around your busy life.</span></li>
-                    <li className="flex items-start"><CheckCircle className="w-6 h-6 text-green-500 mr-3 shrink-0" /><span className="text-gray-700 text-lg">Immediate feedback and undivided attention from the tutor.</span></li>
+                  <h3 className="mb-4 text-2xl font-semibold text-[var(--cs-text)]">Personalized Pace & Focus</h3>
+                  <ul className="mb-8 space-y-4">
+                    <li className="flex items-start"><CheckCircle className="mr-3 h-6 w-6 shrink-0 text-[var(--cs-accent)]" strokeWidth={1.75} /><span className="text-lg text-[var(--cs-text-muted)]">100% customized curriculum tailored to your exact needs.</span></li>
+                    <li className="flex items-start"><CheckCircle className="mr-3 h-6 w-6 shrink-0 text-[var(--cs-accent)]" strokeWidth={1.75} /><span className="text-lg text-[var(--cs-text-muted)]">Flexible scheduling that fits around your busy life.</span></li>
+                    <li className="flex items-start"><CheckCircle className="mr-3 h-6 w-6 shrink-0 text-[var(--cs-accent)]" strokeWidth={1.75} /><span className="text-lg text-[var(--cs-text-muted)]">Immediate feedback and undivided attention from the tutor.</span></li>
                   </ul>
-                  <Link to="/login" className="inline-flex items-center text-indigo-600 font-bold text-lg hover:text-indigo-800">
-                    Find 1-on-1 Tutors <ArrowRight className="ml-2 w-5 h-5" />
+                  <Link to="/login" className="inline-flex items-center text-lg font-semibold text-[var(--cs-accent)] hover:text-[var(--cs-accent-hover)]">
+                    Find 1-on-1 Tutors <ArrowRight className="ml-2 h-5 w-5" strokeWidth={1.75} />
                   </Link>
                 </div>
-                <div className="flex-1 w-full relative">
-                  <div className="aspect-video bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden flex items-center justify-center relative">
-                    <img src="https://images.unsplash.com/photo-1577896851231-70ef18881754?auto=format&fit=crop&q=80&w=800" alt="1-on-1 Tutoring" className="object-cover w-full h-full opacity-90" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-6">
+                <div className="relative w-full flex-1">
+                  <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+                    <img src="https://images.unsplash.com/photo-1577896851231-70ef18881754?auto=format&fit=crop&q=80&w=800" alt="1-on-1 Tutoring" className="h-full w-full object-cover opacity-90" />
+                    <div className="absolute inset-0 flex items-end bg-gradient-to-t from-black/60 to-transparent p-6">
                       <div className="text-white">
-                        <p className="font-bold text-lg">Sarah M.</p>
+                        <p className="text-lg font-semibold">Sarah M.</p>
                         <p className="text-sm opacity-90">Advanced Calculus Session</p>
                       </div>
                     </div>
@@ -109,27 +109,27 @@ export default function Home() {
                 </div>
               </div>
             ) : (
-              <div className="bg-emerald-50 rounded-2xl p-8 md:p-12 flex flex-col md:flex-row items-center gap-8 border border-emerald-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="flex flex-col items-center gap-8 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface-2)] p-8 duration-500 animate-in fade-in slide-in-from-bottom-4 md:flex-row md:p-12">
                 <div className="flex-1">
-                  <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mb-6">
-                    <Users className="w-8 h-8 text-emerald-600" />
+                  <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-[var(--cs-radius-container)] bg-[var(--cs-accent-soft)]">
+                    <Users className="h-8 w-8 text-[var(--cs-accent)]" strokeWidth={1.75} />
                   </div>
-                  <h3 className="text-2xl font-bold text-gray-900 mb-4">Collaborative & Budget-Friendly</h3>
-                  <ul className="space-y-4 mb-8">
-                    <li className="flex items-start"><CheckCircle className="w-6 h-6 text-green-500 mr-3 shrink-0" /><span className="text-gray-700 text-lg">Learn alongside peers in interactive, small-group settings.</span></li>
-                    <li className="flex items-start"><CheckCircle className="w-6 h-6 text-green-500 mr-3 shrink-0" /><span className="text-gray-700 text-lg">More affordable rates while maintaining high-quality instruction.</span></li>
-                    <li className="flex items-start"><CheckCircle className="w-6 h-6 text-green-500 mr-3 shrink-0" /><span className="text-gray-700 text-lg">Structured batch schedules for consistent learning routines.</span></li>
+                  <h3 className="mb-4 text-2xl font-semibold text-[var(--cs-text)]">Collaborative & Budget-Friendly</h3>
+                  <ul className="mb-8 space-y-4">
+                    <li className="flex items-start"><CheckCircle className="mr-3 h-6 w-6 shrink-0 text-[var(--cs-accent)]" strokeWidth={1.75} /><span className="text-lg text-[var(--cs-text-muted)]">Learn alongside peers in interactive, small-group settings.</span></li>
+                    <li className="flex items-start"><CheckCircle className="mr-3 h-6 w-6 shrink-0 text-[var(--cs-accent)]" strokeWidth={1.75} /><span className="text-lg text-[var(--cs-text-muted)]">More affordable rates while maintaining high-quality instruction.</span></li>
+                    <li className="flex items-start"><CheckCircle className="mr-3 h-6 w-6 shrink-0 text-[var(--cs-accent)]" strokeWidth={1.75} /><span className="text-lg text-[var(--cs-text-muted)]">Structured batch schedules for consistent learning routines.</span></li>
                   </ul>
-                  <Link to="/login" className="inline-flex items-center text-emerald-600 font-bold text-lg hover:text-emerald-800">
-                    Browse Group Batches <ArrowRight className="ml-2 w-5 h-5" />
+                  <Link to="/login" className="inline-flex items-center text-lg font-semibold text-[var(--cs-accent)] hover:text-[var(--cs-accent-hover)]">
+                    Browse Group Batches <ArrowRight className="ml-2 h-5 w-5" strokeWidth={1.75} />
                   </Link>
                 </div>
-                <div className="flex-1 w-full relative">
-                  <div className="aspect-video bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden flex items-center justify-center relative">
-                    <img src="https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&q=80&w=800" alt="Group Tutoring" className="object-cover w-full h-full opacity-90" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-6">
+                <div className="relative w-full flex-1">
+                  <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+                    <img src="https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&q=80&w=800" alt="Group Tutoring" className="h-full w-full object-cover opacity-90" />
+                    <div className="absolute inset-0 flex items-end bg-gradient-to-t from-black/60 to-transparent p-6">
                       <div className="text-white">
-                        <p className="font-bold text-lg">Python Basics Batch</p>
+                        <p className="text-lg font-semibold">Python Basics Batch</p>
                         <p className="text-sm opacity-90">5 Students • Starts Next Week</p>
                       </div>
                     </div>
@@ -142,26 +142,26 @@ export default function Home() {
       </div>
 
       {/* Browse Top Categories */}
-      <div className="py-20 bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold text-gray-900 mb-4">Popular Subjects</h2>
-            <p className="text-xl text-gray-600">Find expert tutors in high-demand areas.</p>
+      <div className="bg-[var(--cs-surface-2)] py-20">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="mb-12 text-center">
+            <h2 className="mb-4 text-3xl font-semibold text-[var(--cs-text)]">Popular Subjects</h2>
+            <p className="text-xl text-[var(--cs-text-muted)]">Find expert tutors in high-demand areas.</p>
           </div>
-          
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+
+          <div className="grid grid-cols-2 gap-6 md:grid-cols-4">
             {[
-              { name: "Mathematics", icon: <Calculator className="w-8 h-8 text-blue-500" />, count: "1,200+ Tutors" },
-              { name: "GCSE Science", icon: <Beaker className="w-8 h-8 text-green-500" />, count: "850+ Tutors" },
-              { name: "Python Coding", icon: <Code className="w-8 h-8 text-purple-500" />, count: "500+ Tutors" },
-              { name: "Languages", icon: <Globe className="w-8 h-8 text-orange-500" />, count: "900+ Tutors" }
+              { name: "Mathematics", icon: <Calculator className="h-8 w-8" strokeWidth={1.75} />, count: "1,200+ Tutors" },
+              { name: "GCSE Science", icon: <Beaker className="h-8 w-8" strokeWidth={1.75} />, count: "850+ Tutors" },
+              { name: "Python Coding", icon: <Code className="h-8 w-8" strokeWidth={1.75} />, count: "500+ Tutors" },
+              { name: "Languages", icon: <Globe className="h-8 w-8" strokeWidth={1.75} />, count: "900+ Tutors" }
             ].map((category, idx) => (
-              <Link key={idx} to="/login" className="bg-white rounded-2xl p-6 text-center shadow-sm border border-gray-100 hover:shadow-md hover:border-indigo-200 transition-all group">
-                <div className="w-16 h-16 mx-auto bg-gray-50 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+              <Link key={idx} to="/login" className="group rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-6 text-center transition-colors duration-[var(--cs-motion-fast)] hover:border-[var(--cs-accent)]">
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[var(--cs-accent-soft)] text-[var(--cs-accent)] transition-transform duration-[var(--cs-motion-fast)] group-hover:scale-110">
                   {category.icon}
                 </div>
-                <h3 className="text-lg font-bold text-gray-900 mb-1">{category.name}</h3>
-                <p className="text-sm text-gray-500">{category.count}</p>
+                <h3 className="mb-1 text-lg font-semibold text-[var(--cs-text)]">{category.name}</h3>
+                <p className="text-sm text-[var(--cs-text-muted)]">{category.count}</p>
               </Link>
             ))}
           </div>
@@ -169,77 +169,77 @@ export default function Home() {
       </div>
 
       {/* Trust & Safety Spotlight */}
-      <div className="py-20 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="bg-slate-900 rounded-3xl overflow-hidden shadow-2xl">
+      <div className="bg-[var(--cs-bg)] py-20">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="overflow-hidden rounded-[var(--cs-radius-container)] bg-[var(--cs-text)]">
             <div className="grid grid-cols-1 lg:grid-cols-2">
-              <div className="p-12 md:p-16 flex flex-col justify-center">
-                <div className="inline-flex items-center space-x-2 bg-slate-800 rounded-full px-4 py-2 w-fit mb-8 border border-slate-700">
-                  <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                  <span className="text-emerald-400 font-semibold text-sm tracking-wide uppercase">ClassStackr Verified</span>
+              <div className="flex flex-col justify-center p-12 md:p-16">
+                <div className="mb-8 inline-flex w-fit items-center space-x-2 rounded-full border border-[var(--cs-bg)]/20 bg-[var(--cs-bg)]/10 px-4 py-2">
+                  <ShieldCheck className="h-5 w-5 text-[var(--cs-accent-hover)]" strokeWidth={1.75} />
+                  <span className="text-sm font-semibold uppercase tracking-wide text-[var(--cs-accent-hover)]">ClassStackr Verified</span>
                 </div>
-                <h2 className="text-3xl md:text-4xl font-bold text-white mb-6">Your Safety & Success Are Guaranteed.</h2>
-                <p className="text-lg text-slate-300 mb-8 leading-relaxed">
+                <h2 className="mb-6 text-3xl font-semibold text-[var(--cs-bg)] md:text-4xl">Your Safety & Success Are Guaranteed.</h2>
+                <p className="mb-8 text-lg leading-relaxed text-[var(--cs-bg)]/70">
                   Every tutor on our platform goes through a rigorous 3-step vetting process before they can host a single session.
                 </p>
                 <ul className="space-y-6">
                   <li className="flex">
-                    <div className="flex-shrink-0 mt-1">
-                      <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center border border-indigo-500/30">
-                        <span className="text-indigo-400 font-bold">1</span>
+                    <div className="mt-1 shrink-0">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--cs-bg)]/20 bg-[var(--cs-bg)]/10">
+                        <span className="font-semibold text-[var(--cs-bg)]">1</span>
                       </div>
                     </div>
                     <div className="ml-4">
-                      <h4 className="text-lg font-semibold text-white">Identity Verification</h4>
-                      <p className="text-slate-400 mt-1">Government ID and background checks completed.</p>
+                      <h4 className="text-lg font-semibold text-[var(--cs-bg)]">Identity Verification</h4>
+                      <p className="mt-1 text-[var(--cs-bg)]/60">Government ID and background checks completed.</p>
                     </div>
                   </li>
                   <li className="flex">
-                    <div className="flex-shrink-0 mt-1">
-                      <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center border border-indigo-500/30">
-                        <span className="text-indigo-400 font-bold">2</span>
+                    <div className="mt-1 shrink-0">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--cs-bg)]/20 bg-[var(--cs-bg)]/10">
+                        <span className="font-semibold text-[var(--cs-bg)]">2</span>
                       </div>
                     </div>
                     <div className="ml-4">
-                      <h4 className="text-lg font-semibold text-white">Academic Credentials</h4>
-                      <p className="text-slate-400 mt-1">Degrees and certifications manually verified by our team.</p>
+                      <h4 className="text-lg font-semibold text-[var(--cs-bg)]">Academic Credentials</h4>
+                      <p className="mt-1 text-[var(--cs-bg)]/60">Degrees and certifications manually verified by our team.</p>
                     </div>
                   </li>
                   <li className="flex">
-                    <div className="flex-shrink-0 mt-1">
-                      <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center border border-indigo-500/30">
-                        <span className="text-indigo-400 font-bold">3</span>
+                    <div className="mt-1 shrink-0">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--cs-bg)]/20 bg-[var(--cs-bg)]/10">
+                        <span className="font-semibold text-[var(--cs-bg)]">3</span>
                       </div>
                     </div>
                     <div className="ml-4">
-                      <h4 className="text-lg font-semibold text-white">Mock Session Review</h4>
-                      <p className="text-slate-400 mt-1">Teaching quality assessed by educational experts.</p>
+                      <h4 className="text-lg font-semibold text-[var(--cs-bg)]">Mock Session Review</h4>
+                      <p className="mt-1 text-[var(--cs-bg)]/60">Teaching quality assessed by educational experts.</p>
                     </div>
                   </li>
                 </ul>
               </div>
-              <div className="relative hidden lg:block bg-slate-800">
-                <img 
-                  src="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&q=80&w=1000" 
-                  alt="Trust and Safety" 
-                  className="absolute inset-0 w-full h-full object-cover opacity-50 mix-blend-overlay"
+              <div className="relative hidden bg-[var(--cs-text)] lg:block">
+                <img
+                  src="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&q=80&w=1000"
+                  alt="Trust and Safety"
+                  className="absolute inset-0 h-full w-full object-cover opacity-50 mix-blend-overlay"
                 />
                 <div className="absolute inset-0 flex items-center justify-center p-12">
-                  <div className="bg-white/10 backdrop-blur-md border border-white/20 p-8 rounded-2xl max-w-sm w-full">
-                    <div className="flex items-center space-x-4 mb-6">
-                      <img src="https://i.pravatar.cc/150?img=32" alt="Tutor" className="w-16 h-16 rounded-full border-2 border-emerald-400" />
+                  <div className="w-full max-w-sm rounded-[var(--cs-radius-container)] border border-[var(--cs-bg)]/20 bg-[var(--cs-bg)]/10 p-8 backdrop-blur-md">
+                    <div className="mb-6 flex items-center space-x-4">
+                      <img src="https://i.pravatar.cc/150?img=32" alt="Tutor" className="h-16 w-16 rounded-full border-2 border-[var(--cs-accent-hover)]" />
                       <div>
-                        <h4 className="text-white font-bold text-lg">Dr. Emily Chen</h4>
-                        <div className="flex items-center text-emerald-400 text-sm">
-                          <ShieldCheck className="w-4 h-4 mr-1" /> Verified Expert
+                        <h4 className="text-lg font-semibold text-[var(--cs-bg)]">Dr. Emily Chen</h4>
+                        <div className="flex items-center text-sm text-[var(--cs-accent-hover)]">
+                          <ShieldCheck className="mr-1 h-4 w-4" strokeWidth={1.75} /> Verified Expert
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-1 mb-4">
-                      {[1,2,3,4,5].map(i => <Star key={i} className="w-5 h-5 text-yellow-400 fill-current" />)}
-                      <span className="text-white ml-2 font-medium">5.0 (124 reviews)</span>
+                    <div className="mb-4 flex items-center space-x-1">
+                      {[1,2,3,4,5].map(i => <Star key={i} className="h-5 w-5 fill-current text-[var(--cs-accent-hover)]" />)}
+                      <span className="ml-2 font-medium text-[var(--cs-bg)]">5.0 (124 reviews)</span>
                     </div>
-                    <p className="text-slate-200 italic">"Emily helped my son jump two grade levels in Math in just 3 months. Highly recommend!"</p>
+                    <p className="italic text-[var(--cs-bg)]/80">"Emily helped my son jump two grade levels in Math in just 3 months. Highly recommend!"</p>
                   </div>
                 </div>
               </div>
@@ -249,15 +249,15 @@ export default function Home() {
       </div>
 
       {/* The Professional Pivot (Footer CTA) */}
-      <div className="py-24 bg-indigo-600 text-center">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl md:text-4xl font-extrabold text-white mb-6">Are you a Tutor? Automate your business today.</h2>
-          <p className="text-xl text-indigo-100 mb-10 max-w-2xl mx-auto">
+      <div className="bg-[var(--cs-accent)] py-24 text-center">
+        <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
+          <h2 className="mb-6 text-3xl font-semibold text-[var(--cs-accent-contrast)] md:text-4xl">Are you a Tutor? Automate your business today.</h2>
+          <p className="mx-auto mb-10 max-w-2xl text-xl text-[var(--cs-accent-contrast)]/80">
             Stop chasing payments and managing spreadsheets. Get a professional profile, automated scheduling, and AES-256 encrypted invoicing in one suite.
           </p>
-          <Link to="/features" className="inline-flex items-center px-8 py-4 bg-white text-indigo-600 rounded-full font-bold text-lg hover:bg-gray-50 transition-colors shadow-xl">
+          <Link to="/features" className="inline-flex items-center rounded-[var(--cs-radius-control)] bg-[var(--cs-accent-contrast)] px-8 py-4 text-lg font-semibold text-[var(--cs-accent)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-accent-soft)]">
             Explore Tutor Tools
-            <ArrowRight className="ml-2 w-5 h-5" />
+            <ArrowRight className="ml-2 h-5 w-5" strokeWidth={1.75} />
           </Link>
         </div>
       </div>

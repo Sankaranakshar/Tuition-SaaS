@@ -1,5 +1,8 @@
 // The ClassStackr component kit (DEV_PLAN E5.4). Product components built once
 // and reused everywhere, so the whole app feels like one hand made it.
+export { Button } from "./Button";
+export { Toggle } from "./Toggle";
+export { Field, Input } from "./Field";
 export { EmptyState } from "./EmptyState";
 export { Skeleton, SkeletonText, SkeletonRow, SkeletonCard } from "./Skeleton";
 export { StatChip } from "./StatChip";

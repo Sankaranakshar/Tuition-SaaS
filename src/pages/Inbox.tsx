@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Send, Archive, Clock, Radio, MessageSquare, Inbox as InboxIcon, Plus, X } from "lucide-react";
+import { Send, Archive, Clock, Radio, MessageSquare, Inbox as InboxIcon, Plus, X, ArrowLeft } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
-import { EmptyState, SkeletonRow, ContextCard, Popover, Modal } from "../components/kit";
+import { EmptyState, SkeletonRow, ContextCard, Popover, Modal, Button, Input, Field } from "../components/kit";
 import { BookingRequestsPanel } from "../components/BookingRequestsPanel";
 import { formatTime, formatDate } from "../lib/format";
 import { recordManualPayment } from "../lib/api";
@@ -198,21 +198,16 @@ export default function Inbox() {
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
       <div className="flex items-center justify-between px-1 pb-3">
-        <h1 className="text-2xl font-bold text-[var(--cs-text)]">{t("nav.inbox")}</h1>
-        <button
-          onClick={() => setNewMessageOpen(true)}
-          className="flex items-center gap-1.5 rounded-[6px] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-        >
-          <Plus className="h-4 w-4" /> {t("inbox.newMessage")}
-        </button>
+        <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">{t("nav.inbox")}</h1>
+        <Button icon={Plus} onClick={() => setNewMessageOpen(true)}>{t("inbox.newMessage")}</Button>
       </div>
 
-      <div className="flex items-center gap-1 border-b border-[var(--cs-border)] px-1">
+      <div className="flex items-center gap-1 overflow-x-auto border-b border-[var(--cs-border)] px-1">
         {[...SEGMENTS, ...(isStaff ? STAFF_SEGMENTS : [])].map(({ key, labelKey }) => (
           <button
             key={key}
             onClick={() => setSegment(key)}
-            className={`border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+            className={`shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${
               segment === key
                 ? "border-[var(--cs-accent)] text-[var(--cs-accent)]"
                 : "border-transparent text-[var(--cs-text-muted)] hover:text-[var(--cs-text)]"
@@ -228,7 +223,11 @@ export default function Inbox() {
           <BookingRequestsPanel orgId={orgId} />
         ) : (
           <>
-        <div className="w-80 shrink-0 overflow-y-auto border-r border-[var(--cs-border)]">
+        <div
+          className={`${
+            selectedId ? "hidden md:block" : "block"
+          } w-full shrink-0 overflow-y-auto border-r border-[var(--cs-border)] md:w-80`}
+        >
           {conversationsLoading ? (
             <div className="divide-y divide-[var(--cs-border)]">{Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} />)}</div>
           ) : visibleItems.length === 0 ? (
@@ -251,9 +250,13 @@ export default function Inbox() {
           )}
         </div>
 
-        <div className="flex-1 overflow-hidden">
+        <div
+          className={`${
+            selectedId ? "block" : "hidden md:block"
+          } w-full flex-1 overflow-hidden`}
+        >
           {selectedThread ? (
-            <ThreadView thread={selectedThread} currentUserId={user.id} />
+            <ThreadView thread={selectedThread} currentUserId={user.id} onBack={() => setSelectedId(null)} />
           ) : (
             <div className="flex h-full items-center justify-center">
               <EmptyState icon={MessageSquare} title={t("inbox.selectThread")} />
@@ -295,8 +298,8 @@ function ThreadRow({
   return (
     <button
       onClick={onClick}
-      className={`flex w-full flex-col gap-0.5 px-3 py-2.5 text-left transition-colors ${
-        active ? "bg-[var(--cs-accent-soft)]" : "hover:bg-[var(--cs-bg)]"
+      className={`flex w-full flex-col gap-0.5 px-3 py-2.5 text-left transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${
+        active ? "bg-[var(--cs-accent-soft)]" : "hover:bg-[var(--cs-surface-2)]"
       }`}
     >
       <div className="flex items-center justify-between gap-2">
@@ -309,7 +312,7 @@ function ThreadRow({
       <div className="flex items-center gap-1.5">
         {lastMessage && <span className="truncate text-xs text-[var(--cs-text-muted)]">{lastMessage.body}</span>}
         {waitingForReply && (
-          <span className="shrink-0 rounded-full bg-[var(--cs-warn-soft,var(--cs-bg))] px-1.5 py-0.5 text-[10px] font-medium text-[var(--cs-warn)]">
+          <span className="shrink-0 rounded-full bg-[var(--cs-surface-2)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--cs-text-muted)]">
             {t("inbox.waiting")}
           </span>
         )}
@@ -342,15 +345,23 @@ function NotificationRow({ item }: { item: Extract<InboxItem, { kind: "notificat
         <div className="truncate text-xs text-[var(--cs-text-muted)]">{formatDate(notification.createdAt)}</div>
       </div>
       {action.kind !== "none" && (
-        <button onClick={act} className="shrink-0 rounded-[6px] border border-[var(--cs-border)] px-2 py-1 text-xs font-medium hover:bg-[var(--cs-bg)]">
+        <Button variant="ghost" size="sm" onClick={act} className="shrink-0">
           {action.label}
-        </button>
+        </Button>
       )}
     </div>
   );
 }
 
-function ThreadView({ thread, currentUserId }: { thread: InboxConversation; currentUserId: string }) {
+function ThreadView({
+  thread,
+  currentUserId,
+  onBack,
+}: {
+  thread: InboxConversation;
+  currentUserId: string;
+  onBack: () => void;
+}) {
   const { t } = useTranslation();
   const { data: messages } = useMessagesForConversation(thread.id);
   const { context } = useAnchorContext(thread.anchorType, thread.anchorId);
@@ -390,9 +401,18 @@ function ThreadView({ thread, currentUserId }: { thread: InboxConversation; curr
     <div className="flex h-full flex-col">
       <div className="border-b border-[var(--cs-border)] p-3">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium text-[var(--cs-text)]">
-            {thread.kind === "class_channel" ? t("inbox.classChannel") : t("inbox.directMessage")}
-          </span>
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              onClick={onBack}
+              aria-label={t("common.back")}
+              className="-ml-1.5 rounded-[var(--cs-radius-control)] p-1.5 text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)] md:hidden"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <span className="truncate text-sm font-medium text-[var(--cs-text)]">
+              {thread.kind === "class_channel" ? t("inbox.classChannel") : t("inbox.directMessage")}
+            </span>
+          </div>
           <div className="flex items-center gap-1">
             <SnoozeButton conversationId={thread.id} currentUserId={currentUserId} />
             <ArchiveButton conversationId={thread.id} currentUserId={currentUserId} />
@@ -409,12 +429,12 @@ function ThreadView({ thread, currentUserId }: { thread: InboxConversation; curr
         {messages.map((m) => (
           <div key={m.id} className={`flex ${m.senderId === currentUserId ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[70%] rounded-[10px] px-3 py-2 text-sm ${
-                m.senderId === currentUserId ? "bg-[var(--cs-accent)] text-white" : "bg-[var(--cs-surface)] text-[var(--cs-text)]"
+              className={`max-w-[70%] rounded-[var(--cs-radius-container)] px-3 py-2 text-sm ${
+                m.senderId === currentUserId ? "bg-[var(--cs-accent)] text-[var(--cs-accent-contrast)]" : "bg-[var(--cs-surface)] text-[var(--cs-text)]"
               }`}
             >
               <div>{m.body}</div>
-              <div className={`mt-0.5 text-[10px] ${m.senderId === currentUserId ? "text-white/70" : "text-[var(--cs-text-muted)]"}`}>
+              <div className={`mt-0.5 text-[10px] ${m.senderId === currentUserId ? "text-[var(--cs-accent-contrast)]/70" : "text-[var(--cs-text-muted)]"}`}>
                 {formatTime(m.createdAt)}
               </div>
             </div>
@@ -424,19 +444,20 @@ function ThreadView({ thread, currentUserId }: { thread: InboxConversation; curr
       </div>
 
       <form onSubmit={submit} className="flex items-center gap-2 border-t border-[var(--cs-border)] p-3">
-        <input
+        <Input
           value={body}
           onChange={(e) => setBody(e.target.value)}
           placeholder={t("inbox.messagePlaceholder")}
-          className="flex-1 rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] px-3 py-2 text-sm outline-none focus:border-[var(--cs-accent)]"
+          className="flex-1"
         />
-        <button
+        <Button
           type="submit"
           disabled={sending || !body.trim()}
-          className="flex h-9 w-9 items-center justify-center rounded-[6px] bg-[var(--cs-accent)] text-white disabled:opacity-50"
+          className="h-9 w-9 shrink-0 px-0"
+          aria-label={t("inbox.send")}
         >
           <Send className="h-4 w-4" />
-        </button>
+        </Button>
       </form>
     </div>
   );
@@ -470,7 +491,7 @@ function RecordPaymentAction({ invoiceId, outstandingPaise }: { invoiceId: strin
     <Popover
       align="right"
       trigger={t("inbox.recordPayment")}
-      triggerClassName="cursor-pointer rounded-[6px] border border-[var(--cs-border)] px-2 py-1 text-xs font-medium hover:bg-[var(--cs-bg)]"
+      triggerClassName="cursor-pointer rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] px-2 py-1 text-xs font-medium text-[var(--cs-text)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)]"
     >
       {(close) => <RecordPaymentForm invoiceId={invoiceId} outstandingPaise={outstandingPaise} onDone={close} />}
     </Popover>
@@ -500,23 +521,10 @@ function RecordPaymentForm({ invoiceId, outstandingPaise, onDone }: { invoiceId:
 
   return (
     <form onSubmit={submit} className="flex w-48 flex-col gap-2">
-      <label className="text-xs font-medium text-[var(--cs-text-muted)]">{t("money.amount")}</label>
-      <input
-        autoFocus
-        type="number"
-        min="0"
-        step="0.01"
-        value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-        className="w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] px-2.5 py-1.5 text-sm outline-none focus:border-[var(--cs-accent)]"
-      />
-      <button
-        type="submit"
-        disabled={saving}
-        className="rounded-[6px] bg-[var(--cs-accent)] px-2.5 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-      >
-        {t("money.recordPayment")}
-      </button>
+      <Field label={t("money.amount")}>
+        <Input autoFocus type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+      </Field>
+      <Button type="submit" size="sm" disabled={saving}>{t("money.recordPayment")}</Button>
     </form>
   );
 }
@@ -533,7 +541,11 @@ function ArchiveButton({ conversationId, currentUserId }: { conversationId: stri
       .catch((err: any) => toast.error(err?.message || t("inbox.archiveFailed")));
   };
   return (
-    <button onClick={onArchive} title={t("inbox.archive")} className="rounded-[6px] p-1.5 text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]">
+    <button
+      onClick={onArchive}
+      title={t("inbox.archive")}
+      className="rounded-[var(--cs-radius-control)] p-1.5 text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)]"
+    >
       <Archive className="h-4 w-4" />
     </button>
   );
@@ -545,7 +557,7 @@ function SnoozeButton({ conversationId, currentUserId }: { conversationId: strin
     <Popover
       align="right"
       trigger={<Clock className="h-4 w-4" />}
-      triggerClassName="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[6px] text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] hover:text-[var(--cs-text)]"
+      triggerClassName="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[var(--cs-radius-control)] text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-text)]"
       triggerTitle={t("inbox.snooze")}
     >
       {(close) => (
@@ -560,7 +572,7 @@ function SnoozeButton({ conversationId, currentUserId }: { conversationId: strin
                   .catch((err: any) => toast.error(err?.message));
                 close();
               }}
-              className="rounded-[6px] px-2 py-1.5 text-left text-sm hover:bg-[var(--cs-bg)]"
+              className="rounded-[var(--cs-radius-control)] px-2 py-1.5 text-left text-sm text-[var(--cs-text)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)]"
             >
               {t(opt.labelKey)}
             </button>
@@ -629,15 +641,15 @@ function NewMessageDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <Modal
         onClose={onClose}
         labelledBy="new-message-title"
-        className="flex max-h-[70vh] w-full max-w-md flex-col rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4"
+        className="flex max-h-[70vh] w-full max-w-md flex-col rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4 shadow-[var(--cs-shadow-pop)]"
       >
         <div className="mb-3 flex items-center justify-between">
           <h2 id="new-message-title" className="text-sm font-semibold text-[var(--cs-text)]">{t("inbox.newMessage")}</h2>
-          <button onClick={onClose} className="text-[var(--cs-text-muted)] hover:text-[var(--cs-text)]">
+          <button onClick={onClose} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -650,7 +662,7 @@ function NewMessageDialog({
                   key={tpl.id}
                   disabled={creating}
                   onClick={() => openChannel(tpl.id)}
-                  className="flex w-full items-center gap-2 rounded-[6px] px-2 py-2 text-left text-sm hover:bg-[var(--cs-bg)] disabled:opacity-50"
+                  className="flex w-full items-center gap-2 rounded-[var(--cs-radius-control)] px-2 py-2 text-left text-sm text-[var(--cs-text)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] disabled:opacity-50"
                 >
                   <Radio className="h-4 w-4 text-[var(--cs-text-muted)]" /> {tpl.name}
                 </button>
@@ -668,7 +680,7 @@ function NewMessageDialog({
                 key={c.userId}
                 disabled={creating}
                 onClick={() => startDm(c.userId, c.studentId)}
-                className="flex w-full flex-col items-start rounded-[6px] px-2 py-2 text-left hover:bg-[var(--cs-bg)] disabled:opacity-50"
+                className="flex w-full flex-col items-start rounded-[var(--cs-radius-control)] px-2 py-2 text-left transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] disabled:opacity-50"
               >
                 <span className="text-sm text-[var(--cs-text)]">{c.name}</span>
                 {c.subtitle && <span className="text-xs text-[var(--cs-text-muted)]">{c.subtitle}</span>}

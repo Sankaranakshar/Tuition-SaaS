@@ -13,10 +13,12 @@ interface StatChipProps {
   className?: string;
 }
 
+// The number stays ink by default (REDESIGN §13). Only a genuine problem goes
+// red; "positive" gets the calm accent, and "warn" is ink — aging never shouts.
 const toneText: Record<NonNullable<StatChipProps["tone"]>, string> = {
   default: "text-[var(--cs-text)]",
-  positive: "text-[var(--cs-ok)]",
-  warn: "text-[var(--cs-warn)]",
+  positive: "text-[var(--cs-accent)]",
+  warn: "text-[var(--cs-text)]",
   danger: "text-[var(--cs-danger)]",
 };
 
@@ -36,8 +38,9 @@ export function StatChip({
     <Wrapper
       onClick={onClick}
       className={cn(
-        "flex flex-col gap-1 rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4 text-left",
-        onClick && "transition-colors hover:border-[var(--cs-accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cs-accent)]",
+        "flex flex-col gap-1 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4 text-left",
+        onClick &&
+          "transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:border-[var(--cs-border-strong)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cs-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--cs-bg)]",
         className
       )}
     >
@@ -45,7 +48,10 @@ export function StatChip({
         {Icon && <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />}
         {label}
       </div>
-      <div className={cn("text-2xl font-semibold tabular-nums", toneText[tone])} data-money>
+      <div
+        className={cn("text-[28px] font-semibold leading-tight tracking-[-0.01em] tabular-nums", toneText[tone])}
+        data-money
+      >
         {value}
       </div>
       {hint && <div className="text-xs text-[var(--cs-text-muted)]">{hint}</div>}

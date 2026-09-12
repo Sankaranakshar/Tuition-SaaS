@@ -71,7 +71,7 @@ export function Popover({ trigger, triggerClassName, triggerTitle, children, ali
       {open && (
         <div
           className={cn(
-            "absolute top-full z-30 mt-1.5 min-w-56 rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-3 shadow-lg",
+            "absolute top-full z-30 mt-1.5 min-w-56 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-3 shadow-[var(--cs-shadow-pop)]",
             align === "right" ? "right-0" : "left-0",
             className
           )}

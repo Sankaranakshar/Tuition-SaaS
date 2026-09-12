@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
-import { PersonRow, EmptyState, SkeletonRow, type ChipTone } from "../components/kit";
+import { PersonRow, EmptyState, SkeletonRow, Modal, Button, Input, Field, type ChipTone } from "../components/kit";
 import { BulkImportModal } from "../components/BulkImportModal";
 import {
   useStudentsList, useStudentInvoices, useStudentAttendance,
@@ -32,6 +32,11 @@ const LENSES: { key: Lens; labelKey: string; icon: typeof Users }[] = [
 ];
 
 const LEAD_SOURCES = ["Website", "Referral", "Walk-in", "Social Media", "Other"];
+
+// Matches kit Input's skin for the native <select>/<textarea> elements it
+// doesn't provide a wrapper for (same recipe as Money.tsx's CreateInvoiceModal).
+const SELECT_CLASS =
+  "w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-3 py-1.5 text-[13px] text-[var(--cs-text)] outline-none transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] focus:border-[var(--cs-focus)] focus:ring-2 focus:ring-[var(--cs-focus)]/30";
 
 function attentionChip(reason: AttentionReason): { label: string; tone: ChipTone } | undefined {
   switch (reason.kind) {
@@ -86,7 +91,7 @@ export default function People() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t("people.searchPlaceholder")}
-          className="w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--cs-accent)]"
+          className="w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] bg-[var(--cs-surface)] py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--cs-accent)]"
         />
       </div>
 
@@ -174,39 +179,35 @@ function StudentsLens({ search, user, navigate, t }: any) {
         {selected.size > 0 ? (
           <div className="flex items-center gap-2 text-sm">
             <span className="text-[var(--cs-text-muted)]">{selected.size} selected</span>
-            <button onClick={() => navigate("/app/inbox")} className="rounded-[6px] border border-[var(--cs-border)] px-2.5 py-1.5 hover:bg-[var(--cs-bg)]">
-              <MessageSquare className="mr-1 inline h-3.5 w-3.5" /> {t("people.bulkMessage")}
-            </button>
+            <Button variant="ghost" size="sm" icon={MessageSquare} onClick={() => navigate("/app/inbox")}>
+              {t("people.bulkMessage")}
+            </Button>
             {selected.size === 1 && (
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={Receipt}
                 onClick={() => navigate(`/app/money?new=1&studentId=${Array.from(selected)[0]}`)}
-                className="rounded-[6px] border border-[var(--cs-border)] px-2.5 py-1.5 hover:bg-[var(--cs-bg)]"
               >
-                <Receipt className="mr-1 inline h-3.5 w-3.5" /> {t("people.bulkInvoice")}
-              </button>
+                {t("people.bulkInvoice")}
+              </Button>
             )}
-            <button onClick={exportCsv} className="rounded-[6px] border border-[var(--cs-border)] px-2.5 py-1.5 hover:bg-[var(--cs-bg)]">
-              <Download className="mr-1 inline h-3.5 w-3.5" /> {t("people.bulkExport")}
-            </button>
+            <Button variant="ghost" size="sm" icon={Download} onClick={exportCsv}>
+              {t("people.bulkExport")}
+            </Button>
           </div>
         ) : <span />}
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setBulkImportOpen(true)}
-            className="flex items-center gap-1.5 rounded-[6px] border border-[var(--cs-border)] px-3 py-1.5 text-sm font-medium text-[var(--cs-text)] hover:bg-[var(--cs-bg)]"
-          >
-            <Upload className="h-4 w-4" /> {t("people.bulkImport")}
-          </button>
-          <button
-            onClick={() => setModalStudent("new")}
-            className="flex items-center gap-1.5 rounded-[6px] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-          >
-            <Plus className="h-4 w-4" /> {t("people.addStudent")}
-          </button>
+          <Button variant="ghost" icon={Upload} onClick={() => setBulkImportOpen(true)}>
+            {t("people.bulkImport")}
+          </Button>
+          <Button icon={Plus} onClick={() => setModalStudent("new")}>
+            {t("people.addStudent")}
+          </Button>
         </div>
       </div>
 
-      <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+      <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
         {loading ? (
           <div className="divide-y divide-[var(--cs-border)]">{Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)}</div>
         ) : ranked.length === 0 ? (
@@ -242,11 +243,11 @@ function StudentsLens({ search, user, navigate, t }: any) {
                         <button onClick={(e) => { e.stopPropagation(); navigate(`/app/money?new=1&studentId=${student.id}`); }} title="Invoice" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
                           <Receipt className="h-4 w-4" />
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); setToArchive(student.id); }} title="Archive" className="p-1.5 text-[var(--cs-text-muted)] hover:text-red-600">
+                        <button onClick={(e) => { e.stopPropagation(); setToArchive(student.id); }} title="Archive" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-danger)]">
                           <Trash2 className="h-4 w-4" />
                         </button>
                         {canErase && (
-                          <button onClick={(e) => { e.stopPropagation(); setToErase(student); }} title={t("people.eraseTitle")} className="p-1.5 text-[var(--cs-text-muted)] hover:text-red-600">
+                          <button onClick={(e) => { e.stopPropagation(); setToErase(student); }} title={t("people.eraseTitle")} className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-danger)]">
                             <ShieldAlert className="h-4 w-4" />
                           </button>
                         )}
@@ -318,35 +319,37 @@ function EraseStudentModal({ student, onClose, onErased }: { student: StudentRow
   };
 
   return (
-    <Modal title={t("people.eraseTitle")} onClose={onClose}>
+    <PeopleModal title={t("people.eraseTitle")} onClose={onClose}>
       <div className="space-y-3">
-        <p className="text-sm text-gray-600">{t("people.eraseBody")}</p>
-        <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1">
+        <p className="text-sm text-[var(--cs-text-muted)]">{t("people.eraseBody")}</p>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-[var(--cs-text-muted)]">
           <li>{t("people.eraseBulletDeleted")}</li>
           <li>{t("people.eraseBulletKept")}</li>
         </ul>
-        <label className="block text-sm font-medium text-gray-700">
-          {t("people.eraseConfirmLabel")} <span className="font-mono bg-gray-100 px-1 rounded">{student.name}</span>
-        </label>
-        <input
-          type="text"
-          value={confirmText}
-          onChange={(e) => setConfirmText(e.target.value)}
-          placeholder={student.name}
-          className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm"
-        />
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-[var(--cs-text-muted)]">
+            {t("people.eraseConfirmLabel")}{" "}
+            <span className="rounded bg-[var(--cs-surface-2)] px-1 font-mono text-[var(--cs-text)]">{student.name}</span>
+          </label>
+          <Input
+            type="text"
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            placeholder={student.name}
+          />
+        </div>
         <div className="flex justify-end gap-3 pt-1">
-          <button onClick={onClose} className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">{t("people.cancel")}</button>
-          <button
+          <Button variant="ghost" onClick={onClose}>{t("people.cancel")}</Button>
+          <Button
+            variant="danger"
             onClick={handleErase}
             disabled={erasing || !canConfirmErase(student.name, confirmText)}
-            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
           >
             {erasing ? t("people.erasing") : t("people.eraseConfirm")}
-          </button>
+          </Button>
         </div>
       </div>
-    </Modal>
+    </PeopleModal>
   );
 }
 
@@ -397,22 +400,34 @@ function StudentModal({ student, user, onClose, onSaved }: any) {
   };
 
   return (
-    <Modal onClose={onClose} title={student ? t("people.editStudent") : t("people.addStudent")}>
+    <PeopleModal onClose={onClose} title={student ? t("people.editStudent") : t("people.addStudent")}>
       <form onSubmit={submit} className="space-y-4">
-        {error && <div className="rounded-md bg-red-50 p-2 text-sm text-red-700">{error}</div>}
-        <Field label={t("people.studentName")} required value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
+        {error && <div className="rounded-[var(--cs-radius-control)] bg-[var(--cs-danger-soft)] p-2 text-sm text-[var(--cs-danger)]">{error}</div>}
+        <Field label={t("people.studentName")} required>
+          <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </Field>
         <div className="grid grid-cols-2 gap-4">
-          <Field label={t("people.grade")} value={form.grade} onChange={(v) => setForm({ ...form, grade: v })} />
-          <Field label={t("people.subject")} value={form.subject} onChange={(v) => setForm({ ...form, subject: v })} />
+          <Field label={t("people.grade")}>
+            <Input value={form.grade} onChange={(e) => setForm({ ...form, grade: e.target.value })} />
+          </Field>
+          <Field label={t("people.subject")}>
+            <Input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} />
+          </Field>
         </div>
-        <Field label={t("people.studentPhone")} value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
+        <Field label={t("people.studentPhone")}>
+          <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+        </Field>
         <div className="grid grid-cols-2 gap-4">
-          <Field label={t("people.parentName")} value={form.parentName} onChange={(v) => setForm({ ...form, parentName: v })} />
-          <Field label={t("people.parentPhone")} value={form.parentPhone} onChange={(v) => setForm({ ...form, parentPhone: v })} />
+          <Field label={t("people.parentName")}>
+            <Input value={form.parentName} onChange={(e) => setForm({ ...form, parentName: e.target.value })} />
+          </Field>
+          <Field label={t("people.parentPhone")}>
+            <Input value={form.parentPhone} onChange={(e) => setForm({ ...form, parentPhone: e.target.value })} />
+          </Field>
         </div>
         <ModalActions saving={saving} onClose={onClose} saveLabel={student ? t("people.saveChanges") : t("people.addStudent")} />
       </form>
-    </Modal>
+    </PeopleModal>
   );
 }
 
@@ -469,36 +484,36 @@ function DocumentsModal({ student, onClose }: any) {
   };
 
   return (
-    <Modal onClose={onClose} title={t("people.documentsFor", { name: student.name })} wide>
+    <PeopleModal onClose={onClose} title={t("people.documentsFor", { name: student.name })} wide>
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <div className="md:col-span-1">
-          {error && <div className="mb-2 rounded-md bg-red-50 p-2 text-sm text-red-700">{error}</div>}
+          {error && <div className="mb-2 rounded-[var(--cs-radius-control)] bg-[var(--cs-danger-soft)] p-2 text-sm text-[var(--cs-danger)]">{error}</div>}
           <form onSubmit={upload} className="space-y-3">
-            <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm">
+            <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} className="text-sm text-[var(--cs-text-muted)]" />
+            <select value={category} onChange={(e) => setCategory(e.target.value)} className={SELECT_CLASS}>
               <option value="homework">Homework</option>
               <option value="test">Test/Quiz</option>
               <option value="report">Progress Report</option>
               <option value="other">Other</option>
             </select>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Notes" className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
-            <button type="submit" disabled={!file} className="w-full rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">Upload</button>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Notes" className={SELECT_CLASS} />
+            <Button type="submit" disabled={!file} className="w-full">Upload</Button>
           </form>
         </div>
         <div className="md:col-span-2">
           {docs.length === 0 ? (
-            <p className="py-8 text-center text-sm text-gray-500">No documents.</p>
+            <p className="py-8 text-center text-sm text-[var(--cs-text-muted)]">No documents.</p>
           ) : (
-            <ul className="divide-y divide-gray-200">
+            <ul className="divide-y divide-[var(--cs-border)]">
               {docs.map((doc) => (
                 <li key={doc.id} className="flex items-center justify-between py-3">
                   <div>
-                    <div className="text-sm font-medium">{doc.file_name}</div>
-                    <div className="text-xs text-gray-500">{doc.category}</div>
+                    <div className="text-sm font-medium text-[var(--cs-text)]">{doc.file_name}</div>
+                    <div className="text-xs text-[var(--cs-text-muted)]">{doc.category}</div>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => download(doc.id)} className="p-1.5 text-gray-400 hover:text-gray-700"><Download className="h-4 w-4" /></button>
-                    <button onClick={() => remove(doc.id)} className="p-1.5 text-red-400 hover:text-red-700"><Trash2 className="h-4 w-4" /></button>
+                    <button onClick={() => download(doc.id)} className="p-1.5 text-[var(--cs-text-faint)] hover:text-[var(--cs-text)]"><Download className="h-4 w-4" /></button>
+                    <button onClick={() => remove(doc.id)} className="p-1.5 text-[var(--cs-text-faint)] hover:text-[var(--cs-danger)]"><Trash2 className="h-4 w-4" /></button>
                   </div>
                 </li>
               ))}
@@ -506,7 +521,7 @@ function DocumentsModal({ student, onClose }: any) {
           )}
         </div>
       </div>
-    </Modal>
+    </PeopleModal>
   );
 }
 
@@ -540,27 +555,23 @@ function InviteLinkGenerator({ label, hint, onGenerate }: { label: string; hint:
   };
 
   return (
-    <div className="space-y-2 rounded-md border border-gray-200 p-3">
-      <div className="text-sm font-medium text-gray-900">{label}</div>
-      <p className="text-xs text-gray-500">{hint}</p>
+    <div className="space-y-2 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] p-3">
+      <div className="text-sm font-medium text-[var(--cs-text)]">{label}</div>
+      <p className="text-xs text-[var(--cs-text-muted)]">{hint}</p>
       {link ? (
         <div className="space-y-1">
           <div className="flex gap-2">
-            <input readOnly value={link} className="w-full rounded-md border border-gray-300 bg-gray-50 px-2 py-1.5 text-xs text-gray-700" />
-            <button onClick={copy} title={t("people.inviteCopy")} className="shrink-0 rounded-md border border-gray-300 px-2 py-1.5 text-gray-500 hover:bg-gray-50">
+            <input readOnly value={link} className="w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] bg-[var(--cs-surface-2)] px-2 py-1.5 text-xs text-[var(--cs-text-muted)]" />
+            <button onClick={copy} title={t("people.inviteCopy")} className="shrink-0 rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] px-2 py-1.5 text-[var(--cs-text-muted)] hover:bg-[var(--cs-surface-2)]">
               <Copy className="h-3.5 w-3.5" />
             </button>
           </div>
-          {expiresAt && <p className="text-xs text-gray-400">{t("people.inviteExpires", { date: new Date(expiresAt).toLocaleDateString() })}</p>}
+          {expiresAt && <p className="text-xs text-[var(--cs-text-faint)]">{t("people.inviteExpires", { date: new Date(expiresAt).toLocaleDateString() })}</p>}
         </div>
       ) : (
-        <button
-          onClick={generate}
-          disabled={loading}
-          className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-        >
+        <Button size="sm" onClick={generate} disabled={loading}>
           {loading ? t("people.inviteGenerating") : t("people.inviteGenerate")}
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -571,7 +582,7 @@ function InviteModal({ student, onClose }: { student: StudentRow; onClose: () =>
   const origin = window.location.origin;
 
   return (
-    <Modal onClose={onClose} title={t("people.inviteTitle", { name: student.name })}>
+    <PeopleModal onClose={onClose} title={t("people.inviteTitle", { name: student.name })}>
       <div className="space-y-4">
         <InviteLinkGenerator
           label={t("people.inviteParentSection")}
@@ -590,7 +601,7 @@ function InviteModal({ student, onClose }: { student: StudentRow; onClose: () =>
           }}
         />
       </div>
-    </Modal>
+    </PeopleModal>
   );
 }
 
@@ -649,7 +660,7 @@ function LeadsLens({ search, user, navigate, t }: any) {
             <React.Fragment key={stage}>
               <button
                 onClick={() => setStageFilter(stageFilter === stage ? null : stage)}
-                className={`rounded-[6px] border px-3 py-1.5 text-sm ${
+                className={`rounded-[var(--cs-radius-control)] border px-3 py-1.5 text-sm ${
                   stageFilter === stage ? "border-[var(--cs-accent)] bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]" : "border-[var(--cs-border)]"
                 }`}
               >
@@ -659,12 +670,10 @@ function LeadsLens({ search, user, navigate, t }: any) {
             </React.Fragment>
           ))}
         </div>
-        <button onClick={() => setModalLead("new")} className="flex items-center gap-1.5 rounded-[6px] bg-[var(--cs-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">
-          <Plus className="h-4 w-4" /> {t("people.addLead")}
-        </button>
+        <Button icon={Plus} onClick={() => setModalLead("new")}>{t("people.addLead")}</Button>
       </div>
 
-      <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+      <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
         {loading ? (
           <div className="divide-y divide-[var(--cs-border)]">{Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)}</div>
         ) : ranked.length === 0 ? (
@@ -683,7 +692,7 @@ function LeadsLens({ search, user, navigate, t }: any) {
                     <button onClick={(e) => { e.stopPropagation(); convertToStudent(lead); }} title={t("people.convert")} className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
                       <CheckCircle className="h-4 w-4" />
                     </button>
-                    <button onClick={(e) => { e.stopPropagation(); remove(lead.id); }} title="Delete" className="p-1.5 text-[var(--cs-text-muted)] hover:text-red-600">
+                    <button onClick={(e) => { e.stopPropagation(); remove(lead.id); }} title="Delete" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-danger)]">
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </>
@@ -742,31 +751,30 @@ function LeadModal({ lead, user, onClose, onSaved }: any) {
   };
 
   return (
-    <Modal onClose={onClose} title={lead ? t("people.editLead") : t("people.addLead")}>
+    <PeopleModal onClose={onClose} title={lead ? t("people.editLead") : t("people.addLead")}>
       <form onSubmit={submit} className="space-y-4">
-        {error && <div className="rounded-md bg-red-50 p-2 text-sm text-red-700">{error}</div>}
-        <Field label={t("people.studentName")} required value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
+        {error && <div className="rounded-[var(--cs-radius-control)] bg-[var(--cs-danger-soft)] p-2 text-sm text-[var(--cs-danger)]">{error}</div>}
+        <Field label={t("people.studentName")} required>
+          <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </Field>
         <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">{t("people.source")}</label>
-            <select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm">
+          <Field label={t("people.source")}>
+            <select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} className={SELECT_CLASS}>
               {LEAD_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">{t("people.stage")}</label>
-            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm">
+          </Field>
+          <Field label={t("people.stage")}>
+            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className={SELECT_CLASS}>
               {[...LEAD_FUNNEL_STAGES, "Lost"].map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
-          </div>
+          </Field>
         </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">{t("people.notes")}</label>
-          <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
-        </div>
+        <Field label={t("people.notes")}>
+          <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} className={SELECT_CLASS} />
+        </Field>
         <ModalActions saving={saving} onClose={onClose} saveLabel={lead ? t("people.saveChanges") : t("people.addLead")} />
       </form>
-    </Modal>
+    </PeopleModal>
   );
 }
 
@@ -777,7 +785,7 @@ function ParentsLens({ search, navigate, t }: any) {
   const filtered = parents.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+    <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
       {loading ? (
         <div className="divide-y divide-[var(--cs-border)]">{Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)}</div>
       ) : filtered.length === 0 ? (
@@ -826,7 +834,7 @@ function TutorsLens({ search, user, t }: any) {
   };
 
   return (
-    <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+    <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
       {loading ? (
         <div className="divide-y divide-[var(--cs-border)]">{Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)}</div>
       ) : filtered.length === 0 ? (
@@ -842,11 +850,11 @@ function TutorsLens({ search, user, t }: any) {
               actions={
                 canVerify ? (
                   tutor.isVerified ? (
-                    <button onClick={() => setVerified(tutor.userId, false)} title="Revoke" className="p-1.5 text-[var(--cs-text-muted)] hover:text-red-600">
+                    <button onClick={() => setVerified(tutor.userId, false)} title="Revoke" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-danger)]">
                       <XCircle className="h-4 w-4" />
                     </button>
                   ) : (
-                    <button onClick={() => setVerified(tutor.userId, true)} title="Verify" className="p-1.5 text-[var(--cs-text-muted)] hover:text-green-600">
+                    <button onClick={() => setVerified(tutor.userId, true)} title="Verify" className="p-1.5 text-[var(--cs-text-muted)] hover:text-[var(--cs-accent)]">
                       <CheckCircle className="h-4 w-4" />
                     </button>
                   )
@@ -862,31 +870,23 @@ function TutorsLens({ search, user, t }: any) {
 
 // ------------------------------------------------------------- Shared bits
 
-function Modal({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+// Kit-Modal wrapper shared by every dialog in this file (recipe from
+// Money.tsx step 5: keep this file's own backdrop, swap the panel div for
+// kit Modal — adds role="dialog"/aria-modal/focus-trap for free).
+function PeopleModal({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 p-4">
-      <div className={`max-h-[85vh] w-full overflow-y-auto rounded-xl bg-white p-6 shadow-xl ${wide ? "max-w-3xl" : "max-w-lg"}`}>
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <Modal
+        onClose={onClose}
+        label={title}
+        className={`max-h-[85vh] w-full overflow-y-auto rounded-[var(--cs-radius-container)] bg-[var(--cs-surface)] p-6 shadow-[var(--cs-shadow-pop)] outline-none ${wide ? "max-w-3xl" : "max-w-lg"}`}
+      >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">&times;</button>
+          <h2 className="text-lg font-semibold text-[var(--cs-text)]">{title}</h2>
+          <button onClick={onClose} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]">&times;</button>
         </div>
         {children}
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, value, onChange, required }: { label: string; value: string; onChange: (v: string) => void; required?: boolean }) {
-  return (
-    <div>
-      <label className="mb-1 block text-sm font-medium text-gray-700">{label}</label>
-      <input
-        type="text"
-        required={required}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-indigo-500"
-      />
+      </Modal>
     </div>
   );
 }
@@ -894,13 +894,9 @@ function Field({ label, value, onChange, required }: { label: string; value: str
 function ModalActions({ saving, onClose, saveLabel }: { saving: boolean; onClose: () => void; saveLabel: string }) {
   const { t } = useTranslation();
   return (
-    <div className="flex justify-end gap-3 border-t border-gray-200 pt-4">
-      <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-        {t("people.cancel")}
-      </button>
-      <button type="submit" disabled={saving} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
-        {saving ? t("people.saving") : saveLabel}
-      </button>
+    <div className="flex justify-end gap-3 border-t border-[var(--cs-border)] pt-4">
+      <Button type="button" variant="ghost" onClick={onClose}>{t("people.cancel")}</Button>
+      <Button type="submit" disabled={saving}>{saving ? t("people.saving") : saveLabel}</Button>
     </div>
   );
 }
@@ -908,12 +904,12 @@ function ModalActions({ saving, onClose, saveLabel }: { saving: boolean; onClose
 function ConfirmModal({ title, body, confirmLabel, onConfirm, onClose }: any) {
   const { t } = useTranslation();
   return (
-    <Modal title={title} onClose={onClose}>
-      <p className="mb-4 text-sm text-gray-600">{body}</p>
+    <PeopleModal title={title} onClose={onClose}>
+      <p className="mb-4 text-sm text-[var(--cs-text-muted)]">{body}</p>
       <div className="flex justify-end gap-3">
-        <button onClick={onClose} className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">{t("people.cancel")}</button>
-        <button onClick={onConfirm} className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">{confirmLabel}</button>
+        <Button variant="ghost" onClick={onClose}>{t("people.cancel")}</Button>
+        <Button variant="danger" onClick={onConfirm}>{confirmLabel}</Button>
       </div>
-    </Modal>
+    </PeopleModal>
   );
 }

@@ -29,19 +29,19 @@ export function ContextCard({
     tone === "danger"
       ? "border-l-[var(--cs-danger)]"
       : tone === "warn"
-        ? "border-l-[var(--cs-warn)]"
+        ? "border-l-[var(--cs-border-strong)]"
         : "border-l-[var(--cs-accent)]";
 
   return (
     <div
       className={cn(
-        "flex items-center gap-3 rounded-[10px] border border-[var(--cs-border)] border-l-2 bg-[var(--cs-surface)] px-3.5 py-3",
+        "flex items-center gap-3 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] border-l-2 bg-[var(--cs-surface)] px-3.5 py-3",
         accent,
         className
       )}
     >
       {Icon && (
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[var(--cs-bg)] text-[var(--cs-text-muted)]">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--cs-radius-control)] bg-[var(--cs-surface-2)] text-[var(--cs-text-muted)]">
           <Icon className="h-4 w-4" strokeWidth={1.75} />
         </div>
       )}

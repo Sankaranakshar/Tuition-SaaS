@@ -22,6 +22,11 @@ import {
 } from "../lib/onboarding";
 import { planLimitErrorMessage } from "../lib/subscription";
 
+// Matches kit Input's skin for this file's raw <input>/<select> elements
+// (same recipe as People.tsx/Schedule.tsx's SELECT_CLASS).
+const FIELD_CLASS =
+  "block w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-3 py-2 text-sm text-[var(--cs-text)] outline-none transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] focus:border-[var(--cs-focus)] focus:ring-2 focus:ring-[var(--cs-focus)]/30";
+
 // Epic 14.5 (DEV_PLAN §2a Stage 2 item 5, REDESIGN §6.7): the tutor-signup
 // form sequence below is a from-scratch three-beat conversational flow
 // (solo/center → first class from a template gallery → add students). The
@@ -216,24 +221,24 @@ export default function Onboarding() {
 
   const renderParentSteps = () => (
     <div className="space-y-4">
-      <h3 className="text-xl font-bold">Link to your child's account</h3>
-      <p className="text-sm text-gray-500">
-        Ask your tutoring center for an invite link or code — they generate one from your child's profile.
+      <h3 className="text-lg font-semibold text-[var(--cs-text)]">Link to your child's account</h3>
+      <p className="text-sm text-[var(--cs-text-muted)]">
+        Ask your tutoring center for an invite link or code. They generate one from your child's profile.
       </p>
       <div>
-        <label className="block text-sm font-medium text-gray-700">Invite code</label>
+        <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Invite code</label>
         <div className="mt-1 flex gap-2">
           <input
             type="text"
             value={inviteToken}
             onChange={e => { setInviteToken(e.target.value); setInvitePreview(null); }}
             placeholder="Paste the code from your center"
-            className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border"
+            className={FIELD_CLASS}
           />
           <button
             onClick={handlePreviewInvite}
             disabled={previewLoading || !inviteToken.trim()}
-            className="whitespace-nowrap py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+            className="whitespace-nowrap rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-4 py-2 text-sm font-medium text-[var(--cs-text)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-surface-2)] disabled:opacity-50"
           >
             {previewLoading ? "Looking up…" : "Look up"}
           </button>
@@ -241,17 +246,17 @@ export default function Onboarding() {
       </div>
 
       {invitePreview && (
-        <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4 space-y-3">
-          <p className="text-sm text-indigo-900">
+        <div className="rounded-[var(--cs-radius-control)] bg-[var(--cs-surface-2)] p-4 space-y-3">
+          <p className="text-sm text-[var(--cs-text)]">
             This will link your account to <span className="font-semibold">{invitePreview.studentName || "this student"}</span> at{" "}
             <span className="font-semibold">{invitePreview.organizationName || "this tutoring center"}</span>.
           </p>
-          <label className="flex items-start gap-2 text-sm text-indigo-900">
+          <label className="flex items-start gap-2 text-sm text-[var(--cs-text)]">
             <input
               type="checkbox"
               checked={consent}
               onChange={e => setConsent(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              className="mt-0.5 h-4 w-4 rounded border-[var(--cs-border-strong)] text-[var(--cs-accent)] focus:ring-[var(--cs-focus)]"
             />
             <span>
               I consent to my child's attendance, invoices, and payment records being shared with my account,
@@ -264,7 +269,7 @@ export default function Onboarding() {
       <button
         onClick={handleCompleteOnboarding}
         disabled={loading || !invitePreview || !consent}
-        className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+        className="flex w-full justify-center rounded-[var(--cs-radius-control)] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-[var(--cs-accent-contrast)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-accent-hover)] disabled:opacity-50"
       >
         {loading ? "Linking…" : "Link account"}
       </button>
@@ -273,24 +278,24 @@ export default function Onboarding() {
 
   const renderStudentSteps = () => (
     <div className="space-y-4">
-      <h3 className="text-xl font-bold">Join your tutoring center</h3>
-      <p className="text-sm text-gray-500">
-        Ask your tutor or tutoring center for an invite code — they generate one from your student profile.
+      <h3 className="text-lg font-semibold text-[var(--cs-text)]">Join your tutoring center</h3>
+      <p className="text-sm text-[var(--cs-text-muted)]">
+        Ask your tutor or tutoring center for an invite code. They generate one from your student profile.
       </p>
       <div>
-        <label className="block text-sm font-medium text-gray-700">Invite code</label>
+        <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Invite code</label>
         <div className="mt-1 flex gap-2">
           <input
             type="text"
             value={studentInviteToken}
             onChange={e => { setStudentInviteToken(e.target.value); setStudentInvitePreview(null); }}
             placeholder="Paste the code from your center"
-            className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border"
+            className={FIELD_CLASS}
           />
           <button
             onClick={handlePreviewStudentInvite}
             disabled={studentPreviewLoading || !studentInviteToken.trim()}
-            className="whitespace-nowrap py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+            className="whitespace-nowrap rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-4 py-2 text-sm font-medium text-[var(--cs-text)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-surface-2)] disabled:opacity-50"
           >
             {studentPreviewLoading ? "Looking up…" : "Look up"}
           </button>
@@ -298,8 +303,8 @@ export default function Onboarding() {
       </div>
 
       {studentInvitePreview && (
-        <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4">
-          <p className="text-sm text-indigo-900">
+        <div className="rounded-[var(--cs-radius-control)] bg-[var(--cs-surface-2)] p-4">
+          <p className="text-sm text-[var(--cs-text)]">
             This will link your account to <span className="font-semibold">{studentInvitePreview.studentName || "this student"}</span> at{" "}
             <span className="font-semibold">{studentInvitePreview.organizationName || "this tutoring center"}</span>.
           </p>
@@ -309,7 +314,7 @@ export default function Onboarding() {
       <button
         onClick={handleCompleteOnboarding}
         disabled={loading || !studentInvitePreview}
-        className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+        className="flex w-full justify-center rounded-[var(--cs-radius-control)] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-[var(--cs-accent-contrast)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-accent-hover)] disabled:opacity-50"
       >
         {loading ? "Joining…" : "Join"}
       </button>
@@ -318,24 +323,24 @@ export default function Onboarding() {
 
   const renderStaffSteps = () => (
     <div className="space-y-4">
-      <h3 className="text-xl font-bold">Join your tutoring center's team</h3>
-      <p className="text-sm text-gray-500">
-        Ask the org owner or admin for an invite link or code — they generate one from Settings → Team.
+      <h3 className="text-lg font-semibold text-[var(--cs-text)]">Join your tutoring center's team</h3>
+      <p className="text-sm text-[var(--cs-text-muted)]">
+        Ask the org owner or admin for an invite link or code. They generate one from Settings → Team.
       </p>
       <div>
-        <label className="block text-sm font-medium text-gray-700">Invite code</label>
+        <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Invite code</label>
         <div className="mt-1 flex gap-2">
           <input
             type="text"
             value={staffInviteToken}
             onChange={e => { setStaffInviteToken(e.target.value); setStaffInvitePreview(null); }}
             placeholder="Paste the code from your center"
-            className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border"
+            className={FIELD_CLASS}
           />
           <button
             onClick={handlePreviewStaffInvite}
             disabled={staffPreviewLoading || !staffInviteToken.trim()}
-            className="whitespace-nowrap py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+            className="whitespace-nowrap rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-4 py-2 text-sm font-medium text-[var(--cs-text)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-surface-2)] disabled:opacity-50"
           >
             {staffPreviewLoading ? "Looking up…" : "Look up"}
           </button>
@@ -343,8 +348,8 @@ export default function Onboarding() {
       </div>
 
       {staffInvitePreview && (
-        <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4">
-          <p className="text-sm text-indigo-900">
+        <div className="rounded-[var(--cs-radius-control)] bg-[var(--cs-surface-2)] p-4">
+          <p className="text-sm text-[var(--cs-text)]">
             This will add you to <span className="font-semibold">{staffInvitePreview.organizationName || "this tutoring center"}</span> as{" "}
             <span className="font-semibold capitalize">{staffInvitePreview.role}</span>.
           </p>
@@ -354,7 +359,7 @@ export default function Onboarding() {
       <button
         onClick={handleCompleteOnboarding}
         disabled={loading || !staffInvitePreview}
-        className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+        className="flex w-full justify-center rounded-[var(--cs-radius-control)] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-[var(--cs-accent-contrast)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-accent-hover)] disabled:opacity-50"
       >
         {loading ? "Joining…" : "Join"}
       </button>
@@ -483,49 +488,49 @@ export default function Onboarding() {
   const renderTutorProgress = () => (
     <div className="mb-8 flex items-center justify-center gap-2">
       {[1, 2, 3].map(n => (
-        <div key={n} className={`h-2 w-10 rounded-full ${tutorBeat >= n ? "bg-indigo-600" : "bg-gray-200"}`} />
+        <div key={n} className={`h-2 w-10 rounded-full transition-colors duration-[var(--cs-motion-fast)] ${tutorBeat >= n ? "bg-[var(--cs-accent)]" : "bg-[var(--cs-border)]"}`} />
       ))}
     </div>
   );
 
   const renderBeat1SoloOrCenter = () => (
     <div className="space-y-6">
-      <h3 className="text-xl font-bold text-center">{t("onboarding.beat1Title")}</h3>
+      <h3 className="text-center text-lg font-semibold text-[var(--cs-text)]">{t("onboarding.beat1Title")}</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <button
           onClick={() => { setOrgMode("solo"); setTutorBeat(2); }}
-          className={`p-6 border-2 rounded-xl text-center transition-all ${orgMode === "solo" ? "border-indigo-500 bg-indigo-50" : "border-gray-200 hover:border-indigo-500 hover:bg-indigo-50"}`}
+          className={`rounded-[var(--cs-radius-container)] border-2 p-6 text-center transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${orgMode === "solo" ? "border-[var(--cs-accent)] bg-[var(--cs-accent-soft)]" : "border-[var(--cs-border)] hover:border-[var(--cs-border-strong)]"}`}
         >
-          <UserRound className="w-12 h-12 mx-auto text-indigo-600 mb-4" />
+          <UserRound className="mx-auto mb-4 h-12 w-12 text-[var(--cs-accent)]" strokeWidth={1.75} />
           <h4 className="text-lg font-semibold">{t("onboarding.soloTitle")}</h4>
-          <p className="text-sm text-gray-500 mt-2">{t("onboarding.soloSubtitle")}</p>
+          <p className="text-sm text-[var(--cs-text-muted)] mt-2">{t("onboarding.soloSubtitle")}</p>
         </button>
         <button
           onClick={() => setOrgMode("center")}
-          className={`p-6 border-2 rounded-xl text-center transition-all ${orgMode === "center" ? "border-indigo-500 bg-indigo-50" : "border-gray-200 hover:border-indigo-500 hover:bg-indigo-50"}`}
+          className={`rounded-[var(--cs-radius-container)] border-2 p-6 text-center transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${orgMode === "center" ? "border-[var(--cs-accent)] bg-[var(--cs-accent-soft)]" : "border-[var(--cs-border)] hover:border-[var(--cs-border-strong)]"}`}
         >
-          <Building2 className="w-12 h-12 mx-auto text-indigo-600 mb-4" />
+          <Building2 className="mx-auto mb-4 h-12 w-12 text-[var(--cs-accent)]" strokeWidth={1.75} />
           <h4 className="text-lg font-semibold">{t("onboarding.centerTitle")}</h4>
-          <p className="text-sm text-gray-500 mt-2">{t("onboarding.centerSubtitle")}</p>
+          <p className="text-sm text-[var(--cs-text-muted)] mt-2">{t("onboarding.centerSubtitle")}</p>
         </button>
       </div>
       {orgMode === "center" && (
         <div className="space-y-3">
           <div>
-            <label className="block text-sm font-medium text-gray-700">{t("onboarding.orgNameLabel")}</label>
+            <label className="block text-sm font-medium text-[var(--cs-text-muted)]">{t("onboarding.orgNameLabel")}</label>
             <input
               type="text"
               autoFocus
               value={orgName}
               onChange={e => setOrgName(e.target.value)}
               placeholder={t("onboarding.orgNamePlaceholder")}
-              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border"
+              className={`mt-1 ${FIELD_CLASS}`}
             />
           </div>
           <button
             onClick={() => setTutorBeat(2)}
             disabled={!orgName.trim()}
-            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+            className="flex w-full justify-center rounded-[var(--cs-radius-control)] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-[var(--cs-accent-contrast)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-accent-hover)] disabled:opacity-50"
           >
             {t("onboarding.continueButton")}
           </button>
@@ -536,42 +541,42 @@ export default function Onboarding() {
 
   const renderBeat2FirstClass = () => (
     <div className="space-y-4">
-      <h3 className="text-xl font-bold text-center">{t("onboarding.beat2Title")}</h3>
+      <h3 className="text-center text-lg font-semibold text-[var(--cs-text)]">{t("onboarding.beat2Title")}</h3>
       <div className="grid grid-cols-1 gap-2">
         {TEMPLATE_GALLERY.map(p => (
           <button
             key={p.id}
             onClick={() => { setPresetId(p.id); if (!className) setClassName(""); }}
-            className={`flex items-center justify-between p-3 border-2 rounded-lg text-left ${presetId === p.id ? "border-indigo-500 bg-indigo-50" : "border-gray-200 hover:border-indigo-500"}`}
+            className={`flex items-center justify-between rounded-[var(--cs-radius-control)] border-2 p-3 text-left transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${presetId === p.id ? "border-[var(--cs-accent)] bg-[var(--cs-accent-soft)]" : "border-[var(--cs-border)] hover:border-[var(--cs-border-strong)]"}`}
           >
             <span className="font-medium">{t(p.labelKey)}</span>
           </button>
         ))}
       </div>
       <div>
-        <label className="block text-sm font-medium text-gray-700">{t("onboarding.classNameLabel")}</label>
+        <label className="block text-sm font-medium text-[var(--cs-text-muted)]">{t("onboarding.classNameLabel")}</label>
         <input
           type="text"
           value={className}
           onChange={e => setClassName(e.target.value)}
           placeholder={preset.namePlaceholder}
-          className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border"
+          className={`mt-1 ${FIELD_CLASS}`}
         />
       </div>
       <div>
-        <label className="block text-sm font-medium text-gray-700">{t("onboarding.startTimeLabel")}</label>
+        <label className="block text-sm font-medium text-[var(--cs-text-muted)]">{t("onboarding.startTimeLabel")}</label>
         <input
           type="time"
           value={startTime}
           onChange={e => setStartTime(e.target.value)}
-          className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border"
+          className={`mt-1 ${FIELD_CLASS}`}
         />
       </div>
       <div className="flex justify-between">
-        <button onClick={() => setTutorBeat(1)} className="py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+        <button onClick={() => setTutorBeat(1)} className="rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-4 py-2 text-sm font-medium text-[var(--cs-text)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-surface-2)]">
           {t("onboarding.back")}
         </button>
-        <button onClick={() => setTutorBeat(3)} className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700">
+        <button onClick={() => setTutorBeat(3)} className="rounded-[var(--cs-radius-control)] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-[var(--cs-accent-contrast)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-accent-hover)]">
           {t("onboarding.continueButton")}
         </button>
       </div>
@@ -580,8 +585,8 @@ export default function Onboarding() {
 
   const renderBeat3Students = () => (
     <div className="space-y-4">
-      <h3 className="text-xl font-bold text-center">{t("onboarding.beat3Title")}</h3>
-      <p className="text-sm text-gray-500 text-center">{t("onboarding.beat3Subtitle")}</p>
+      <h3 className="text-center text-lg font-semibold text-[var(--cs-text)]">{t("onboarding.beat3Title")}</h3>
+      <p className="text-sm text-[var(--cs-text-muted)] text-center">{t("onboarding.beat3Subtitle")}</p>
 
       {!csvMode ? (
         <>
@@ -593,19 +598,19 @@ export default function Onboarding() {
                   value={row.name}
                   onChange={e => setManualStudents(rows => rows.map((r, idx) => idx === i ? { ...r, name: e.target.value } : r))}
                   placeholder={t("onboarding.studentNameLabel")}
-                  className="border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border"
+                  className={FIELD_CLASS}
                 />
                 <input
                   type="text"
                   value={row.phone}
                   onChange={e => setManualStudents(rows => rows.map((r, idx) => idx === i ? { ...r, phone: e.target.value } : r))}
                   placeholder={t("onboarding.phoneLabel")}
-                  className="border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2 border"
+                  className={FIELD_CLASS}
                 />
               </div>
             ))}
           </div>
-          <button onClick={() => setCsvMode(true)} className="text-sm text-indigo-600 hover:underline flex items-center gap-1">
+          <button onClick={() => setCsvMode(true)} className="flex items-center gap-1 text-sm text-[var(--cs-accent)] hover:text-[var(--cs-accent-hover)]">
             <Upload className="w-4 h-4" /> {t("onboarding.importCsv")}
           </button>
         </>
@@ -617,30 +622,30 @@ export default function Onboarding() {
               type="file"
               accept=".csv,text/csv"
               onChange={e => { const f = e.target.files?.[0]; if (f) handleCsvFile(f); }}
-              className="block w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+              className="block w-full text-sm text-[var(--cs-text-muted)] file:mr-3 file:rounded-[var(--cs-radius-control)] file:border-0 file:bg-[var(--cs-accent-soft)] file:px-4 file:py-2 file:text-[var(--cs-accent)] hover:file:bg-[var(--cs-accent)] hover:file:text-[var(--cs-accent-contrast)]"
             />
           </label>
-          <p className="text-xs text-gray-500">{t("onboarding.csvHelp")}</p>
+          <p className="text-xs text-[var(--cs-text-muted)]">{t("onboarding.csvHelp")}</p>
           {csvStudents.length > 0 && (
-            <p className="text-sm text-green-700">{csvStudents.length} student(s) ready to import.</p>
+            <p className="text-sm text-[var(--cs-accent)]">{csvStudents.length} student(s) ready to import.</p>
           )}
           {csvErrors.length > 0 && (
-            <p className="text-sm text-amber-700">{t("onboarding.csvErrors", { count: csvErrors.length })}</p>
+            <p className="text-sm text-[var(--cs-danger)]">{t("onboarding.csvErrors", { count: csvErrors.length })}</p>
           )}
-          <button onClick={() => { setCsvMode(false); setCsvStudents([]); setCsvErrors([]); }} className="text-sm text-indigo-600 hover:underline flex items-center gap-1">
+          <button onClick={() => { setCsvMode(false); setCsvStudents([]); setCsvErrors([]); }} className="flex items-center gap-1 text-sm text-[var(--cs-accent)] hover:text-[var(--cs-accent-hover)]">
             <Users className="w-4 h-4" /> {t("onboarding.addManually")}
           </button>
         </>
       )}
 
       <div className="flex justify-between">
-        <button onClick={() => setTutorBeat(2)} className="py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+        <button onClick={() => setTutorBeat(2)} className="rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-4 py-2 text-sm font-medium text-[var(--cs-text)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-surface-2)]">
           {t("onboarding.back")}
         </button>
         <button
           onClick={handleFinishTutorOnboarding}
           disabled={loading || !canFinishBeat3}
-          className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+          className="rounded-[var(--cs-radius-control)] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-[var(--cs-accent-contrast)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-accent-hover)] disabled:opacity-50"
         >
           {loading ? t("onboarding.finishing") : t("onboarding.finish")}
         </button>
@@ -658,18 +663,18 @@ export default function Onboarding() {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div className="flex min-h-screen flex-col justify-center bg-[var(--cs-bg)] py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-3xl">
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-          {flow === "tutor" ? t("onboarding.welcomeTitle") : "Complete Your Profile"}
+        <h2 className="mt-6 text-center text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">
+          {flow === "tutor" ? t("onboarding.welcomeTitle") : "Complete your profile"}
         </h2>
-        {flow === "tutor" && <p className="mt-2 text-center text-gray-600">{t("onboarding.welcomeSubtitle")}</p>}
+        {flow === "tutor" && <p className="mt-2 text-center text-[var(--cs-text-muted)]">{t("onboarding.welcomeSubtitle")}</p>}
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-3xl">
-        <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
+        <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] px-4 py-8 sm:px-10">
           {error && (
-            <div className="mb-4 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm">
+            <div className="mb-4 rounded-[var(--cs-radius-control)] bg-[var(--cs-danger-soft)] px-4 py-3 text-sm text-[var(--cs-danger)]">
               {error}
             </div>
           )}

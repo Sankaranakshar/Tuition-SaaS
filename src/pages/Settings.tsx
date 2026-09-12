@@ -12,7 +12,7 @@ import OrgExportSettings from "../components/OrgExportSettings";
 import TeamSettings from "../components/TeamSettings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Receipt, CreditCard, Database, Users } from "lucide-react";
-import { StatusChip } from "../components/kit";
+import { StatusChip, Button } from "../components/kit";
 
 export default function Settings() {
   const { user } = useAuth();
@@ -141,8 +141,8 @@ export default function Settings() {
   };
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      <h1 className="text-2xl font-bold text-[var(--cs-text)]">Profile & Org Control</h1>
+    <div className="max-w-4xl space-y-6">
+      <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">Settings</h1>
 
       <Tabs defaultValue="general" className="w-full">
         <TabsList className="mb-4">
@@ -196,51 +196,51 @@ export default function Settings() {
 
         <TabsContent value="general" className="space-y-6">
           {error && (
-            <div className="bg-red-50 border border-red-200 text-[var(--cs-danger)] px-4 py-3 rounded-[6px] text-sm flex items-center">
-              <AlertCircle className="w-5 h-5 mr-2" />
+            <div className="flex items-center rounded-[var(--cs-radius-control)] bg-[var(--cs-danger-soft)] px-4 py-3 text-sm text-[var(--cs-danger)]">
+              <AlertCircle className="mr-2 h-5 w-5" strokeWidth={1.75} />
               {error}
             </div>
           )}
 
           {success && (
-            <div className="bg-green-50 border border-green-200 text-[var(--cs-ok)] px-4 py-3 rounded-[6px] text-sm flex items-center">
-              <CheckCircle className="w-5 h-5 mr-2" />
+            <div className="flex items-center rounded-[var(--cs-radius-control)] bg-[var(--cs-accent-soft)] px-4 py-3 text-sm text-[var(--cs-accent)]">
+              <CheckCircle className="mr-2 h-5 w-5" strokeWidth={1.75} />
               {success}
             </div>
           )}
 
-          <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden">
-            <div className="px-6 py-4 border-b border-[var(--cs-border)]">
-              <h2 className="text-lg font-semibold text-[var(--cs-text)]">Profile Information</h2>
+          <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+            <div className="border-b border-[var(--cs-border)] px-4 py-3">
+              <h2 className="text-sm font-semibold text-[var(--cs-text)]">Profile information</h2>
             </div>
-            <div className="p-6 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-4 p-4">
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                 <div>
-                  <label htmlFor="profile-full-name" className="block text-sm font-medium text-[var(--cs-text-muted)]">Full Name</label>
-                  <input id="profile-full-name" type="text" disabled value={user?.name || ""} className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] py-2 px-3 text-sm text-[var(--cs-text-muted)]" />
+                  <label htmlFor="profile-full-name" className="block text-sm font-medium text-[var(--cs-text-muted)]">Full name</label>
+                  <input id="profile-full-name" type="text" disabled value={user?.name || ""} className="mt-1 block w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface-2)] px-3 py-1.5 text-[13px] text-[var(--cs-text-muted)]" />
                 </div>
                 <div>
-                  <label htmlFor="profile-email" className="block text-sm font-medium text-[var(--cs-text-muted)]">Email Address</label>
-                  <input id="profile-email" type="email" disabled value={user?.email || ""} className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] py-2 px-3 text-sm text-[var(--cs-text-muted)]" />
+                  <label htmlFor="profile-email" className="block text-sm font-medium text-[var(--cs-text-muted)]">Email address</label>
+                  <input id="profile-email" type="email" disabled value={user?.email || ""} className="mt-1 block w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface-2)] px-3 py-1.5 text-[13px] text-[var(--cs-text-muted)]" />
                 </div>
                 <div>
                   <label htmlFor="profile-role" className="block text-sm font-medium text-[var(--cs-text-muted)]">Role</label>
-                  <input id="profile-role" type="text" disabled value={user?.role || ""} className="mt-1 block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] py-2 px-3 text-sm text-[var(--cs-text-muted)] capitalize" />
+                  <input id="profile-role" type="text" disabled value={user?.role || ""} className="mt-1 block w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface-2)] px-3 py-1.5 text-[13px] capitalize text-[var(--cs-text-muted)]" />
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden">
-            <div className="px-6 py-4 border-b border-[var(--cs-border)]">
-              <h2 className="text-lg font-semibold text-[var(--cs-text)]">Integrations</h2>
-              <p className="mt-1 text-sm text-[var(--cs-text-muted)]">Connect third-party services to enhance your experience.</p>
+          <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+            <div className="border-b border-[var(--cs-border)] px-4 py-3">
+              <h2 className="text-sm font-semibold text-[var(--cs-text)]">Integrations</h2>
+              <p className="mt-1 text-xs text-[var(--cs-text-muted)]">Connect third-party services to enhance your experience.</p>
             </div>
-            <div className="p-6">
-              <div className="flex items-center justify-between p-4 border border-[var(--cs-border)] rounded-[6px]">
+            <div className="p-4">
+              <div className="flex items-center justify-between rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] p-4">
                 <div className="flex items-center">
-                  <div className="p-2 bg-[var(--cs-accent-soft)] rounded-[6px] mr-4">
-                    <Calendar className="w-6 h-6 text-[var(--cs-accent)]" />
+                  <div className="mr-4 rounded-[var(--cs-radius-control)] bg-[var(--cs-accent-soft)] p-2">
+                    <Calendar className="h-6 w-6 text-[var(--cs-accent)]" strokeWidth={1.75} />
                   </div>
                   <div>
                     <h3 className="text-sm font-medium text-[var(--cs-text)]">Google Calendar & Meet</h3>
@@ -260,27 +260,23 @@ export default function Settings() {
                       </button>
                     </div>
                   ) : (
-                    <button
-                      onClick={handleConnectGoogle}
-                      disabled={loading}
-                      className="inline-flex items-center rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] px-4 py-2 text-sm font-medium text-[var(--cs-text)] hover:bg-[var(--cs-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--cs-accent)]"
-                    >
-                      {loading ? "Connecting..." : "Connect Google"}
-                    </button>
+                    <Button variant="ghost" onClick={handleConnectGoogle} disabled={loading}>
+                      {loading ? "Connecting…" : "Connect Google"}
+                    </Button>
                   )}
                 </div>
               </div>
 
               {!isConnected && (
-                <div className="mt-4 bg-[var(--cs-accent-soft)] p-4 rounded-[6px]">
-                  <h4 className="text-sm font-medium text-[var(--cs-accent)]">Setup Instructions for Google OAuth</h4>
-                  <ol className="mt-2 text-sm text-[var(--cs-accent)] list-decimal list-inside space-y-1">
+                <div className="mt-4 rounded-[var(--cs-radius-control)] bg-[var(--cs-surface-2)] p-4">
+                  <h4 className="text-sm font-medium text-[var(--cs-text)]">Setup instructions for Google OAuth</h4>
+                  <ol className="mt-2 list-inside list-decimal space-y-1 text-sm text-[var(--cs-text-muted)]">
                     <li>Go to Google Cloud Console and create an OAuth Client ID.</li>
                     <li>Add the following URL to your Authorized redirect URIs:</li>
-                    <li className="font-mono bg-[var(--cs-surface)] p-1 rounded mt-1 break-all">
+                    <li className="mt-1 break-all rounded bg-[var(--cs-surface)] p-1 font-mono">
                       {window.location.origin}/api/v1/settings/google/callback
                     </li>
-                    <li className="mt-2">Ensure you have <code className="bg-[var(--cs-surface)] px-1 rounded">GOOGLE_CLIENT_ID</code> and <code className="bg-[var(--cs-surface)] px-1 rounded">GOOGLE_CLIENT_SECRET</code> set in your environment variables.</li>
+                    <li className="mt-2">Ensure you have <code className="rounded bg-[var(--cs-surface)] px-1">GOOGLE_CLIENT_ID</code> and <code className="rounded bg-[var(--cs-surface)] px-1">GOOGLE_CLIENT_SECRET</code> set in your environment variables.</li>
                   </ol>
                 </div>
               )}

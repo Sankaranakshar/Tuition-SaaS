@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { CalendarClock, Wallet as WalletIcon, Receipt, Share2, ExternalLink, Users, Download } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
-import { EmptyState, Skeleton, SkeletonText, StatChip, StatusChip, type ChipTone } from "../components/kit";
+import { EmptyState, Skeleton, SkeletonText, StatChip, StatusChip, Button, Field, Input, type ChipTone } from "../components/kit";
 import { formatPaise, formatINR, formatDate, formatTime, formatRelativeDays } from "../lib/format";
 import { rupeesToPaise } from "../../shared/money";
 import { cancellationCutoff, DEFAULT_CANCELLATION_POLICY, type CancellationPolicy } from "../../shared/cancellationPolicy";
@@ -132,7 +132,7 @@ export default function ParentPortal() {
         .in("id", studentIds);
       if (cancelled || studentsErr || !rows) return;
 
-      const kids: Child[] = rows.map((s) => ({ studentId: s.id as string, name: (s.name as string) || "Student", grade: s.grade as string | undefined }));
+      const kids: Child[] = rows.map((s) => ({ studentId: s.id as string, name: (s.name as string) || t("parentPortal.studentFallback"), grade: s.grade as string | undefined }));
       setChildren(kids);
       setLoadingChildren(false);
       setSelectedId((prev) => (prev && kids.some((k) => k.studentId === prev) ? prev : kids[0]?.studentId || null));
@@ -144,6 +144,7 @@ export default function ParentPortal() {
       .on("postgres_changes", { event: "*", schema: "public", table: "parent_links", filter: `parent_user_id=eq.${user.id}` }, debounce(load, 200))
       .subscribe();
     return () => { cancelled = true; supabase.removeChannel(channel); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   useEffect(() => {
@@ -244,7 +245,7 @@ export default function ParentPortal() {
       const { shortUrl } = await payInvoiceAsParent(invoiceId);
       window.location.href = shortUrl;
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't start payment");
+      toast.error(err instanceof Error ? err.message : t("parentPortal.payFailed"));
     } finally {
       setPayingId(null);
     }
@@ -254,7 +255,7 @@ export default function ParentPortal() {
     try {
       await downloadInvoicePdf(invoiceId);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't download the invoice");
+      toast.error(err instanceof Error ? err.message : t("parentPortal.downloadFailed"));
     }
   }
 
@@ -264,7 +265,7 @@ export default function ParentPortal() {
       const text = `Tuition payment link: ${shortUrl}\n\n— sent via ClassStackr, fee-collection software for tuition centers: ${window.location.origin}/`;
       window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't create a link to share");
+      toast.error(err instanceof Error ? err.message : t("parentPortal.shareFailed"));
     }
   }
 
@@ -302,8 +303,8 @@ export default function ParentPortal() {
     return (
       <EmptyState
         icon={Users}
-        title="No linked children yet"
-        description="Ask your tutoring center for an invite link, then complete linking from your onboarding page."
+        title={t("parentPortal.noChildrenTitle")}
+        description={t("parentPortal.noChildrenDescription")}
         className="mx-auto max-w-md"
       />
     );
@@ -319,10 +320,10 @@ export default function ParentPortal() {
             <button
               key={c.studentId}
               onClick={() => setSelectedId(c.studentId)}
-              className={`shrink-0 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors ${
+              className={`shrink-0 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${
                 c.studentId === selectedId
                   ? "border-[var(--cs-accent)] bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]"
-                  : "border-[var(--cs-border)] text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)]"
+                  : "border-[var(--cs-border)] text-[var(--cs-text-muted)] hover:bg-[var(--cs-surface-2)]"
               }`}
             >
               {c.name}
@@ -332,21 +333,21 @@ export default function ParentPortal() {
       )}
 
       <div className="grid grid-cols-3 gap-2">
-        <StatChip label="Outstanding" value={formatPaise(outstandingPaise)} tone={outstandingPaise > 0 ? "warn" : "positive"} />
-        <StatChip label="Credits" value={wallet?.balanceCredits ?? 0} />
-        <StatChip label="Next class" value={sessions[0] ? formatRelativeDays(toDate(sessions[0].startTime)) : "—"} />
+        <StatChip label={t("parentPortal.outstanding")} value={formatPaise(outstandingPaise)} tone={outstandingPaise > 0 ? "warn" : "positive"} />
+        <StatChip label={t("parentPortal.credits")} value={wallet?.balanceCredits ?? 0} />
+        <StatChip label={t("parentPortal.nextClass")} value={sessions[0] ? formatRelativeDays(toDate(sessions[0].startTime)) : "—"} />
       </div>
 
-      <div className="flex gap-1 rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-1">
+      <div className="flex gap-1 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-1">
         {([
-          ["overview", "Overview", CalendarClock],
-          ["invoices", "Invoices", Receipt],
-          ["wallet", "Wallet", WalletIcon],
+          ["overview", t("parentPortal.tabOverview"), CalendarClock],
+          ["invoices", t("parentPortal.tabInvoices"), Receipt],
+          ["wallet", t("parentPortal.tabWallet"), WalletIcon],
         ] as const).map(([id, label, Icon]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-[6px] py-2 text-sm font-medium transition-colors ${
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-[var(--cs-radius-control)] py-2 text-sm font-medium transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] ${
               tab === id ? "bg-[var(--cs-accent-soft)] text-[var(--cs-accent)]" : "text-[var(--cs-text-muted)]"
             }`}
           >
@@ -358,21 +359,21 @@ export default function ParentPortal() {
 
       {tab === "overview" && (
         <div className="space-y-3">
-          <h2 className="px-1 text-sm font-semibold text-[var(--cs-text)]">Upcoming for {selected.name}</h2>
+          <h2 className="px-1 text-sm font-semibold text-[var(--cs-text)]">{t("parentPortal.upcomingFor", { name: selected.name })}</h2>
           {sessions.length === 0 ? (
-            <EmptyState icon={CalendarClock} title="No upcoming classes" description="Nothing scheduled right now." />
+            <EmptyState icon={CalendarClock} title={t("parentPortal.noUpcomingTitle")} description={t("parentPortal.noUpcomingDescription")} />
           ) : (
-            <div className="divide-y divide-[var(--cs-border)] rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+            <div className="divide-y divide-[var(--cs-border)] rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
               {sessions.map((s) => {
                 const cutoff = cancellationCutoff(toDate(s.startTime), cancellationPolicy.freeHours);
                 return (
                   <div key={s.id} className="px-3 py-2.5">
                     <div className="flex items-center justify-between">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-[var(--cs-text)]">{s.title || "Class session"}</p>
+                        <p className="truncate text-sm font-medium text-[var(--cs-text)]">{s.title || t("parentPortal.classSession")}</p>
                         <p className="text-xs text-[var(--cs-text-muted)]">{formatDate(toDate(s.startTime))} · {formatRelativeDays(toDate(s.startTime))}</p>
                       </div>
-                      <StatusChip label={s.isOnline ? "Online" : "In-person"} tone="neutral" />
+                      <StatusChip label={s.isOnline ? t("parentPortal.online") : t("parentPortal.inPerson")} tone="neutral" />
                     </div>
                     <p className="mt-1 text-xs text-[var(--cs-text-muted)]">
                       {t("schedule.cancellationDisclosure", {
@@ -391,7 +392,7 @@ export default function ParentPortal() {
       {tab === "invoices" && (
         <div className="space-y-3">
           {invoices.length === 0 ? (
-            <EmptyState icon={Receipt} title="No invoices yet" description={`Nothing has been billed for ${selected.name} yet.`} />
+            <EmptyState icon={Receipt} title={t("parentPortal.noInvoicesTitle")} description={t("parentPortal.noInvoicesDescription", { name: selected.name })} />
           ) : (
             <div className="space-y-2">
               {invoices.map((inv) => {
@@ -399,13 +400,13 @@ export default function ParentPortal() {
                 const due = total - (inv.paidPaise || 0);
                 const payable = PAYABLE_STATUSES.has(inv.status);
                 return (
-                  <div key={inv.id} className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-3">
+                  <div key={inv.id} className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-3">
                     <div className="flex items-start justify-between">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium text-[var(--cs-text)]">
-                          {inv.invoiceNumber || inv.items?.[0]?.description || "Invoice"}
+                          {inv.invoiceNumber || inv.items?.[0]?.description || t("parentPortal.invoice")}
                         </p>
-                        {inv.dueDate && <p className="text-xs text-[var(--cs-text-muted)]">Due {formatDate(inv.dueDate)}</p>}
+                        {inv.dueDate && <p className="text-xs text-[var(--cs-text-muted)]">{t("parentPortal.due", { date: formatDate(inv.dueDate) })}</p>}
                       </div>
                       <StatusChip label={inv.status.replace("_", " ")} tone={STATUS_TONE[inv.status] || "neutral"} />
                     </div>
@@ -413,31 +414,33 @@ export default function ParentPortal() {
                     <div className="mt-2 flex gap-2">
                       {payable && due > 0 && (
                         <>
-                          <button
+                          <Button
                             onClick={() => handlePay(inv.id)}
                             disabled={payingId === inv.id}
-                            className="flex flex-1 items-center justify-center gap-1.5 rounded-[6px] bg-[var(--cs-accent)] px-3 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                            icon={ExternalLink}
+                            className="flex-1"
                           >
-                            <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} />
-                            {payingId === inv.id ? "Opening…" : `Pay ${formatPaise(due)}`}
-                          </button>
-                          <button
+                            {payingId === inv.id ? t("parentPortal.opening") : t("parentPortal.pay", { amount: formatPaise(due) })}
+                          </Button>
+                          <Button
+                            variant="ghost"
                             onClick={() => handleShare(inv.id)}
-                            title="Share via WhatsApp"
-                            className="flex items-center justify-center rounded-[6px] border border-[var(--cs-border)] px-3 py-2 text-sm text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)]"
-                          >
-                            <Share2 className="h-4 w-4" strokeWidth={1.75} />
-                          </button>
+                            title={t("parentPortal.shareViaWhatsapp")}
+                            aria-label={t("parentPortal.shareViaWhatsapp")}
+                            icon={Share2}
+                          />
                         </>
                       )}
-                      <button
+                      <Button
+                        variant="ghost"
                         onClick={() => handleDownload(inv.id)}
-                        title="Download PDF"
-                        className={`flex items-center justify-center rounded-[6px] border border-[var(--cs-border)] px-3 py-2 text-sm text-[var(--cs-text-muted)] hover:bg-[var(--cs-bg)] ${payable && due > 0 ? "" : "flex-1 gap-1.5"}`}
+                        title={t("parentPortal.downloadPdf")}
+                        aria-label={t("parentPortal.downloadPdf")}
+                        icon={Download}
+                        className={payable && due > 0 ? "" : "flex-1"}
                       >
-                        <Download className="h-4 w-4" strokeWidth={1.75} />
-                        {(!payable || due <= 0) && "Download PDF"}
-                      </button>
+                        {(!payable || due <= 0) && t("parentPortal.downloadPdf")}
+                      </Button>
                     </div>
                   </div>
                 );
@@ -449,45 +452,46 @@ export default function ParentPortal() {
 
       {tab === "wallet" && (
         <div className="space-y-4">
-          <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4 text-center">
-            <p className="text-xs font-medium text-[var(--cs-text-muted)]">Wallet balance</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums text-[var(--cs-text)]">
-              {wallet?.balanceCredits || 0} credits
+          <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4 text-center">
+            <p className="text-xs font-medium text-[var(--cs-text-muted)]">{t("parentPortal.walletBalance")}</p>
+            <p className="mt-1 text-[28px] font-semibold tabular-nums text-[var(--cs-text)]">
+              {t("parentPortal.creditsCount", { count: wallet?.balanceCredits || 0 })}
             </p>
             <p className="text-sm text-[var(--cs-text-muted)]">{formatINR(wallet?.balanceCurrency || 0)}</p>
           </div>
 
-          <div className="rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4">
+          <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4">
             <p className="mb-2 text-sm font-medium text-[var(--cs-text)]">{t("parentPortal.topupTitle")}</p>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[var(--cs-text-muted)]">₹</span>
-                <input
-                  type="number"
-                  min="1"
-                  inputMode="decimal"
-                  value={topupAmount}
-                  onChange={(e) => setTopupAmount(e.target.value)}
-                  placeholder={t("parentPortal.topupAmountLabel")}
-                  aria-label={t("parentPortal.topupAmountLabel")}
-                  className="w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-bg)] py-2 pl-7 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--cs-accent)]"
-                />
-              </div>
-              <button
-                onClick={handleTopup}
-                disabled={toppingUp || !topupAmount}
-                className="shrink-0 rounded-[6px] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-              >
+            <div className="flex items-end gap-2">
+              <Field
+                label={t("parentPortal.topupAmountLabel")}
+                className="flex-1"
+                renderControl={(id) => (
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[var(--cs-text-muted)]">₹</span>
+                    <Input
+                      id={id}
+                      type="number"
+                      min="1"
+                      inputMode="decimal"
+                      value={topupAmount}
+                      onChange={(e) => setTopupAmount(e.target.value)}
+                      className="pl-7"
+                    />
+                  </div>
+                )}
+              />
+              <Button onClick={handleTopup} disabled={toppingUp || !topupAmount} className="shrink-0">
                 {toppingUp ? t("parentPortal.topupOpening") : t("parentPortal.topupButton")}
-              </button>
+              </Button>
             </div>
           </div>
 
-          <h2 className="px-1 text-sm font-semibold text-[var(--cs-text)]">Payment history</h2>
+          <h2 className="px-1 text-sm font-semibold text-[var(--cs-text)]">{t("parentPortal.paymentHistory")}</h2>
           {payments.length === 0 ? (
-            <EmptyState icon={Receipt} title="No payments yet" />
+            <EmptyState icon={Receipt} title={t("parentPortal.noPaymentsTitle")} />
           ) : (
-            <div className="divide-y divide-[var(--cs-border)] rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+            <div className="divide-y divide-[var(--cs-border)] rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
               {payments.map((p) => (
                 <div key={p.id} className="flex items-center justify-between px-3 py-2.5">
                   <div>

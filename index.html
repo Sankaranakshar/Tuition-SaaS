@@ -5,6 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ClassStackr: Tuition management that collects your fees</title>
     <meta name="description" content="Scheduling, attendance, billing, and parent communication for tuition centers and independent tutors. Attendance becomes an invoice, the invoice becomes a UPI payment link." />
+    <script>
+      // Resolve the theme before first paint to avoid a flash. Mirrors
+      // src/lib/theme.ts; keep the two in sync. "cs-theme" is "light" | "dark"
+      // | absent (follow the OS).
+      (function () {
+        try {
+          var pref = localStorage.getItem("cs-theme");
+          var dark =
+            pref === "dark" ||
+            (pref !== "light" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          var el = document.documentElement;
+          el.classList.toggle("dark", dark);
+          el.setAttribute("data-theme", dark ? "dark" : "light");
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

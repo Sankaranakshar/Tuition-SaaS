@@ -2,6 +2,10 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabase";
 import { Plus, Trash2 } from "lucide-react";
+import { Button } from "./kit";
+
+const FIELD_CLASS =
+  "block w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-3 py-1.5 text-[13px] text-[var(--cs-text)] outline-none transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] focus:border-[var(--cs-focus)] focus:ring-2 focus:ring-[var(--cs-focus)]/30";
 
 interface AvailabilitySlot {
   id: string;
@@ -104,30 +108,30 @@ export default function TutorAvailabilitySettings() {
   };
 
   if (loading) {
-    return <div className="p-4 text-[var(--cs-text-muted)]">Loading availability...</div>;
+    return <div className="p-4 text-[var(--cs-text-muted)]">Loading availability…</div>;
   }
 
   return (
-    <div className="bg-[var(--cs-surface)] rounded-[10px] border border-[var(--cs-border)] overflow-hidden mt-6">
-      <div className="px-6 py-4 border-b border-[var(--cs-border)]">
-        <h2 className="text-lg font-semibold text-[var(--cs-text)]">Tutor Availability</h2>
-        <p className="mt-1 text-sm text-[var(--cs-text-muted)]">Manage your available hours for one-on-one bookings.</p>
+    <div className="mt-6 overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+      <div className="border-b border-[var(--cs-border)] px-4 py-3">
+        <h2 className="text-sm font-semibold text-[var(--cs-text)]">Tutor availability</h2>
+        <p className="mt-1 text-xs text-[var(--cs-text-muted)]">Manage your available hours for one-on-one bookings.</p>
       </div>
-      
-      <div className="p-6">
+
+      <div className="p-4">
         {error && (
-          <div className="mb-4 text-sm text-[var(--cs-danger)] bg-red-50 p-2 rounded-[6px]">
+          <div className="mb-4 rounded-[var(--cs-radius-control)] bg-[var(--cs-danger-soft)] p-2 text-sm text-[var(--cs-danger)]">
             {error}
           </div>
         )}
 
-        <div className="flex flex-wrap items-end gap-4 mb-6 bg-[var(--cs-bg)] p-4 rounded-[6px] border border-[var(--cs-border)]">
+        <div className="mb-6 flex flex-wrap items-end gap-4 rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] bg-[var(--cs-surface-2)] p-4">
           <div>
-            <label className="block text-sm font-medium text-[var(--cs-text-muted)] mb-1">Day</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--cs-text-muted)]">Day</label>
             <select
               value={newDay}
               onChange={(e) => setNewDay(Number(e.target.value))}
-              className="block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] text-sm outline-none focus:border-[var(--cs-accent)]"
+              className={FIELD_CLASS}
             >
               {DAYS_OF_WEEK.map((day, index) => (
                 <option key={index} value={index}>{day}</option>
@@ -135,54 +139,50 @@ export default function TutorAvailabilitySettings() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-[var(--cs-text-muted)] mb-1">Start Time</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--cs-text-muted)]">Start time</label>
             <input
               type="time"
               value={newStartTime}
               onChange={(e) => setNewStartTime(e.target.value)}
-              className="block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] text-sm outline-none focus:border-[var(--cs-accent)]"
+              className={FIELD_CLASS}
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[var(--cs-text-muted)] mb-1">End Time</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--cs-text-muted)]">End time</label>
             <input
               type="time"
               value={newEndTime}
               onChange={(e) => setNewEndTime(e.target.value)}
-              className="block w-full rounded-[6px] border border-[var(--cs-border)] bg-[var(--cs-surface)] text-sm outline-none focus:border-[var(--cs-accent)]"
+              className={FIELD_CLASS}
             />
           </div>
-          <button
-            onClick={handleAddSlot}
-            className="inline-flex items-center rounded-[6px] bg-[var(--cs-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Add Slot
-          </button>
+          <Button onClick={handleAddSlot} icon={Plus}>
+            Add slot
+          </Button>
         </div>
 
         <div className="space-y-4">
           {DAYS_OF_WEEK.map((dayName, dayIndex) => {
             const daySlots = slots.filter(s => s.dayOfWeek === dayIndex);
             if (daySlots.length === 0) return null;
-            
+
             return (
-              <div key={dayIndex} className="border border-[var(--cs-border)] rounded-[6px] overflow-hidden">
-                <div className="bg-[var(--cs-bg)] px-4 py-2 border-b border-[var(--cs-border)] font-medium text-[var(--cs-text-muted)]">
+              <div key={dayIndex} className="overflow-hidden rounded-[var(--cs-radius-control)] border border-[var(--cs-border)]">
+                <div className="border-b border-[var(--cs-border)] bg-[var(--cs-surface-2)] px-4 py-2 font-medium text-[var(--cs-text-muted)]">
                   {dayName}
                 </div>
                 <ul className="divide-y divide-[var(--cs-border)]">
                   {daySlots.map(slot => (
-                    <li key={slot.id} className="px-4 py-3 flex justify-between items-center hover:bg-[var(--cs-bg)]">
+                    <li key={slot.id} className="flex items-center justify-between px-4 py-3 transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-surface-2)]">
                       <span className="text-sm text-[var(--cs-text)]">
                         {slot.startTime} - {slot.endTime}
                       </span>
                       <button
                         onClick={() => handleDeleteSlot(slot.id)}
-                        className="text-[var(--cs-danger)] hover:opacity-80 p-1 rounded-full hover:bg-red-50"
+                        className="rounded-full p-1 text-[var(--cs-danger)] transition-colors duration-[var(--cs-motion-fast)] hover:bg-[var(--cs-danger-soft)]"
                         title="Delete slot"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="h-4 w-4" strokeWidth={1.75} />
                       </button>
                     </li>
                   ))}
@@ -190,9 +190,9 @@ export default function TutorAvailabilitySettings() {
               </div>
             );
           })}
-          
+
           {slots.length === 0 && (
-            <p className="text-sm text-[var(--cs-text-muted)] text-center py-4">
+            <p className="py-4 text-center text-sm text-[var(--cs-text-muted)]">
               No availability slots configured. Add some above to allow students to book one-on-one sessions.
             </p>
           )}
