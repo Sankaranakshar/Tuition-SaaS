@@ -12,6 +12,7 @@ import OrgExportSettings from "../components/OrgExportSettings";
 import TeamSettings from "../components/TeamSettings";
 import PayoutRuns from "../components/PayoutRuns";
 import TutorEarnings from "../components/TutorEarnings";
+import LeaveManagement from "../components/LeaveManagement";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Receipt, CreditCard, Database, Users, Wallet } from "lucide-react";
 import { StatusChip, Button } from "../components/kit";
@@ -194,6 +195,12 @@ export default function Settings() {
               Availability
             </TabsTrigger>
           )}
+          {(user?.organizationRole === "owner" || user?.organizationRole === "admin" || user?.organizationRole === "tutor" || user?.organizationRole === "frontdesk") && (
+            <TabsTrigger value="leave" className="flex items-center">
+              <Calendar className="w-4 h-4 mr-2" />
+              Leave
+            </TabsTrigger>
+          )}
           {(user?.organizationRole === "owner" || user?.organizationRole === "admin") && (
             <TabsTrigger value="export" className="flex items-center">
               <Database className="w-4 h-4 mr-2" />
@@ -349,6 +356,12 @@ export default function Settings() {
         {(user?.organizationRole === "owner" || user?.organizationRole === "admin" || user?.organizationRole === "tutor") && (
           <TabsContent value="profile">
             <TutorProfileSettings />
+          </TabsContent>
+        )}
+
+        {(user?.organizationRole === "owner" || user?.organizationRole === "admin" || user?.organizationRole === "tutor" || user?.organizationRole === "frontdesk") && (
+          <TabsContent value="leave">
+            <LeaveManagement />
           </TabsContent>
         )}
       </Tabs>

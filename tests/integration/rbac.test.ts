@@ -1032,3 +1032,71 @@ describe("tutor_compensation_rates / tutor_payouts / tutor_earnings_ledger: narr
     })
   );
 });
+
+// B-13 (EXECUTION_PLAN.md Step 23): substitute and leave management.
+describe("tutor_leave_requests: is_staff() visibility, no client write path", () => {
+  it(
+    "any staff role (owner/admin/tutor/frontdesk/accountant) can read every tutor's leave requests",
+    withFixtures(async (tx, as) => {
+      await tx.query(
+        `insert into tutor_leave_requests (organization_id, tutor_id, start_date, end_date, requested_by)
+         values ($1, $2, '2026-09-15', '2026-09-16', $2)`,
+        [ORG, uids.tutor]
+      );
+
+      for (const role of [uids.owner, uids.admin, uids.tutor2, uids.frontdesk, uids.accountant]) {
+        await as(role, "authenticated");
+        expect((await tx.query(`select * from tutor_leave_requests where tutor_id = $1`, [uids.tutor])).rows.length).toBe(1);
+      }
+    })
+  );
+
+  it(
+    "a parent or student cannot read tutor leave requests (not staff)",
+    withFixtures(async (tx, as) => {
+      await tx.query(
+        `insert into tutor_leave_requests (organization_id, tutor_id, start_date, end_date, requested_by)
+         values ($1, $2, '2026-09-15', '2026-09-16', $2)`,
+        [ORG, uids.tutor]
+      );
+
+      for (const role of [uids.parent, uids.student]) {
+        await as(role, "authenticated");
+        expect((await tx.query(`select * from tutor_leave_requests where tutor_id = $1`, [uids.tutor])).rows.length).toBe(0);
+      }
+    })
+  );
+
+  it(
+    "an outsider (member of a different org entirely) cannot read it",
+    withFixtures(async (tx, as) => {
+      await tx.query(
+        `insert into tutor_leave_requests (organization_id, tutor_id, start_date, end_date, requested_by)
+         values ($1, $2, '2026-09-15', '2026-09-16', $2)`,
+        [ORG, uids.tutor]
+      );
+
+      await as(uids.outsider, "authenticated");
+      expect((await tx.query(`select * from tutor_leave_requests where tutor_id = $1`, [uids.tutor])).rows.length).toBe(0);
+    })
+  );
+
+  it(
+    "no role can write it directly (service_role via server/routes/leave.ts is the only writer)",
+    withFixtures(async (tx, as) => {
+      await as(uids.tutor, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `insert into tutor_leave_requests (organization_id, tutor_id, start_date, end_date, requested_by)
+         values ($1, $2, '2026-09-15', '2026-09-16', $2)`,
+        [ORG, uids.tutor]
+      ));
+
+      await as(uids.owner, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `insert into tutor_leave_requests (organization_id, tutor_id, start_date, end_date, requested_by)
+         values ($1, $2, '2026-09-15', '2026-09-16', $2)`,
+        [ORG, uids.tutor]
+      ));
+    })
+  );
+});

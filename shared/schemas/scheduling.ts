@@ -40,6 +40,17 @@ export type RescheduleSessionRequest = z.infer<typeof rescheduleSessionRequestSc
 export const rescheduleSessionResponseSchema = z.object({ ok: z.literal(true), sessionId: z.string().uuid() });
 export type RescheduleSessionResponse = z.infer<typeof rescheduleSessionResponseSchema>;
 
+// B-13 (EXECUTION_PLAN.md Step 23): reassign a single scheduled session to a
+// different tutor -- the substitute-assignment primitive leave.ts's bulk
+// reassign route also calls directly (not over HTTP), same reuse pattern as
+// createSessionTx/createEnrollmentTx.
+export const reassignSessionTutorRequestSchema = z.object({
+  tutorId: z.string().uuid(),
+});
+export type ReassignSessionTutorRequest = z.infer<typeof reassignSessionTutorRequestSchema>;
+export const reassignSessionTutorResponseSchema = z.object({ ok: z.literal(true), sessionId: z.string().uuid() });
+export type ReassignSessionTutorResponse = z.infer<typeof reassignSessionTutorResponseSchema>;
+
 export const updateTemplateScopeSchema = z.object({
   scope: z.enum(["future", "all"]),
   daysOfWeek: z.array(z.number().int().min(0).max(6)).optional(),

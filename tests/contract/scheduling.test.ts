@@ -268,6 +268,81 @@ describe("PATCH /api/v1/scheduling/sessions/:id", () => {
   });
 });
 
+// B-13 (EXECUTION_PLAN.md Step 23): direct single-session substitute
+// assignment -- the primitive server/routes/leave.ts's bulk reassign route
+// also calls, exercised standalone here since it's independently reachable.
+describe("PATCH /api/v1/scheduling/sessions/:id/tutor", () => {
+  it("404s reassigning a session that doesn't exist", async () => {
+    const res = await request(app)
+      .patch(`/api/v1/scheduling/sessions/${crypto.randomUUID()}/tutor`)
+      .set(...authHeader(uids.owner))
+      .send({ tutorId: bodyTutorId });
+    expectStatus(res, 404);
+  });
+
+  it("403s a student trying to reassign (outside CAN_SCHEDULE)", async () => {
+    const res = await request(app)
+      .patch(`/api/v1/scheduling/sessions/${ids.sess1}/tutor`)
+      .set(...authHeader(uids.student))
+      .send({ tutorId: bodyTutorId });
+    expectStatus(res, 403);
+  });
+
+  it("200s reassigning to a free substitute", async () => {
+    const sessionId = crypto.randomUUID();
+    await db.query(
+      `insert into class_sessions (id, organization_id, tutor_id, student_ids, start_time, end_time, status)
+       values ($1, $2, $3, '{}', '2027-02-01T10:00:00Z', '2027-02-01T11:00:00Z', 'scheduled')`,
+      [sessionId, ORG, uids.tutor]
+    );
+
+    const res = await request(app)
+      .patch(`/api/v1/scheduling/sessions/${sessionId}/tutor`)
+      .set(...authHeader(uids.owner))
+      .send({ tutorId: bodyTutorId });
+    expectStatus(res, 200);
+
+    const row = await db.query<any>(`select tutor_id from class_sessions where id = $1`, [sessionId]);
+    expect(row.rows[0].tutor_id).toBe(bodyTutorId);
+  });
+
+  it("409s reassigning to a tutor who has a conflicting session at that time", async () => {
+    const sessionId = crypto.randomUUID();
+    await db.query(
+      `insert into class_sessions (id, organization_id, tutor_id, student_ids, start_time, end_time, status)
+       values ($1, $2, $3, '{}', '2027-02-02T10:00:00Z', '2027-02-02T11:00:00Z', 'scheduled')`,
+      [sessionId, ORG, uids.tutor]
+    );
+    await db.query(
+      `insert into class_sessions (id, organization_id, tutor_id, student_ids, start_time, end_time, status)
+       values ($1, $2, $3, '{}', '2027-02-02T10:30:00Z', '2027-02-02T11:30:00Z', 'scheduled')`,
+      [crypto.randomUUID(), ORG, bodyTutorId2]
+    );
+
+    const res = await request(app)
+      .patch(`/api/v1/scheduling/sessions/${sessionId}/tutor`)
+      .set(...authHeader(uids.owner))
+      .send({ tutorId: bodyTutorId2 });
+    expectStatus(res, 409);
+    expect(res.body.error.code).toBe("conflict");
+  });
+
+  it("409s reassigning a completed session", async () => {
+    const sessionId = crypto.randomUUID();
+    await db.query(
+      `insert into class_sessions (id, organization_id, tutor_id, student_ids, start_time, end_time, status)
+       values ($1, $2, $3, '{}', '2027-02-03T10:00:00Z', '2027-02-03T11:00:00Z', 'completed')`,
+      [sessionId, ORG, uids.tutor]
+    );
+    const res = await request(app)
+      .patch(`/api/v1/scheduling/sessions/${sessionId}/tutor`)
+      .set(...authHeader(uids.owner))
+      .send({ tutorId: bodyTutorId });
+    expectStatus(res, 409);
+    expect(res.body.error.code).toBe("not_reassignable");
+  });
+});
+
 describe("PATCH /api/v1/scheduling/templates/:id", () => {
   it("403s for a role below owner/admin (tutor)", async () => {
     const templateId = crypto.randomUUID();

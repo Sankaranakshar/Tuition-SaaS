@@ -1,5 +1,5 @@
 // server/app.ts
-import express18 from "express";
+import express19 from "express";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
@@ -3089,6 +3089,10 @@ var rescheduleSessionRequestSchema = z6.object({
   endTime: z6.string().min(1)
 });
 var rescheduleSessionResponseSchema = z6.object({ ok: z6.literal(true), sessionId: z6.string().uuid() });
+var reassignSessionTutorRequestSchema = z6.object({
+  tutorId: z6.string().uuid()
+});
+var reassignSessionTutorResponseSchema = z6.object({ ok: z6.literal(true), sessionId: z6.string().uuid() });
 var updateTemplateScopeSchema = z6.object({
   scope: z6.enum(["future", "all"]),
   daysOfWeek: z6.array(z6.number().int().min(0).max(6)).optional(),
@@ -3207,6 +3211,37 @@ async function createSessionTx(client, orgId, body) {
     return insertRes.rows[0].id;
   });
 }
+async function reassignSessionTutorTx(client, orgId, sessionId, newTutorId) {
+  const existing = await client.query(
+    `select organization_id, tutor_id, start_time, end_time, status from class_sessions where id = $1`,
+    [sessionId]
+  );
+  if (existing.rowCount === 0) {
+    throw Object.assign(new Error("Session not found"), { status: 404, code: "not_found" });
+  }
+  const row = existing.rows[0];
+  if (row.organization_id !== orgId) {
+    throw Object.assign(new Error("Session belongs to another organization"), { status: 403, code: "forbidden" });
+  }
+  if (row.status !== "scheduled") {
+    throw Object.assign(new Error("Only a scheduled session can be reassigned"), { status: 409, code: "not_reassignable" });
+  }
+  await checkTutorConflictAndInsert(
+    client,
+    newTutorId,
+    row.start_time,
+    row.end_time,
+    async () => {
+      await client.query(
+        `update class_sessions set tutor_id = $1, updated_at = now() where id = $2`,
+        [newTutorId, sessionId]
+      );
+      return sessionId;
+    },
+    sessionId
+  );
+  return { oldTutorId: row.tutor_id };
+}
 router8.post("/sessions", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
   try {
     const body = createSessionRequestSchema.parse(req.body);
@@ -3253,6 +3288,18 @@ router8.patch("/sessions/:id", requireRole(...CAN_SCHEDULE), async (req, res, ne
       );
     });
     await writeAudit(orgId, req.user.id, "session.reschedule", "class_sessions", sessionId, { startTime: body.startTime, endTime: body.endTime });
+    res.json({ ok: true, sessionId });
+  } catch (err) {
+    next(err);
+  }
+});
+router8.patch("/sessions/:id/tutor", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
+  try {
+    const body = reassignSessionTutorRequestSchema.parse(req.body);
+    const orgId = req.user.organizationId;
+    const sessionId = req.params.id;
+    const { oldTutorId } = await withTransaction((client) => reassignSessionTutorTx(client, orgId, sessionId, body.tutorId));
+    await writeAudit(orgId, req.user.id, "session.reassign_tutor", "class_sessions", sessionId, { fromTutorId: oldTutorId, toTutorId: body.tutorId });
     res.json({ ok: true, sessionId });
   } catch (err) {
     next(err);
@@ -5184,6 +5231,240 @@ router17.get("/payout-runs/:id/statement", async (req, res, next) => {
 });
 var payouts_default = router17;
 
+// server/routes/leave.ts
+import express18 from "express";
+
+// shared/leave.ts
+function isValidLeaveRange(startDate, endDate) {
+  const start = /* @__PURE__ */ new Date(`${startDate}T00:00:00.000Z`);
+  const end = /* @__PURE__ */ new Date(`${endDate}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+  return end.getTime() >= start.getTime();
+}
+function leaveDateRangeToTimestampBounds(startDate, endDate) {
+  const start = /* @__PURE__ */ new Date(`${startDate}T00:00:00.000Z`);
+  const end = /* @__PURE__ */ new Date(`${endDate}T00:00:00.000Z`);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+// shared/schemas/leave.ts
+import { z as z16 } from "zod";
+var dateString = z16.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD");
+var createLeaveRequestSchema = z16.object({
+  // Omitted -> defaults to the caller (a tutor requesting their own leave).
+  // Staff (owner/admin) may pass it to log leave on a tutor's behalf.
+  tutorId: z16.string().uuid().optional(),
+  startDate: dateString,
+  endDate: dateString,
+  reason: z16.string().max(500).optional()
+});
+var decideLeaveRequestSchema = z16.object({
+  action: z16.enum(["approve", "reject", "cancel"])
+});
+var reassignSubstituteRequestSchema = z16.object({
+  substituteTutorId: z16.string().uuid(),
+  // Omitted -> every currently-scheduled session the leave affects.
+  sessionIds: z16.array(z16.string().uuid()).optional()
+});
+
+// server/routes/leave.ts
+var router18 = express18.Router();
+router18.use(authenticateToken, requireOrg);
+var CAN_SCHEDULE2 = ["owner", "admin", "tutor", "frontdesk"];
+async function assertOrgMember(orgId, userId, notFoundMessage) {
+  const { data } = await supabaseAdmin.from("organization_members").select("user_id").eq("organization_id", orgId).eq("user_id", userId).maybeSingle();
+  if (!data) {
+    throw Object.assign(new Error(notFoundMessage), { status: 404, code: "not_found" });
+  }
+}
+async function loadLeave(orgId, leaveId) {
+  const res = await pool.query(
+    // Cast the two date columns to text -- node-postgres's default type
+    // parser turns a `date` column into a local-midnight JS Date object, not
+    // the "YYYY-MM-DD" string every caller here (leaveDateRangeToTimestampBounds,
+    // the reassign/affected-sessions routes) expects.
+    `select id, organization_id, tutor_id, start_date::text, end_date::text, status from tutor_leave_requests where id = $1`,
+    [leaveId]
+  );
+  if (res.rowCount === 0 || res.rows[0].organization_id !== orgId) {
+    throw Object.assign(new Error("Leave request not found"), { status: 404, code: "not_found" });
+  }
+  return res.rows[0];
+}
+router18.post("/", requireRole(...CAN_SCHEDULE2), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const body = createLeaveRequestSchema.parse(req.body);
+    const tutorId = body.tutorId ?? req.user.id;
+    if (tutorId !== req.user.id && req.user.role !== "owner" && req.user.role !== "admin") {
+      return res.status(403).json({ error: { code: "forbidden", message: "Only owner/admin can log leave on someone else's behalf" } });
+    }
+    if (!isValidLeaveRange(body.startDate, body.endDate)) {
+      return res.status(422).json({ error: { code: "invalid_range", message: "endDate must be on or after startDate" } });
+    }
+    await assertOrgMember(orgId, tutorId, "Not a member of this organization");
+    const insertRes = await pool.query(
+      `insert into tutor_leave_requests (organization_id, tutor_id, start_date, end_date, reason, requested_by)
+       values ($1, $2, $3, $4, $5, $6)
+       returning id`,
+      [orgId, tutorId, body.startDate, body.endDate, body.reason ?? null, req.user.id]
+    );
+    const id = insertRes.rows[0].id;
+    await writeAudit(orgId, req.user.id, "leave.request", "tutor_leave_requests", id, { tutorId, startDate: body.startDate, endDate: body.endDate });
+    res.json({ ok: true, id });
+  } catch (err) {
+    next(err);
+  }
+});
+router18.get("/", requireRole(...CAN_SCHEDULE2), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const status = typeof req.query.status === "string" ? req.query.status : null;
+    const selfOnly = req.user.role === "tutor";
+    const conditions = ["organization_id = $1"];
+    const params = [orgId];
+    if (selfOnly) {
+      params.push(req.user.id);
+      conditions.push(`tutor_id = $${params.length}`);
+    }
+    if (status) {
+      params.push(status);
+      conditions.push(`status = $${params.length}`);
+    }
+    const result = await pool.query(
+      `select id, tutor_id, start_date::text, end_date::text, reason, status, requested_by, decided_by, decided_at, created_at
+       from tutor_leave_requests where ${conditions.join(" and ")} order by start_date desc`,
+      params
+    );
+    const requests = result.rows.map((r) => ({
+      id: r.id,
+      tutorId: r.tutor_id,
+      startDate: r.start_date,
+      endDate: r.end_date,
+      reason: r.reason,
+      status: r.status,
+      requestedBy: r.requested_by,
+      decidedBy: r.decided_by,
+      decidedAt: r.decided_at,
+      createdAt: r.created_at
+    }));
+    res.json({ ok: true, requests });
+  } catch (err) {
+    next(err);
+  }
+});
+router18.patch("/:id", requireRole(...CAN_SCHEDULE2), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const leaveId = req.params.id;
+    const body = decideLeaveRequestSchema.parse(req.body);
+    const leave = await loadLeave(orgId, leaveId);
+    const isAdmin = req.user.role === "owner" || req.user.role === "admin";
+    if ((body.action === "approve" || body.action === "reject") && !isAdmin) {
+      return res.status(403).json({ error: { code: "forbidden", message: "Only owner/admin can approve or reject leave" } });
+    }
+    if (body.action === "cancel" && req.user.id !== leave.tutor_id && !isAdmin) {
+      return res.status(403).json({ error: { code: "forbidden", message: "Only the requesting tutor or owner/admin can cancel a leave request" } });
+    }
+    if (leave.status !== "pending") {
+      return res.status(409).json({ error: { code: "not_pending", message: `Leave request is already ${leave.status}` } });
+    }
+    const newStatus = body.action === "approve" ? "approved" : body.action === "reject" ? "rejected" : "cancelled";
+    await pool.query(
+      `update tutor_leave_requests set status = $1, decided_by = $2, decided_at = now() where id = $3`,
+      [newStatus, req.user.id, leaveId]
+    );
+    await writeAudit(orgId, req.user.id, `leave.${body.action}`, "tutor_leave_requests", leaveId, { tutorId: leave.tutor_id });
+    res.json({ ok: true, status: newStatus });
+  } catch (err) {
+    next(err);
+  }
+});
+router18.get("/:id/affected-sessions", requireRole(...CAN_SCHEDULE2), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const leave = await loadLeave(orgId, req.params.id);
+    const bounds = leaveDateRangeToTimestampBounds(leave.start_date, leave.end_date);
+    const result = await pool.query(
+      `select id, start_time, end_time, student_ids from class_sessions
+       where tutor_id = $1 and status = 'scheduled'
+         and start_time < $3::timestamptz and end_time > $2::timestamptz
+       order by start_time`,
+      [leave.tutor_id, bounds.start, bounds.end]
+    );
+    const sessions = result.rows.map((r) => ({
+      id: r.id,
+      startTime: r.start_time,
+      endTime: r.end_time,
+      studentIds: r.student_ids ?? []
+    }));
+    res.json({ ok: true, sessions });
+  } catch (err) {
+    next(err);
+  }
+});
+router18.post("/:id/reassign", requireRole(...CAN_SCHEDULE2), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const leaveId = req.params.id;
+    const body = reassignSubstituteRequestSchema.parse(req.body);
+    const leave = await loadLeave(orgId, leaveId);
+    if (leave.status !== "approved") {
+      return res.status(409).json({ error: { code: "not_approved", message: "Leave must be approved before assigning a substitute" } });
+    }
+    if (body.substituteTutorId === leave.tutor_id) {
+      return res.status(422).json({ error: { code: "same_tutor", message: "Substitute cannot be the tutor who is on leave" } });
+    }
+    await assertOrgMember(orgId, body.substituteTutorId, "Substitute is not a member of this organization");
+    let sessionIds = body.sessionIds;
+    if (!sessionIds) {
+      const bounds = leaveDateRangeToTimestampBounds(leave.start_date, leave.end_date);
+      const affected = await pool.query(
+        `select id from class_sessions where tutor_id = $1 and status = 'scheduled'
+           and start_time < $3::timestamptz and end_time > $2::timestamptz`,
+        [leave.tutor_id, bounds.start, bounds.end]
+      );
+      sessionIds = affected.rows.map((r) => r.id);
+    }
+    const results = [];
+    for (const sessionId of sessionIds) {
+      try {
+        const { oldTutorId } = await withTransaction(async (client) => {
+          const sRes = await client.query(
+            `select tutor_id from class_sessions where id = $1 and organization_id = $2`,
+            [sessionId, orgId]
+          );
+          if (sRes.rowCount === 0) {
+            throw Object.assign(new Error("Session not found"), { status: 404, code: "not_found" });
+          }
+          if (sRes.rows[0].tutor_id !== leave.tutor_id) {
+            throw Object.assign(new Error("Session does not belong to the tutor on leave"), { status: 409, code: "not_leave_tutor" });
+          }
+          return reassignSessionTutorTx(client, orgId, sessionId, body.substituteTutorId);
+        });
+        await writeAudit(orgId, req.user.id, "session.reassign_tutor", "class_sessions", sessionId, {
+          fromTutorId: oldTutorId,
+          toTutorId: body.substituteTutorId,
+          leaveRequestId: leaveId
+        });
+        results.push({ sessionId, ok: true });
+      } catch (err) {
+        results.push({ sessionId, ok: false, error: err.code ?? err.message });
+      }
+    }
+    await writeAudit(orgId, req.user.id, "leave.substitute_assigned", "tutor_leave_requests", leaveId, {
+      substituteTutorId: body.substituteTutorId,
+      reassigned: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length
+    });
+    res.json({ ok: true, results });
+  } catch (err) {
+    next(err);
+  }
+});
+var leave_default = router18;
+
 // server/app.ts
 function createApp() {
   if (process.env.SENTRY_DSN) {
@@ -5193,7 +5474,7 @@ function createApp() {
       tracesSampleRate: 0.1
     });
   }
-  const app2 = express18();
+  const app2 = express19();
   const isProd = process.env.NODE_ENV === "production";
   app2.use(pino({
     level: isProd ? "info" : "debug",
@@ -5214,7 +5495,7 @@ function createApp() {
     // header-based auth only; no cookies, no CSRF surface
   }));
   app2.set("trust proxy", 1);
-  app2.use("/api/webhooks", express18.raw({ type: "*/*", limit: "1mb" }), webhooks_default);
+  app2.use("/api/webhooks", express19.raw({ type: "*/*", limit: "1mb" }), webhooks_default);
   const apiLimiter = rateLimit({
     windowMs: 60 * 1e3,
     max: 120,
@@ -5224,7 +5505,7 @@ function createApp() {
     // (coaching centers share IPs). ipKeyGenerator handles IPv6 subnets.
     keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip || "")
   });
-  app2.use(express18.json({ limit: "1mb" }));
+  app2.use(express19.json({ limit: "1mb" }));
   app2.use("/api/", identifyUser, apiLimiter);
   app2.use("/api/v1/settings", settings_default);
   app2.use("/api/v1/members", members_default);
@@ -5241,6 +5522,7 @@ function createApp() {
   app2.use("/api/v1/org-export", orgExport_default);
   app2.use("/api/v1/audit-log", auditLog_default);
   app2.use("/api/v1/payouts", payouts_default);
+  app2.use("/api/v1/leave", leave_default);
   app2.use("/api/cron", cron_default);
   app2.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });

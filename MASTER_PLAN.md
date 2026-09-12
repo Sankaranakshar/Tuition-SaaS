@@ -79,7 +79,7 @@ Each release has a single thesis, a gate, and an effort total. Effort is in engi
 | B-07 | Org switcher plus cross-org conflict checking | 5 | ✅ Done 2026-09-12 (EXECUTION_PLAN.md Step 20) |
 | ~~B-08~~ | ~~Tutor payouts and earnings: hours or sessions taught, earnings ledger, payout run, statement, TDS. Built once, serves org payroll and marketplace payouts alike~~ | ~~6~~ | **Done 2026-09-12 (EXECUTION_PLAN.md Step 21)** |
 | ~~B-12~~ | ~~Monthly progress-report PDF~~ | ~~3~~ | **Done 2026-09-12 (EXECUTION_PLAN.md Step 22)** |
-| B-13 | Substitute and leave management | 4 |
+| ~~B-13~~ | ~~Substitute and leave management~~ | ~~4~~ | **Done 2026-09-12 (EXECUTION_PLAN.md Step 23)** |
 
 **Also in R2, from the IA tabs:** the assignment marking loop back into the gradebook (currently upload works, marking does not, on both the staff and student side), guardian records moving from student-owned to parent-owned, cross-org family view for parents, and student session-requests routed to a parent for approval per D-05's per-student payment-permissions model (not a fixed age threshold — see §5).
 
@@ -139,7 +139,7 @@ Score = Impact × Confidence ÷ Effort, effort floored at 0.5 ed. Highest score 
 | ~~B-08~~ | ~~Tutor payouts~~ | R2 | 5 | 0.8 | 6 | **Done 2026-09-12** |
 | B-19 | Referral loop | R4 | 3 | 0.6 | 3 | 0.60 |
 | ~~B-06~~ | ~~Person-centric identity~~ | R2 | 5 | 0.9 | 8 | **Done 2026-09-12** |
-| B-13 | Substitute and leave | R2 | 3 | 0.7 | 4 | 0.53 |
+| ~~B-13~~ | ~~Substitute and leave~~ | R2 | 3 | 0.7 | 4 | **Done 2026-09-12** |
 | B-18 | Leading indicators | R4 | 3 | 0.7 | 4 | 0.53 |
 | B-14 | Public profiles + verification | R3 | 5 | 0.7 | 8 | 0.44 |
 | B-15 | Search, enquiry, trial | R3 | 5 | 0.6 | 12 | 0.25 |

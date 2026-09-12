@@ -33,6 +33,8 @@ import type { BulkImportInspectResponse, BulkImportPreviewResponse, BulkImportCo
 import type { PaymentPermissions } from "../../shared/paymentPermissions";
 import type { TutorRateRow, EarningsLedgerRow, PayoutRun } from "../../shared/schemas/payouts";
 export type { TutorRateRow, EarningsLedgerRow, PayoutRun } from "../../shared/schemas/payouts";
+import type { LeaveRequestRow, AffectedSessionRow, ReassignResult } from "../../shared/schemas/leave";
+export type { LeaveRequestRow, AffectedSessionRow, ReassignResult } from "../../shared/schemas/leave";
 
 // Thin authenticated client for the privileged API (/api/v1).
 // Money and attendance mutations must go through here; they have no
@@ -683,4 +685,28 @@ export function markPayoutPaid(payoutId: string) {
 
 export function downloadPayoutStatement(payoutId: string) {
   return downloadBlob(`/payouts/payout-runs/${payoutId}/statement`, `payout-${payoutId}.pdf`);
+}
+
+// B-13 (EXECUTION_PLAN.md Step 23): substitute and leave management.
+export function requestLeave(input: { tutorId?: string; startDate: string; endDate: string; reason?: string }) {
+  return api<{ ok: true; id: string }>("/leave", { method: "POST", body: input });
+}
+
+export function listLeaveRequests(status?: string) {
+  const qs = status ? `?status=${status}` : "";
+  return api<{ ok: true; requests: LeaveRequestRow[] }>(`/leave${qs}`);
+}
+
+export function decideLeaveRequest(leaveId: string, action: "approve" | "reject" | "cancel") {
+  return api<{ ok: true; status: LeaveRequestRow["status"] }>(`/leave/${leaveId}`, { method: "PATCH", body: { action } });
+}
+
+export function getAffectedSessions(leaveId: string) {
+  return api<{ ok: true; sessions: AffectedSessionRow[] }>(`/leave/${leaveId}/affected-sessions`);
+}
+
+export function assignSubstitute(leaveId: string, substituteTutorId: string, sessionIds?: string[]) {
+  return api<{ ok: true; results: ReassignResult[] }>(`/leave/${leaveId}/reassign`, {
+    method: "POST", body: { substituteTutorId, sessionIds },
+  });
 }

@@ -7,6 +7,7 @@ import {
   enrollRequestSchema as enrollSchema,
   createSessionRequestSchema as sessionSchema,
   rescheduleSessionRequestSchema as rescheduleSchema,
+  reassignSessionTutorRequestSchema as reassignTutorSchema,
   updateTemplateScopeSchema as templateScopeSchema,
   findGapsQuerySchema as gapsQuerySchema,
 } from "../../shared/schemas/scheduling.ts";
@@ -188,6 +189,51 @@ export async function createSessionTx(
   });
 }
 
+/** Reassigns one scheduled session to a different tutor -- the substitute
+ *  primitive behind B-13 (leave management). Runs the exact same
+ *  advisory-lock + range-overlap conflict check as createSessionTx/the
+ *  reschedule route, against the *new* tutor's calendar, so a substitute who
+ *  is already booked elsewhere at that time is rejected rather than silently
+ *  double-booked. Exported for server/routes/leave.ts's bulk reassign route
+ *  to call directly per session (its own transaction each), same reuse
+ *  pattern as createSessionTx/createEnrollmentTx being called from
+ *  sessionRequests.ts. Returns the tutor being replaced, for the caller's
+ *  audit-log write. */
+export async function reassignSessionTutorTx(
+  client: PoolClient,
+  orgId: string,
+  sessionId: string,
+  newTutorId: string
+): Promise<{ oldTutorId: string | null }> {
+  const existing = await client.query(
+    `select organization_id, tutor_id, start_time, end_time, status from class_sessions where id = $1`,
+    [sessionId]
+  );
+  if (existing.rowCount === 0) {
+    throw Object.assign(new Error("Session not found"), { status: 404, code: "not_found" });
+  }
+  const row = existing.rows[0];
+  if (row.organization_id !== orgId) {
+    throw Object.assign(new Error("Session belongs to another organization"), { status: 403, code: "forbidden" });
+  }
+  if (row.status !== "scheduled") {
+    throw Object.assign(new Error("Only a scheduled session can be reassigned"), { status: 409, code: "not_reassignable" });
+  }
+
+  await checkTutorConflictAndInsert(
+    client, newTutorId, row.start_time, row.end_time,
+    async () => {
+      await client.query(
+        `update class_sessions set tutor_id = $1, updated_at = now() where id = $2`,
+        [newTutorId, sessionId]
+      );
+      return sessionId;
+    },
+    sessionId
+  );
+  return { oldTutorId: row.tutor_id };
+}
+
 router.post("/sessions", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, next) => {
   try {
     const body = sessionSchema.parse(req.body);
@@ -241,6 +287,24 @@ router.patch("/sessions/:id", requireRole(...CAN_SCHEDULE), async (req: AuthRequ
     });
 
     await writeAudit(orgId, req.user!.id, "session.reschedule", "class_sessions", sessionId, { startTime: body.startTime, endTime: body.endTime });
+    res.json({ ok: true, sessionId });
+  } catch (err) { next(err); }
+});
+
+// Direct single-session substitute assignment -- also the primitive
+// server/routes/leave.ts's bulk reassign route builds on (B-13). Deliberately
+// not gated to "only while the tutor is on approved leave": a one-off
+// substitute swap (a tutor is sick for a single class, no formal leave
+// request filed) is a legitimate independent use of this route.
+router.patch("/sessions/:id/tutor", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, next) => {
+  try {
+    const body = reassignTutorSchema.parse(req.body);
+    const orgId = req.user!.organizationId!;
+    const sessionId = req.params.id;
+
+    const { oldTutorId } = await withTransaction((client) => reassignSessionTutorTx(client, orgId, sessionId, body.tutorId));
+
+    await writeAudit(orgId, req.user!.id, "session.reassign_tutor", "class_sessions", sessionId, { fromTutorId: oldTutorId, toTutorId: body.tutorId });
     res.json({ ok: true, sessionId });
   } catch (err) { next(err); }
 });
