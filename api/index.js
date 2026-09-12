@@ -1,5 +1,5 @@
 // server/app.ts
-import express17 from "express";
+import express18 from "express";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
@@ -680,8 +680,8 @@ import autoTable from "jspdf-autotable";
 function rupeesToPaise(rupees) {
   return Math.round(rupees * 100);
 }
-function paiseToRupees(paise2) {
-  return paise2 / 100;
+function paiseToRupees(paise3) {
+  return paise3 / 100;
 }
 
 // server/utils/invoicePdf.ts
@@ -933,6 +933,14 @@ async function getCancellationPolicy(orgId) {
   return resolveCancellationPolicy(data?.settings?.cancellation);
 }
 
+// shared/payouts.ts
+function computeSessionEarningsPaise(ratePaisePerHour, durationMinutes) {
+  return Math.round(ratePaisePerHour * durationMinutes / 60);
+}
+function computeTdsPaise(grossPaise, tdsPercent) {
+  return Math.round(grossPaise * tdsPercent / 100);
+}
+
 // server/routes/billing.ts
 var router3 = express3.Router();
 router3.use(authenticateToken, requireOrg);
@@ -1012,7 +1020,7 @@ router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => 
     const orgId = req.user.organizationId;
     const actor = req.user.id;
     const sessionRes = await pool.query(
-      `select s.organization_id, s.tutor_id, s.template_id, s.start_time,
+      `select s.organization_id, s.tutor_id, s.template_id, s.start_time, s.end_time,
               t.pricing_model, t.fee_amount, t.type
        from class_sessions s
        left join class_templates t on t.id = s.template_id
@@ -1158,6 +1166,26 @@ router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => 
         `update class_sessions set status = 'completed', attendance_marked_at = now(), attendance_marked_by = $1 where id = $2`,
         [actor, sessionId]
       );
+      if (session.tutor_id) {
+        const rateRes = await client.query(
+          `select hourly_rate_paise from tutor_compensation_rates where tutor_id = $1 and organization_id = $2`,
+          [session.tutor_id, orgId]
+        );
+        const ratePaisePerHour = rateRes.rows[0]?.hourly_rate_paise ?? 0;
+        if (ratePaisePerHour > 0) {
+          const durationMinutes = Math.round(
+            (new Date(session.end_time).getTime() - new Date(session.start_time).getTime()) / 6e4
+          );
+          const amountPaise = computeSessionEarningsPaise(ratePaisePerHour, durationMinutes);
+          await client.query(
+            `insert into tutor_earnings_ledger
+               (organization_id, tutor_id, session_id, session_start, duration_minutes, rate_paise_per_hour, amount_paise)
+             values ($1, $2, $3, $4, $5, $6, $7)
+             on conflict (session_id) do nothing`,
+            [orgId, session.tutor_id, sessionId, session.start_time, durationMinutes, ratePaisePerHour, amountPaise]
+          );
+        }
+      }
       return { billed, invoiced };
     });
     await writeAudit(orgId, actor, "attendance.mark", "class_sessions", sessionId, {
@@ -2129,8 +2157,8 @@ async function eraseStudentTx(client, opts) {
   let walletWriteOff = null;
   if (wallet) {
     const credits = Number(wallet.balance_credits) || 0;
-    const paise2 = rupeesToPaise(Number(wallet.balance_currency) || 0);
-    if (credits !== 0 || paise2 !== 0) {
+    const paise3 = rupeesToPaise(Number(wallet.balance_currency) || 0);
+    if (credits !== 0 || paise3 !== 0) {
       if (walletPolicy === "block") {
         throw new ErasureError(
           409,
@@ -2148,14 +2176,14 @@ async function eraseStudentTx(client, opts) {
           `insert into wallet_ledger
              (organization_id, student_id, type, credits, paise, reason, by, idempotency_key, at)
            values ($1, $2, 'erasure_writeoff', $3, $4, 'erasure_writeoff', $5, $6, now())`,
-          [orgId, studentId, -credits, -paise2, actorId, key]
+          [orgId, studentId, -credits, -paise3, actorId, key]
         );
         await client.query(
           `update wallets set balance_credits = 0, balance_currency = 0 where id = $1`,
           [wallet.id]
         );
       }
-      walletWriteOff = { credits, paise: paise2 };
+      walletWriteOff = { credits, paise: paise3 };
     }
   }
   const docRows = await client.query(
@@ -3282,15 +3310,15 @@ function computeCreditExpiry(rows, windowDays, now) {
     nowMs,
     "credits"
   );
-  const paise2 = runDenom(
+  const paise3 = runDenom(
     sorted.map((r) => ({ id: r.id, amount: r.paise, at: new Date(r.at).getTime() })),
     windowMs,
     nowMs,
     "paise"
   );
   return {
-    expired: [...credits.expired, ...paise2.expired],
-    warnings: [...credits.warnings, ...paise2.warnings]
+    expired: [...credits.expired, ...paise3.expired],
+    warnings: [...credits.warnings, ...paise3.warnings]
   };
 }
 
@@ -3466,15 +3494,15 @@ router9.post("/expire-credits", async (_req, res, next) => {
               );
               if ((dup.rowCount ?? 0) > 0) continue;
               const credits = lot.denom === "credits" ? -lot.amount : 0;
-              const paise2 = lot.denom === "paise" ? -lot.amount : 0;
+              const paise3 = lot.denom === "paise" ? -lot.amount : 0;
               await client.query(
                 `insert into wallet_ledger
                    (organization_id, student_id, type, credits, paise, reason, by, idempotency_key, at)
                  values ($1, $2, 'credit_expiry', $3, $4, 'credit_expiry', 'credit_expiry_cron', $5, now())`,
-                [org.id, wallet.student_id, credits, paise2, key]
+                [org.id, wallet.student_id, credits, paise3, key]
               );
               dCredits += credits;
-              dPaise += paise2;
+              dPaise += paise3;
               lotsExpired++;
               if (lot.denom === "credits") creditsExpired += lot.amount;
               else paiseExpired += lot.amount;
@@ -4499,6 +4527,444 @@ router16.post("/:id/respond-to-proposal", async (req, res, next) => {
 });
 var sessionRequests_default = router16;
 
+// server/routes/payouts.ts
+import express17 from "express";
+
+// shared/payoutSettings.ts
+var DEFAULT_PAYOUT_SETTINGS = { tdsPercent: 0 };
+function resolvePayoutSettings(payouts) {
+  const raw = payouts && typeof payouts === "object" ? payouts : {};
+  const tdsPercent = typeof raw.tdsPercent === "number" && Number.isFinite(raw.tdsPercent) && raw.tdsPercent >= 0 ? raw.tdsPercent : DEFAULT_PAYOUT_SETTINGS.tdsPercent;
+  return { tdsPercent };
+}
+
+// server/utils/payouts.ts
+async function getPayoutSettings(organizationId) {
+  const { data, error } = await supabaseAdmin.from("organizations").select("settings").eq("id", organizationId).maybeSingle();
+  if (error) throw error;
+  return resolvePayoutSettings(data?.settings?.payouts);
+}
+
+// server/utils/payoutStatementPdf.ts
+import { jsPDF as jsPDF2 } from "jspdf";
+import autoTable2 from "jspdf-autotable";
+var inrNumber2 = new Intl.NumberFormat("en-IN", {
+  maximumFractionDigits: 2,
+  minimumFractionDigits: 0
+});
+function paise2(v) {
+  return `Rs. ${inrNumber2.format(paiseToRupees(v || 0))}`;
+}
+function formatDate2(d) {
+  if (!d) return "\u2014";
+  const parsed = d instanceof Date ? d : new Date(d);
+  return Number.isNaN(parsed.getTime()) ? "\u2014" : parsed.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+}
+function renderPayoutStatementPdf(input) {
+  const { payout, org, tutor, lines } = input;
+  const doc = new jsPDF2({ unit: "pt", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const marginX = 40;
+  let cursorY = 48;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.text(org.name, marginX, cursorY);
+  doc.setFontSize(20);
+  doc.setTextColor(60);
+  doc.text("PAYOUT STATEMENT", pageWidth - marginX, cursorY, { align: "right" });
+  doc.setTextColor(0);
+  cursorY += 18;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  const orgLines = [];
+  if (org.address) orgLines.push(org.address);
+  const contact = [org.phone, org.email].filter(Boolean).join(" \xB7 ");
+  if (contact) orgLines.push(contact);
+  for (const line of orgLines) {
+    doc.text(line, marginX, cursorY);
+    cursorY += 13;
+  }
+  const metaX = pageWidth - marginX;
+  let metaY = 66;
+  doc.setFont("helvetica", "bold");
+  doc.text(`${formatDate2(payout.periodStart)} \u2013 ${formatDate2(payout.periodEnd)}`, metaX, metaY, { align: "right" });
+  doc.setFont("helvetica", "normal");
+  metaY += 14;
+  doc.text(`Issued: ${formatDate2(payout.createdAt)}`, metaX, metaY, { align: "right" });
+  metaY += 13;
+  doc.text(`Status: ${payout.status}`, metaX, metaY, { align: "right" });
+  if (payout.paidAt) {
+    metaY += 13;
+    doc.text(`Paid: ${formatDate2(payout.paidAt)}`, metaX, metaY, { align: "right" });
+  }
+  cursorY = Math.max(cursorY, metaY) + 20;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("Paid to", marginX, cursorY);
+  cursorY += 14;
+  doc.setFont("helvetica", "normal");
+  const tutorLines = [tutor.name, tutor.email].filter(Boolean);
+  for (const line of tutorLines.length > 0 ? tutorLines : ["\u2014"]) {
+    doc.text(line, marginX, cursorY);
+    cursorY += 13;
+  }
+  cursorY += 12;
+  autoTable2(doc, {
+    startY: cursorY,
+    margin: { left: marginX, right: marginX },
+    head: [["Session date", "Duration", "Rate", "Amount"]],
+    body: lines.map((l) => [
+      formatDate2(l.sessionStart),
+      `${l.durationMinutes} min`,
+      `${paise2(l.ratePaisePerHour)}/hr`,
+      paise2(l.amountPaise)
+    ]),
+    styles: { font: "helvetica", fontSize: 10, cellPadding: 6 },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255 },
+    columnStyles: {
+      1: { halign: "right", cellWidth: 70 },
+      2: { halign: "right", cellWidth: 90 },
+      3: { halign: "right", cellWidth: 100 }
+    }
+  });
+  const afterTable = doc.lastAutoTable?.finalY ?? cursorY + 40;
+  let totalsY = afterTable + 20;
+  const totalsX = pageWidth - marginX;
+  const labelX = totalsX - 130;
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  const row = (label, value) => {
+    doc.text(label, labelX, totalsY);
+    doc.text(value, totalsX, totalsY, { align: "right" });
+    totalsY += 14;
+  };
+  row("Gross", paise2(payout.grossPaise));
+  row(`TDS (${payout.tdsPercent}%)`, `\u2212 ${paise2(payout.tdsPaise)}`);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  row("Net payable", paise2(payout.netPaise));
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setFontSize(9);
+  doc.setTextColor(120);
+  doc.text(
+    "This is a computer-generated document. For questions about this statement, contact the tuition center.",
+    marginX,
+    doc.internal.pageSize.getHeight() - 32
+  );
+  return Buffer.from(doc.output("arraybuffer"));
+}
+
+// shared/schemas/payouts.ts
+import { z as z15 } from "zod";
+var setCompensationRateRequestSchema = z15.object({
+  hourlyRatePaise: z15.number().int().nonnegative()
+});
+var runPayoutRequestSchema = z15.object({
+  tutorId: z15.string().uuid(),
+  periodStart: z15.string(),
+  // ISO date, e.g. "2026-09-01"
+  periodEnd: z15.string()
+  // ISO date, exclusive
+});
+
+// server/routes/payouts.ts
+var router17 = express17.Router();
+router17.use(authenticateToken, requireOrg);
+var CAN_PAYOUT = ["owner", "admin", "accountant"];
+router17.put("/tutors/:tutorId/rate", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const uid = req.user.id;
+    const { tutorId } = req.params;
+    const body = setCompensationRateRequestSchema.parse(req.body);
+    const { data: member } = await supabaseAdmin.from("organization_members").select("role").eq("organization_id", orgId).eq("user_id", tutorId).maybeSingle();
+    if (!member || member.role !== "tutor") {
+      return res.status(404).json({ error: { code: "not_found", message: "Not a tutor in this organization" } });
+    }
+    const { error } = await supabaseAdmin.from("tutor_compensation_rates").upsert(
+      {
+        tutor_id: tutorId,
+        organization_id: orgId,
+        hourly_rate_paise: body.hourlyRatePaise,
+        updated_by: uid,
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      },
+      { onConflict: "tutor_id,organization_id" }
+    );
+    if (error) throw error;
+    await writeAudit(orgId, uid, "tutor.compensation_rate.update", "tutor_compensation_rates", tutorId, {
+      hourlyRatePaise: body.hourlyRatePaise
+    });
+    res.json({ ok: true, tutorId, hourlyRatePaise: body.hourlyRatePaise });
+  } catch (err) {
+    next(err);
+  }
+});
+router17.get("/rates", requireRole(...CAN_PAYOUT), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const { data, error } = await supabaseAdmin.from("tutor_compensation_rates").select("tutor_id, hourly_rate_paise").eq("organization_id", orgId);
+    if (error) throw error;
+    res.json({ ok: true, rates: (data || []).map((r) => ({ tutorId: r.tutor_id, hourlyRatePaise: r.hourly_rate_paise })) });
+  } catch (err) {
+    next(err);
+  }
+});
+router17.get("/me/earnings", async (req, res, next) => {
+  try {
+    if (req.user.role !== "tutor") {
+      return res.status(403).json({ error: { code: "forbidden", message: "Only tutors have an earnings ledger" } });
+    }
+    const orgId = req.user.organizationId;
+    const uid = req.user.id;
+    const [ledgerRes, payoutsRes] = await Promise.all([
+      pool.query(
+        `select id, session_id, session_start, duration_minutes, rate_paise_per_hour, amount_paise, payout_id
+         from tutor_earnings_ledger where organization_id = $1 and tutor_id = $2
+         order by session_start desc limit 200`,
+        [orgId, uid]
+      ),
+      pool.query(
+        `select id, period_start, period_end, gross_paise, tds_percent, tds_paise, net_paise, status, paid_at, created_at
+         from tutor_payouts where organization_id = $1 and tutor_id = $2 order by created_at desc`,
+        [orgId, uid]
+      )
+    ]);
+    res.json({
+      ok: true,
+      earnings: ledgerRes.rows.map((r) => ({
+        id: r.id,
+        sessionId: r.session_id,
+        sessionStart: r.session_start,
+        durationMinutes: r.duration_minutes,
+        ratePaisePerHour: r.rate_paise_per_hour,
+        amountPaise: r.amount_paise,
+        payoutId: r.payout_id
+      })),
+      payouts: payoutsRes.rows.map((p) => ({
+        id: p.id,
+        periodStart: p.period_start,
+        periodEnd: p.period_end,
+        grossPaise: p.gross_paise,
+        tdsPercent: Number(p.tds_percent),
+        tdsPaise: p.tds_paise,
+        netPaise: p.net_paise,
+        status: p.status,
+        paidAt: p.paid_at,
+        createdAt: p.created_at
+      }))
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+router17.get("/earnings", requireRole(...CAN_PAYOUT), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const tutorId = req.query.tutorId;
+    if (!tutorId) {
+      return res.status(422).json({ error: { code: "validation", message: "tutorId is required" } });
+    }
+    const from = req.query.from || "1970-01-01";
+    const to = req.query.to || "9999-12-31";
+    const { rows } = await pool.query(
+      `select id, session_id, session_start, duration_minutes, rate_paise_per_hour, amount_paise, payout_id
+       from tutor_earnings_ledger
+       where organization_id = $1 and tutor_id = $2 and session_start >= $3 and session_start < $4
+       order by session_start desc`,
+      [orgId, tutorId, from, to]
+    );
+    res.json({
+      ok: true,
+      earnings: rows.map((r) => ({
+        id: r.id,
+        sessionId: r.session_id,
+        sessionStart: r.session_start,
+        durationMinutes: r.duration_minutes,
+        ratePaisePerHour: r.rate_paise_per_hour,
+        amountPaise: r.amount_paise,
+        payoutId: r.payout_id
+      }))
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+router17.post("/payout-runs", requireRole(...CAN_PAYOUT), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const uid = req.user.id;
+    const body = runPayoutRequestSchema.parse(req.body);
+    const settings = await getPayoutSettings(orgId);
+    const payout = await withTransaction(async (client) => {
+      const unpaidRes = await client.query(
+        `select id, amount_paise from tutor_earnings_ledger
+         where organization_id = $1 and tutor_id = $2 and payout_id is null
+           and session_start >= $3 and session_start < $4
+         for update`,
+        [orgId, body.tutorId, body.periodStart, body.periodEnd]
+      );
+      if (unpaidRes.rowCount === 0) {
+        throw Object.assign(new Error("No unpaid earnings in this period"), { status: 422, code: "nothing_to_pay" });
+      }
+      const grossPaise = unpaidRes.rows.reduce((sum, r) => sum + r.amount_paise, 0);
+      const tdsPaise = computeTdsPaise(grossPaise, settings.tdsPercent);
+      const netPaise = grossPaise - tdsPaise;
+      const payoutRes = await client.query(
+        `insert into tutor_payouts
+           (organization_id, tutor_id, period_start, period_end, gross_paise, tds_percent, tds_paise, net_paise, status, run_by)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, 'issued', $9)
+         returning id, period_start, period_end, gross_paise, tds_percent, tds_paise, net_paise, status, paid_at, created_at`,
+        [orgId, body.tutorId, body.periodStart, body.periodEnd, grossPaise, settings.tdsPercent, tdsPaise, netPaise, uid]
+      );
+      const payoutId = payoutRes.rows[0].id;
+      await client.query(
+        `update tutor_earnings_ledger set payout_id = $1 where id = any($2::uuid[])`,
+        [payoutId, unpaidRes.rows.map((r) => r.id)]
+      );
+      return payoutRes.rows[0];
+    });
+    await writeAudit(orgId, uid, "payout.run", "tutor_payouts", payout.id, {
+      tutorId: body.tutorId,
+      periodStart: body.periodStart,
+      periodEnd: body.periodEnd,
+      grossPaise: payout.gross_paise
+    });
+    res.status(201).json({
+      ok: true,
+      payout: {
+        id: payout.id,
+        tutorId: body.tutorId,
+        periodStart: payout.period_start,
+        periodEnd: payout.period_end,
+        grossPaise: payout.gross_paise,
+        tdsPercent: Number(payout.tds_percent),
+        tdsPaise: payout.tds_paise,
+        netPaise: payout.net_paise,
+        status: payout.status,
+        paidAt: payout.paid_at,
+        createdAt: payout.created_at
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+router17.get("/payout-runs", async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const role = req.user.role;
+    const isPayoutStaff = CAN_PAYOUT.includes(role || "");
+    const queryTutorId = req.query.tutorId;
+    let tutorId;
+    if (isPayoutStaff && queryTutorId) {
+      tutorId = queryTutorId;
+    } else if (role === "tutor") {
+      tutorId = req.user.id;
+    } else {
+      return res.status(403).json({ error: { code: "forbidden", message: "No access to payout runs" } });
+    }
+    const { rows } = await pool.query(
+      `select id, tutor_id, period_start, period_end, gross_paise, tds_percent, tds_paise, net_paise, status, paid_at, created_at
+       from tutor_payouts where organization_id = $1 and tutor_id = $2 order by created_at desc`,
+      [orgId, tutorId]
+    );
+    res.json({
+      ok: true,
+      payouts: rows.map((p) => ({
+        id: p.id,
+        tutorId: p.tutor_id,
+        periodStart: p.period_start,
+        periodEnd: p.period_end,
+        grossPaise: p.gross_paise,
+        tdsPercent: Number(p.tds_percent),
+        tdsPaise: p.tds_paise,
+        netPaise: p.net_paise,
+        status: p.status,
+        paidAt: p.paid_at,
+        createdAt: p.created_at
+      }))
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+router17.post("/payout-runs/:id/mark-paid", requireRole(...CAN_PAYOUT), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const { data: payout, error } = await supabaseAdmin.from("tutor_payouts").select("id, organization_id, status").eq("id", req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!payout || payout.organization_id !== orgId) {
+      return res.status(404).json({ error: { code: "not_found", message: "Payout not found" } });
+    }
+    if (payout.status === "paid") {
+      return res.status(422).json({ error: { code: "already_paid", message: "Payout is already marked paid" } });
+    }
+    const { error: updateErr } = await supabaseAdmin.from("tutor_payouts").update({ status: "paid", paid_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", payout.id);
+    if (updateErr) throw updateErr;
+    await writeAudit(orgId, req.user.id, "payout.mark_paid", "tutor_payouts", payout.id, {});
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+router17.get("/payout-runs/:id/statement", async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const role = req.user.role;
+    const { data: payout, error } = await supabaseAdmin.from("tutor_payouts").select("*").eq("id", req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!payout || payout.organization_id !== orgId) {
+      return res.status(404).json({ error: { code: "not_found", message: "Payout not found" } });
+    }
+    const isPayoutStaff = CAN_PAYOUT.includes(role || "");
+    if (!isPayoutStaff && payout.tutor_id !== req.user.id) {
+      return res.status(403).json({ error: { code: "forbidden", message: "No access to this statement" } });
+    }
+    const [{ data: org }, { data: tutor }, { rows: lines }] = await Promise.all([
+      supabaseAdmin.from("organizations").select("name, address, phone, email").eq("id", orgId).maybeSingle(),
+      supabaseAdmin.from("profiles").select("name, email").eq("id", payout.tutor_id).maybeSingle(),
+      pool.query(
+        `select session_start, duration_minutes, rate_paise_per_hour, amount_paise
+         from tutor_earnings_ledger where payout_id = $1 order by session_start asc`,
+        [payout.id]
+      )
+    ]);
+    const pdf = renderPayoutStatementPdf({
+      payout: {
+        periodStart: payout.period_start,
+        periodEnd: payout.period_end,
+        status: payout.status,
+        grossPaise: payout.gross_paise,
+        tdsPercent: Number(payout.tds_percent),
+        tdsPaise: payout.tds_paise,
+        netPaise: payout.net_paise,
+        paidAt: payout.paid_at,
+        createdAt: payout.created_at
+      },
+      org: { name: org?.name || "Tuition Center", address: org?.address || null, phone: org?.phone || null, email: org?.email || null },
+      tutor: { name: tutor?.name || null, email: tutor?.email || null },
+      lines: lines.map((l) => ({
+        sessionStart: l.session_start,
+        durationMinutes: l.duration_minutes,
+        ratePaisePerHour: l.rate_paise_per_hour,
+        amountPaise: l.amount_paise
+      }))
+    });
+    const isoDate = (d) => new Date(d).toISOString().slice(0, 10);
+    const filename = `payout-${isoDate(payout.period_start)}-${isoDate(payout.period_end)}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", String(pdf.byteLength));
+    res.setHeader("Cache-Control", "private, no-store");
+    res.end(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+var payouts_default = router17;
+
 // server/app.ts
 function createApp() {
   if (process.env.SENTRY_DSN) {
@@ -4508,7 +4974,7 @@ function createApp() {
       tracesSampleRate: 0.1
     });
   }
-  const app2 = express17();
+  const app2 = express18();
   const isProd = process.env.NODE_ENV === "production";
   app2.use(pino({
     level: isProd ? "info" : "debug",
@@ -4529,7 +4995,7 @@ function createApp() {
     // header-based auth only; no cookies, no CSRF surface
   }));
   app2.set("trust proxy", 1);
-  app2.use("/api/webhooks", express17.raw({ type: "*/*", limit: "1mb" }), webhooks_default);
+  app2.use("/api/webhooks", express18.raw({ type: "*/*", limit: "1mb" }), webhooks_default);
   const apiLimiter = rateLimit({
     windowMs: 60 * 1e3,
     max: 120,
@@ -4539,7 +5005,7 @@ function createApp() {
     // (coaching centers share IPs). ipKeyGenerator handles IPv6 subnets.
     keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip || "")
   });
-  app2.use(express17.json({ limit: "1mb" }));
+  app2.use(express18.json({ limit: "1mb" }));
   app2.use("/api/", identifyUser, apiLimiter);
   app2.use("/api/v1/settings", settings_default);
   app2.use("/api/v1/members", members_default);
@@ -4555,6 +5021,7 @@ function createApp() {
   app2.use("/api/v1/admin", admin_default);
   app2.use("/api/v1/org-export", orgExport_default);
   app2.use("/api/v1/audit-log", auditLog_default);
+  app2.use("/api/v1/payouts", payouts_default);
   app2.use("/api/cron", cron_default);
   app2.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });

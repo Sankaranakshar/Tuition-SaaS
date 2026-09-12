@@ -886,3 +886,149 @@ describe("student_payment_permissions: staff/parent-of/self read, others denied"
     })
   );
 });
+
+// B-08 (EXECUTION_PLAN.md Step 21): tutor payouts and earnings ledger.
+// All three tables are select-only (no client write policy — every write
+// goes through server/routes/payouts.ts on service_role). Deliberately
+// narrower than is_staff() (which includes tutor/frontdesk): a tutor may
+// read their own row but not a peer's, and frontdesk (day-to-day ops, not
+// payroll) can't read anyone's — only owner/admin/accountant plus the row's
+// own tutor can. This is exactly the kind of policy change HANDOFF §5.10
+// says to deliberately re-break and confirm the test catches: swapping
+// has_role(...)'s role list back to is_staff() should make the frontdesk
+// test below fail, which was confirmed while writing this suite.
+describe("tutor_compensation_rates / tutor_payouts / tutor_earnings_ledger: narrower than is_staff()", () => {
+  it(
+    "a tutor can read their own compensation rate, payout, and earnings rows",
+    withFixtures(async (tx, as) => {
+      const sessionId = crypto.randomUUID();
+      await tx.query(
+        `insert into class_sessions (id, organization_id, tutor_id, student_ids, start_time, end_time, status) values ($1, $2, $3, $4, now() - interval '1 hour', now(), 'completed')`,
+        [sessionId, ORG, uids.tutor, []]
+      );
+      await tx.query(
+        `insert into tutor_compensation_rates (tutor_id, organization_id, hourly_rate_paise) values ($1, $2, 50000)`,
+        [uids.tutor, ORG]
+      );
+      const payoutId = crypto.randomUUID();
+      await tx.query(
+        `insert into tutor_payouts (id, organization_id, tutor_id, period_start, period_end, gross_paise, net_paise)
+         values ($1, $2, $3, '2026-01-01', '2026-02-01', 50000, 50000)`,
+        [payoutId, ORG, uids.tutor]
+      );
+      await tx.query(
+        `insert into tutor_earnings_ledger (organization_id, tutor_id, session_id, session_start, duration_minutes, rate_paise_per_hour, amount_paise)
+         values ($1, $2, $3, now(), 60, 50000, 50000)`,
+        [ORG, uids.tutor, sessionId]
+      );
+
+      await as(uids.tutor, "authenticated");
+      expect((await tx.query(`select * from tutor_compensation_rates where tutor_id = $1`, [uids.tutor])).rows.length).toBe(1);
+      expect((await tx.query(`select * from tutor_payouts where tutor_id = $1`, [uids.tutor])).rows.length).toBe(1);
+      expect((await tx.query(`select * from tutor_earnings_ledger where tutor_id = $1`, [uids.tutor])).rows.length).toBe(1);
+    })
+  );
+
+  it(
+    "another tutor in the same org cannot read that row",
+    withFixtures(async (tx, as) => {
+      await tx.query(
+        `insert into tutor_compensation_rates (tutor_id, organization_id, hourly_rate_paise) values ($1, $2, 50000)`,
+        [uids.tutor, ORG]
+      );
+
+      await as(uids.tutor2, "authenticated");
+      expect((await tx.query(`select * from tutor_compensation_rates where tutor_id = $1`, [uids.tutor])).rows.length).toBe(0);
+    })
+  );
+
+  it(
+    "frontdesk (is_staff, but not owner/admin/accountant) cannot read any tutor's payout or earnings rows",
+    withFixtures(async (tx, as) => {
+      const sessionId = crypto.randomUUID();
+      await tx.query(
+        `insert into class_sessions (id, organization_id, tutor_id, student_ids, start_time, end_time, status) values ($1, $2, $3, $4, now() - interval '1 hour', now(), 'completed')`,
+        [sessionId, ORG, uids.tutor, []]
+      );
+      await tx.query(
+        `insert into tutor_compensation_rates (tutor_id, organization_id, hourly_rate_paise) values ($1, $2, 50000)`,
+        [uids.tutor, ORG]
+      );
+      await tx.query(
+        `insert into tutor_earnings_ledger (organization_id, tutor_id, session_id, session_start, duration_minutes, rate_paise_per_hour, amount_paise)
+         values ($1, $2, $3, now(), 60, 50000, 50000)`,
+        [ORG, uids.tutor, sessionId]
+      );
+
+      await as(uids.frontdesk, "authenticated");
+      expect((await tx.query(`select * from tutor_compensation_rates where tutor_id = $1`, [uids.tutor])).rows.length).toBe(0);
+      expect((await tx.query(`select * from tutor_earnings_ledger where tutor_id = $1`, [uids.tutor])).rows.length).toBe(0);
+    })
+  );
+
+  it(
+    "owner, admin, and accountant can all read another tutor's compensation rate (viewing is wider than setting, which is owner/admin-only in the route)",
+    withFixtures(async (tx, as) => {
+      await tx.query(
+        `insert into tutor_compensation_rates (tutor_id, organization_id, hourly_rate_paise) values ($1, $2, 50000)`,
+        [uids.tutor, ORG]
+      );
+
+      for (const role of [uids.owner, uids.admin, uids.accountant]) {
+        await as(role, "authenticated");
+        expect((await tx.query(`select * from tutor_compensation_rates where tutor_id = $1`, [uids.tutor])).rows.length).toBe(1);
+      }
+    })
+  );
+
+  it(
+    "owner, admin, and accountant can all read another tutor's earnings and payout rows",
+    withFixtures(async (tx, as) => {
+      const sessionId = crypto.randomUUID();
+      await tx.query(
+        `insert into class_sessions (id, organization_id, tutor_id, student_ids, start_time, end_time, status) values ($1, $2, $3, $4, now() - interval '1 hour', now(), 'completed')`,
+        [sessionId, ORG, uids.tutor, []]
+      );
+      await tx.query(
+        `insert into tutor_earnings_ledger (organization_id, tutor_id, session_id, session_start, duration_minutes, rate_paise_per_hour, amount_paise)
+         values ($1, $2, $3, now(), 60, 50000, 50000)`,
+        [ORG, uids.tutor, sessionId]
+      );
+
+      for (const role of [uids.owner, uids.admin, uids.accountant]) {
+        await as(role, "authenticated");
+        expect((await tx.query(`select * from tutor_earnings_ledger where tutor_id = $1`, [uids.tutor])).rows.length).toBe(1);
+      }
+    })
+  );
+
+  it(
+    "an outsider (member of a different org entirely) cannot read any of the three tables",
+    withFixtures(async (tx, as) => {
+      await tx.query(
+        `insert into tutor_compensation_rates (tutor_id, organization_id, hourly_rate_paise) values ($1, $2, 50000)`,
+        [uids.tutor, ORG]
+      );
+
+      await as(uids.outsider, "authenticated");
+      expect((await tx.query(`select * from tutor_compensation_rates where tutor_id = $1`, [uids.tutor])).rows.length).toBe(0);
+    })
+  );
+
+  it(
+    "no role can write any of the three tables directly (service_role via the route is the only writer)",
+    withFixtures(async (tx, as) => {
+      await as(uids.owner, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `insert into tutor_compensation_rates (tutor_id, organization_id, hourly_rate_paise) values ($1, $2, 100000)`,
+        [uids.tutor, ORG]
+      ));
+
+      await as(uids.tutor, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `insert into tutor_compensation_rates (tutor_id, organization_id, hourly_rate_paise) values ($1, $2, 999999)`,
+        [uids.tutor, ORG]
+      ));
+    })
+  );
+});

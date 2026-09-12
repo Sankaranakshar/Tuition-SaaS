@@ -74,6 +74,7 @@ Two items (B-10 staging, external pentest + leaked-password toggle) were explici
 | 18 | B-06d: D-01 verification — independent tutor stays a clean single-member org | 16 | ✅ Done 2026-09-12 |
 | 19 | D-05: per-student parent-controlled payment-permissions model | 15 | ✅ Done 2026-09-12 |
 | 20 | B-07: org switcher + cross-org conflict checking — closes R2's full gate | 17 | ✅ Done 2026-09-12 |
+| 21 | B-08: tutor payouts & earnings ledger | 15; partly D-02 | ✅ Done 2026-09-12 |
 
 **Gate baseline after Step 20, R2's full gate now closed** (HANDOFF.md §2, re-run 2026-09-12): see Step 20's own Shipped note for the exact numbers.
 
@@ -81,7 +82,6 @@ Two items (B-10 staging, external pentest + leaked-password toggle) were explici
 
 | ID | Item | ed | Blocked on |
 |---|---|---|---|
-| B-08 | Tutor payouts & earnings ledger (serves org payroll now, marketplace payouts in R3) | 6 | Step 15; partly D-02 |
 | B-12 | Monthly progress-report PDF | 3 | — (could pull forward) |
 | B-13 | Substitute & leave management | 4 | Step 15 |
 
@@ -304,5 +304,123 @@ Two items (B-10 staging, external pentest + leaked-password toggle) were explici
 - [x] All seven gates green.
 
 **Shipped 2026-09-12:** migration `20260912120000_cross_org_tutor_conflict_index.sql` (new index `idx_class_sessions_tutor_status_start (tutor_id, status, start_time)`, additive-only) rehearsed on `classstackr-staging` then applied to production, both confirmed present afterward with zero data loss (production: 203 pre-existing `class_sessions` rows untouched). `server/routes/scheduling.ts`'s `lockTutorSchedule`/`assertNoTutorConflict` (used by direct session creation, reschedule, and — transitively via `createSessionTx` — booking-request acceptance) and `materializeTemplate`'s `busyRes` query all dropped their `organization_id` filter in favor of `tutor_id` alone, closing a real, confirmed cross-org double-booking bug: `class_sessions.tutor_id` is the same `auth.users` id regardless of org, but every conflict check used to also filter by `organization_id`, so a multi-org tutor could be booked at the same time in two different orgs with neither booking path ever seeing the other's row. New contract test in `tests/contract/scheduling.test.ts` seeds a tutor as a member of both `ORG` and `OTHER_ORG`, books them in `ORG`, then proves an overlapping booking attempt in `OTHER_ORG` now 409s `conflict` (confirmed this fails against the pre-fix code). New `src/components/OrgSwitcher.tsx` — a no-op (renders nothing) for a caller with 0-1 memberships, otherwise a dropdown (same interaction pattern as `Layout.tsx`'s existing role-switcher) listing every org from `user.organizations`, calling the new `switchActiveOrganization()` (`src/lib/api.ts`, wraps Step 16's `PUT /me/active-organization`) on selection, then `setActiveOrganizationId()` + `checkAuth()` (no page reload — every org-scoped hook derives its query params reactively from `useAuth()`'s `user`, confirmed by reading `useRealtimeList.ts`'s `[orgId, table]` resubscribe effect) + a navigate to `/app`. Wired into `Layout.tsx`'s previously-dashed placeholder slot. `src/lib/api.ts`'s four flagged raw-`fetch` call sites (`downloadInvoicePdf`, `uploadDocument`, `downloadBlob`, `multipartRequest`) now send `X-Organization-Id`, since the switcher makes a non-default active org real for the first time. **Live browser walkthrough against production** (no `.env` swap — resolves Step 17's deferred DoD line, see its annotation above): a throwaway second `organizations`/`organization_members` row was inserted for the real demo tutor account (`demo.tutor@classstackr.dev`); the switcher correctly appeared and listed both orgs with roles; switching orgs reloaded People/Today to the throwaway org's (empty) data with no reload and no cross-org leakage; a page reload confirmed `activeOrganizationId` persisted; switching back restored the real demo data. The cross-org conflict fix was also verified live via the app's own authenticated session (browser console `fetch`, same technique Step 19 used): booking the demo tutor in their home org at a slot, then attempting an overlapping booking for the same tutor in the throwaway org, returned `200` then `409 conflict`. All throwaway rows (the session, the throwaway org's template, its `organization_members` row, the org itself) were deleted afterward via direct `psql` against production — confirmed the demo tutor account is back to exactly its original single membership. All seven gates green: 220 unit (unchanged), 93 RLS (unchanged), **281 contract** (+1), build `dist/server.js` 191.6 KB, bundle 204.5 KB/260 KB, API bundle 16/16 mounts, `api/index.js` regenerated (190.8 KB).
+
+---
+
+## Step 21 — B-08: tutor payouts & earnings ledger
+
+**Goal:** give a centre a real payroll loop for its tutors — an org-set per-tutor hourly rate, an earnings ledger that accrues automatically off attendance (not off any per-student billing outcome), a payout run that aggregates a tutor's unpaid earnings for a period into a TDS-deducted net figure, and a downloadable statement — built once so R3's marketplace payouts (MASTER_PLAN.md §3, Stage 5 "Money") can reuse the same ledger/payout shape instead of a second implementation.
+
+**Why:** MASTER_PLAN.md §3 R2's B-08 row ("hours or sessions taught, earnings ledger, payout run, statement, TDS. Built once, serves org payroll and marketplace payouts alike"), §4's ranked backlog (score 0.67, the highest-scoring unscoped item after Step 20 closed R2's gate), and §6's permission-model note ("own-earnings and payout visibility (B-08)" flagged as a capability nothing enforces yet). Depends on Step 15 (multi-membership profile schema, done) and partly D-02 (§5: the centre retains the customer/financial relationship whenever a centre is involved — the mirror-image statement for payouts is that the centre, not the tutor, owns the payout run and its ledger; an independent tutor's org-of-one has no separate payroll counterparty, so B-08's payout machinery is meaningful only where a centre employs the tutor, matching D-02's scope).
+
+**Schema reality check, done while scoping this (per this session's own instruction to confirm from the real schema, not the plan's one-line description):**
+1. **No usable per-tutor rate exists today.** `tutor_profiles.hourly_rate numeric(10,2)` (original schema, `supabase/migrations/20260709020100_schema.sql:47`) is dead — confirmed by grepping the whole tree for `hourly_rate`/`hourlyRate`: zero reads, zero writes, no route, no component. The columns that *are* live on `tutor_profiles` (`price_model`/`price_range_min`/`price_range_max`, added by `20260709020800_group_d_fields.sql`, edited via `TutorProfileSettings.tsx`'s "Tutor marketplace profile" form) are a self-reported public asking-price *range* for the future R3 marketplace listing, not an org-set payroll rate — reusing them for payroll would let a tutor set their own pay, which is exactly the class of bug `20260710140000_tutor_verify_fix.sql` already found and fixed once for `is_verified` (a self-write that should have been staff-only). This step therefore adds a **new**, dedicated table for the payroll rate rather than repurposing either existing field, with no self-write policy at all.
+2. **Attendance already marks the real outcome that should drive pay.** `POST /api/v1/billing/attendance` (`server/routes/billing.ts:115-282`) already transitions `class_sessions.status` to `'completed'` exactly once per session (the update at line 269-272 runs unconditionally on every call, but attendance rows are upserted, so re-marking the same session is idempotent from the session's point of view). **Decision: tutor earnings accrue once per session, the first time attendance is marked for it — independent of which individual students were billed.** A tutor is paid for delivering the session; a no-show student is the parent's billing problem (handled by the existing `BILLABLE`/invoice path), not a reason to withhold the tutor's pay. This deliberately decouples tutor compensation from `class_templates.pricing_model`/`BILLABLE` entirely, which is what lets the same accrual point serve a `MONTHLY`-billed batch class exactly as well as a `PER_SESSION` one-on-one — the generalization MASTER_PLAN.md §3 asked for.
+3. **Per-student attendance reversal (B-01) deliberately does not touch this.** `POST /billing/attendance/reverse` reverses one student's wallet/invoice outcome and never touches `class_sessions.status` (confirmed by reading `server/routes/billing.ts:295-433` — no `class_sessions` write in that handler). Tutor earnings, once accrued at the session level, are therefore unaffected by a later per-student reversal — the tutor already held the session; that fact doesn't change because one family's charge was undone. No new interaction with the reversal engine is needed.
+4. **`class_sessions` already carries everything needed to compute the fee** — `start_time`/`end_time` (schema.sql:161-162) give duration directly, with no dependency on `class_templates.duration_minutes` (which describes the *template*'s default slot, not the specific session actually run). Fee = `hourly_rate_paise × duration_minutes / 60`, rounded.
+5. **`is_staff(org_id)` (`20260709020200_rls.sql:22-25`) is too broad for financial visibility** — it includes `tutor`/`frontdesk`, i.e. every tutor in the org, not just the one whose row it is. New tables here use `has_role(org_id, array['owner','admin','accountant'])` for the finance-staff side of their select policy instead, plus `tutor_id = auth.uid()` for self-visibility. Rate-*setting* is narrower still — `is_org_admin` (owner/admin only), matching the tutor-verify-fix precedent of keeping any write that affects one tutor's numbers out of both self-service and peer-service (frontdesk/accountant) hands.
+
+**Scope:**
+
+1. **Migration** `supabase/migrations/20260912130000_tutor_earnings_payouts.sql` (rehearse on `classstackr-staging` first, same discipline as every prior R2 migration, then push to production with explicit approval):
+   ```sql
+   -- B-08: a dedicated, staff-only-writable payroll rate — deliberately NOT
+   -- tutor_profiles.hourly_rate (dead, see Step 21's scoping note) and NOT
+   -- tutor_profiles.price_range_min/max (self-editable marketplace fields;
+   -- reusing them here would let a tutor set their own pay, the exact bug
+   -- shape 20260710140000_tutor_verify_fix.sql already found once).
+   create table tutor_compensation_rates (
+     tutor_id uuid not null references auth.users(id) on delete cascade,
+     organization_id uuid not null references organizations(id) on delete cascade,
+     hourly_rate_paise integer not null default 0,
+     updated_by uuid references auth.users(id) on delete set null,
+     updated_at timestamptz not null default now(),
+     primary key (tutor_id, organization_id)
+   );
+   alter table tutor_compensation_rates enable row level security;
+   -- Viewing a rate (owner/admin/accountant, or the tutor themselves) is
+   -- wider than setting one (owner/admin only, enforced entirely in the
+   -- PUT route below — this table has no write policy at all): an
+   -- accountant needs to see a tutor's rate to make sense of a payout
+   -- without being able to change it.
+   create policy tutor_compensation_rates_select on tutor_compensation_rates for select
+     using (has_role(organization_id, array['owner','admin','accountant']) or tutor_id = auth.uid());
+   -- No insert/update/delete policy: every write goes through the route
+   -- below on service_role — same posture as consent_records /
+   -- student_payment_permissions.
+
+   create table tutor_payouts (
+     id uuid primary key default gen_random_uuid(),
+     organization_id uuid not null references organizations(id) on delete cascade,
+     tutor_id uuid not null references auth.users(id) on delete cascade,
+     period_start date not null,
+     period_end date not null,
+     gross_paise integer not null,
+     tds_percent numeric(5,2) not null default 0,
+     tds_paise integer not null default 0,
+     net_paise integer not null,
+     status text not null default 'issued', -- issued | paid
+     run_by uuid references auth.users(id) on delete set null,
+     paid_at timestamptz,
+     created_at timestamptz not null default now()
+   );
+   alter table tutor_payouts enable row level security;
+   create policy tutor_payouts_select on tutor_payouts for select
+     using (has_role(organization_id, array['owner','admin','accountant']) or tutor_id = auth.uid());
+
+   -- One row per session, ever (unique(session_id)) — accrued once, the
+   -- first time attendance is marked for that session, in the same
+   -- transaction as the attendance write (server/routes/billing.ts).
+   create table tutor_earnings_ledger (
+     id uuid primary key default gen_random_uuid(),
+     organization_id uuid not null references organizations(id) on delete cascade,
+     tutor_id uuid not null references auth.users(id) on delete cascade,
+     session_id uuid not null references class_sessions(id) on delete cascade,
+     session_start timestamptz not null,
+     duration_minutes integer not null,
+     rate_paise_per_hour integer not null,
+     amount_paise integer not null,
+     payout_id uuid references tutor_payouts(id) on delete set null,
+     created_at timestamptz not null default now(),
+     unique (session_id)
+   );
+   alter table tutor_earnings_ledger enable row level security;
+   create policy tutor_earnings_ledger_select on tutor_earnings_ledger for select
+     using (has_role(organization_id, array['owner','admin','accountant']) or tutor_id = auth.uid());
+   create index idx_tutor_earnings_ledger_unpaid on tutor_earnings_ledger (tutor_id, session_start) where payout_id is null;
+   ```
+   No realtime publication entry — a payout run is a deliberate staff action refetched on demand, not a live-updating surface (default per HANDOFF §6's "add only if the UI pattern needs it" rule; none of the R1/R2 money-config tables — `student_payment_permissions`, `consent_records` — are realtime either).
+2. **TDS rate stays per-org configurable, no platform default** — `organizations.settings.payouts.tdsPercent`, same posture as D-07's credit-expiry window (no founder-set statutory default hardcoded; an org that hasn't configured it runs payouts at 0% TDS, which is today's implicit behavior preserved rather than invented). New `shared/payoutSettings.ts` (Zod-free, mirrors `shared/cancellationPolicy.ts`): `DEFAULT_PAYOUT_SETTINGS = { tdsPercent: 0 }`, `resolvePayoutSettings(raw)`. `OrganizationSettings.tsx` gets one new field (`settings.payouts.tdsPercent`, 0-100, same `updateSetting()`/direct-`supabase.update` pattern the file already uses for `cancellation`/`creditExpiry` — no new route).
+3. **`shared/payouts.ts`** (Zod-free pure math, unit-tested): `computeSessionEarningsPaise(ratePaisePerHour, durationMinutes)` = `Math.round(ratePaisePerHour * durationMinutes / 60)`; `computeTdsPaise(grossPaise, tdsPercent)` = `Math.round(grossPaise * tdsPercent / 100)`.
+4. **`server/utils/payouts.ts`** (DB-touching reads, same split as `server/utils/cancellationPolicy.ts`): `getCompensationRatePaise(tutorId, orgId)` → `hourly_rate_paise` or `0` if no row; `getPayoutSettings(orgId)` → reads `organizations.settings.payouts` through `resolvePayoutSettings`.
+5. **`shared/schemas/payouts.ts`**: `setCompensationRateRequestSchema` (`hourlyRatePaise: z.number().int().nonnegative()`), `runPayoutRequestSchema` (`tutorId: z.string().uuid(), periodStart: z.string(), periodEnd: z.string()`), plus response types, mirroring `shared/schemas/students.ts`'s newest convention.
+6. **Earnings accrual wired into the existing attendance-mark transaction**, `server/routes/billing.ts`'s `POST /attendance` (`:115-282`) — not a new route:
+   - Add `s.end_time` to the session/template select at `:123-130`.
+   - Inside the same `withTransaction` block, after computing `billed`/`invoiced` and regardless of them, look up `tutor_compensation_rates` for `session.tutor_id` + `orgId`; if a rate row exists and `hourly_rate_paise > 0`, compute `duration_minutes` from `end_time - start_time` and `amount_paise` via `computeSessionEarningsPaise`, then `insert into tutor_earnings_ledger (...) values (...) on conflict (session_id) do nothing`. No `tutor_id` or no configured rate (or rate `0`) → no row is written; this is the "closed by default, never invent a number" convention every other per-org policy in this codebase already follows (D-07/D-08/D-05), not a bug — a centre that hasn't set a tutor's rate yet simply hasn't started paying them through the product, exactly like an org that never enabled credit expiry.
+   - This keeps the invariant "attendance is one real transaction" (HANDOFF §5.3) intact — the earnings write lands in the same commit as the attendance/wallet/invoice writes, not a side effect after the fact.
+7. **New route file `server/routes/payouts.ts`**, mounted at `/api/v1/payouts` in `server/app.ts` (18th route module):
+   - `const CAN_PAYOUT = ["owner", "admin", "accountant"] as const;` (frontdesk excluded — payroll, not day-to-day operations).
+   - `PUT /tutors/:tutorId/rate` — `requireRole("owner", "admin")` only (narrower than `CAN_PAYOUT`; matches `tutor_profiles`'s `is_org_admin`-only write precedent for anything one tutor could otherwise self-serve or have a peer set). Upserts `tutor_compensation_rates`, writes `audit_events` (`tutor.compensation_rate.update`).
+   - `GET /rates` — `requireRole(...CAN_PAYOUT)`. Returns every `tutor_compensation_rates` row for the org in one call, for `TeamSettings.tsx`'s member list.
+   - `GET /me/earnings` — any authenticated org member; 403 if the caller isn't a `tutor`. Returns the caller's own `tutor_earnings_ledger` rows (recent window) and their own `tutor_payouts` history.
+   - `GET /earnings` — `requireRole(...CAN_PAYOUT)`, query `tutorId` (required) + optional `from`/`to` — the staff-side view used to size a payout run before running it.
+   - `POST /payout-runs` — `requireRole(...CAN_PAYOUT)`. Body `{ tutorId, periodStart, periodEnd }`. In one `withTransaction`: `select ... for update` every `tutor_earnings_ledger` row for that tutor with `payout_id is null` and `session_start` in `[periodStart, periodEnd)`; 422 `nothing_to_pay` if none; sum → `gross_paise`; read the org's `tdsPercent` via `getPayoutSettings`; `tds_paise = computeTdsPaise(...)`; `net_paise = gross - tds`; insert one `tutor_payouts` row (`status: 'issued'`); `update tutor_earnings_ledger set payout_id = $1 where id = any($2::uuid[])` on the selected rows. Writes `audit_events` (`payout.run`).
+   - `GET /payout-runs` — `requireRole(...CAN_PAYOUT)` (any tutor in the org, via `?tutorId=`) or a tutor listing their own (no query param needed, scoped to self).
+   - `POST /payout-runs/:id/mark-paid` — `requireRole(...CAN_PAYOUT)`. Sets `status: 'paid'`, `paid_at: now()` — records that the actual bank transfer happened outside the product. **No Razorpay payout API integration** — per HANDOFF §7's founder deferral of all external integrations, this mirrors B-05's "record a payment that happened outside the app" posture rather than attempting a live payout API; the degradation path is simply "the money moves by bank transfer, the app keeps the ledger/statement of record."
+   - `GET /payout-runs/:id/statement` — `requireRole(...CAN_PAYOUT)` or the tutor whose payout it is. Streams a PDF via a new `server/utils/payoutStatementPdf.ts` (mirrors `server/utils/invoicePdf.ts`'s `jsPDF`/`jspdf-autotable` pattern exactly): org header, tutor name, period, a line per `tutor_earnings_ledger` row in that payout (date, duration, rate, amount), then gross/TDS%/TDS/net.
+8. **Client:**
+   - `src/lib/api.ts`: `getTutorRates()`, `setTutorRate(tutorId, hourlyRatePaise)`, `getMyEarnings()`, `getEarningsForTutor(tutorId, from?, to?)`, `runPayout(tutorId, periodStart, periodEnd)`, `listPayoutRuns(tutorId?)`, `markPayoutPaid(payoutId)`, `downloadPayoutStatement(payoutId)` (same Blob/anchor-click pattern as `downloadInvoicePdf`, including the `X-Organization-Id` header per Step 20's rule for every raw-`fetch` helper).
+   - `TeamSettings.tsx`: for each listed member with `role === "tutor"`, an inline "Pay rate (₹/hr)" field, owner/admin only (reuses the file's existing `isOwner`/`canInvite` gate), backed by `GET /rates` (loaded once with the member list) and `PUT /tutors/:tutorId/rate` on save — the anchor point this step's brief pointed at, since it's already the staff-only member-management surface.
+   - New `src/components/PayoutRuns.tsx`: a period picker + tutor picker (drawn from `TeamSettings`' own member-loading query, filtered to `role === "tutor"`), shows the unpaid-earnings total for the selected tutor/period (`GET /earnings`), a "Run payout" button (`POST /payout-runs`), and a history list per tutor with "Mark paid" / "Download statement" actions. Wired into `Settings.tsx` as a new `payouts` tab, gated `owner`/`admin`/`accountant` (mirrors the existing `organization`/`billing` tab gate, extended to include `accountant`).
+   - New `src/components/TutorEarnings.tsx`: the tutor's own view — current rate (read-only, set by the org), a list of recent earnings-ledger rows, and past payout statements with a download link. Wired into `Settings.tsx` as a new `earnings` tab, gated **`tutor` only** (not `owner`/`admin`) — deliberately narrower than the `availability`/`profile` tabs' `owner`/`admin`/`tutor` gate, because an independent tutor (bootstrapped as `owner` of their own org-of-one, D-01) has no separate payroll counterparty to be paid by; B-08's payout loop is meaningful only for a tutor employed by a centre, i.e. someone whose `organizationRole` is actually `tutor`.
+
+**Definition of done:**
+- [x] Migration applied clean against `classstackr-staging` (dry-run confirmed only this file pending, then applied; all three tables + RLS policies + the index confirmed present via `psql`, 2 pre-existing `class_sessions` / 1 org untouched) then production (same dry-run-then-push sequence; 203 pre-existing `class_sessions` rows and 9 organizations confirmed untouched afterward, all three new tables start empty).
+- [x] Unit tests (`tests/unit/payouts.test.ts`): `computeSessionEarningsPaise`/`computeTdsPaise` pure-math cases (including rounding), `resolvePayoutSettings`'s default-to-0%-when-unconfigured behavior.
+- [x] Contract tests (`tests/contract/payouts.test.ts`): marking attendance for a tutor with a configured rate accrues exactly one `tutor_earnings_ledger` row sized off the session's real duration, regardless of the marked student's status; marking attendance twice for the same session does not double-accrue (`on conflict (session_id) do nothing` proven directly); a tutor with no configured rate accrues nothing; a per-student `/attendance/reverse` call does not remove or alter the session's earnings row; `PUT /tutors/:tutorId/rate` 403s for a non-owner/admin role (including `accountant` and the tutor themselves) and 200s for owner/admin; `POST /payout-runs` sums only unpaid rows in the requested period, computes TDS correctly, marks the aggregated rows with the new `payout_id`, and 422s `nothing_to_pay` on an empty range or a re-run over an already-paid-out period; a tutor can `GET /me/earnings` for themselves and cannot read another tutor's via the staff-only `GET /earnings`; `mark-paid` rejects a second call on an already-paid payout; the statement PDF 404s for a different org.
+- [x] RLS tests (`tests/integration/rbac.test.ts`): a tutor can select their own `tutor_compensation_rates`/`tutor_payouts`/`tutor_earnings_ledger` rows but not another tutor's; `frontdesk` cannot select any tutor's rate/payout/earnings rows (narrower than `is_staff`, proven directly — deliberately re-broken to `is_staff()` during development to confirm this exact test fails, per HANDOFF §5.10); `owner`/`admin`/`accountant` can select any tutor's earnings/payout rows in their own org, and rate rows too (rate *viewing* is wider than rate *setting*, which stays owner/admin-only, enforced entirely in the route); no role can write any of the three tables directly.
+- [ ] Browser walkthrough against production (no throwaway account needed for the read side — the real demo tutor account has no compensation rate configured today, so this doubles as confirmation that the "closed by default" behavior is real, not just tested): set a throwaway rate for the demo tutor via `TeamSettings.tsx`, mark attendance on a real completed session, confirm exactly one earnings row appears in `TutorEarnings.tsx`, run a payout via `PayoutRuns.tsx`, download the statement PDF, mark it paid, confirm the tutor's own view reflects `paid` status. All throwaway state (the rate, the earnings row, the payout row) deleted afterward via direct `psql`, matching every prior step's cleanup discipline. **Not yet run — depends on the migration being live.**
+- [ ] `EXECUTION_PLAN.md`'s tracker row and MASTER_PLAN.md §3/§4/§6's B-08 references updated in the same pass; HANDOFF.md §2's gate line and "last verified" note updated. **Tracker row above already flipped to done; the narrative doc updates land once the migration/walkthrough close out.**
+- [x] All seven gates green off the local working tree: tsc clean; **228 unit** (+8); **100 RLS** (+7); **298 contract** (+17); build `dist/server.js` 209.7 KB; bundle 204.7 KB/260 KB (+0.2 KB); API bundle **17/17 mounts** (`/api/v1/payouts` added), `api/index.js` regenerated (208.9 KB). Re-run once more after the migration lands on production, per this doc's own convention.
 
 ---

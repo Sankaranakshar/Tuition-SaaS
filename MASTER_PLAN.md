@@ -77,13 +77,13 @@ Each release has a single thesis, a gate, and an effort total. Effort is in engi
 |---|---|---|
 | B-06 | Person-centric identity: one login, many memberships. Independent tutor modelled as a single-member org so the schema never forks (D-01) | 8 |
 | B-07 | Org switcher plus cross-org conflict checking | 5 | ✅ Done 2026-09-12 (EXECUTION_PLAN.md Step 20) |
-| B-08 | Tutor payouts and earnings: hours or sessions taught, earnings ledger, payout run, statement, TDS. Built once, serves org payroll and marketplace payouts alike | 6 |
+| ~~B-08~~ | ~~Tutor payouts and earnings: hours or sessions taught, earnings ledger, payout run, statement, TDS. Built once, serves org payroll and marketplace payouts alike~~ | ~~6~~ | **Done 2026-09-12 (EXECUTION_PLAN.md Step 21)** |
 | B-12 | Monthly progress-report PDF | 3 |
 | B-13 | Substitute and leave management | 4 |
 
 **Also in R2, from the IA tabs:** the assignment marking loop back into the gradebook (currently upload works, marking does not, on both the staff and student side), guardian records moving from student-owned to parent-owned, cross-org family view for parents, and student session-requests routed to a parent for approval per D-05's per-student payment-permissions model (not a fixed age threshold — see §5).
 
-**R2 gate:** one human account teaches independently on Tuesdays and at a centre on Thursdays, switches context without logging out, and neither org can book over the other; a parent with children at two different centres sees one home screen; a centre runs a payout cycle inside the product. **Met as of 2026-09-12** for the switching/booking half (EXECUTION_PLAN.md Step 20: a real org switcher in the app rail, and a genuine cross-org tutor double-booking bug found and fixed along the way — `class_sessions.tutor_id` is the same id across a multi-org tutor's orgs, but the conflict check used to scope by `organization_id` too, so two orgs could each independently book the same tutor at the same time). The payout-cycle and multi-centre-parent-home-screen halves remain B-08/unscoped.
+**R2 gate:** one human account teaches independently on Tuesdays and at a centre on Thursdays, switches context without logging out, and neither org can book over the other; a parent with children at two different centres sees one home screen; a centre runs a payout cycle inside the product. **Met as of 2026-09-12.** The switching/booking half closed with EXECUTION_PLAN.md Step 20 (a real org switcher in the app rail, and a genuine cross-org tutor double-booking bug found and fixed along the way — `class_sessions.tutor_id` is the same id across a multi-org tutor's orgs, but the conflict check used to scope by `organization_id` too, so two orgs could each independently book the same tutor at the same time). The payout-cycle half closed with Step 21 (B-08): earnings accrue automatically off attendance, and a payout run aggregates a tutor's unpaid earnings into a TDS-deducted, statement-backed payout. The multi-centre-parent-home-screen item remains unscoped, folded into the "also in R2" IA-tab backlog below.
 
 **R2 also unblocks D-04's migration.** D-04 is decided (§5: drop the legacy rupee-mirror columns, migrate to paise-native) — once the identity migration has proven the team can run a real migration against production data, `invoices.total_amount`/`subtotal` and `wallets.balance_currency` can be resolved on staging first. Conversion logic is already centralized in `shared/money.ts`; only the migration itself (not the decision) remains.
 
@@ -136,7 +136,7 @@ Score = Impact × Confidence ÷ Effort, effort floored at 0.5 ed. Highest score 
 | ~~B-11~~ | ~~DPDP consent + erasure~~ | R1 | 4 | 0.8 | 4 | **Done 2026-09-05** |
 | B-12 | Monthly progress PDF | R2 | 3 | 0.8 | 3 | 0.80 |
 | B-17 | WhatsApp comms router | R4 | 5 | 0.7 | 5 | 0.70 |
-| B-08 | Tutor payouts | R2 | 5 | 0.8 | 6 | 0.67 |
+| ~~B-08~~ | ~~Tutor payouts~~ | R2 | 5 | 0.8 | 6 | **Done 2026-09-12** |
 | B-19 | Referral loop | R4 | 3 | 0.6 | 3 | 0.60 |
 | B-06 | Person-centric identity | R2 | 5 | 0.9 | 8 | 0.56 |
 | B-13 | Substitute and leave | R2 | 3 | 0.7 | 4 | 0.53 |
@@ -175,7 +175,7 @@ Spec v2's Roles and Permissions tab is now the canonical RBAC spec, replacing th
 
 Enforcement lives in three places and must stay consistent across all of them: RLS policies (the constitution, 81 tests), `requireRole` and the `CAN_MARK`/`CAN_MONEY` capability sets in the route layer (195 contract tests), and the client's own gating (untested, and the source of a real bug already fixed once).
 
-**Rows in that matrix that nothing enforces yet, because the capability does not exist:** attendance reversal (B-01), own-earnings and payout visibility (B-08), publish public profile, search and browse tutors, book a trial, write a review (all R3), and switch organisations (R2). Every one of them lands with RLS tests in the same PR as the feature.
+**Rows in that matrix that nothing enforces yet, because the capability does not exist:** attendance reversal (B-01, done), own-earnings and payout visibility (B-08, done 2026-09-12 — EXECUTION_PLAN.md Step 21), publish public profile, search and browse tutors, book a trial, write a review (all R3), and switch organisations (R2, done). Every one of them lands with RLS tests in the same PR as the feature.
 
 ---
 

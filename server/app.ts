@@ -20,6 +20,7 @@ import adminRoutes from "./routes/admin.ts";
 import orgExportRoutes from "./routes/orgExport.ts";
 import auditLogRoutes from "./routes/auditLog.ts";
 import sessionRequestsRoutes from "./routes/sessionRequests.ts";
+import payoutsRoutes from "./routes/payouts.ts";
 import { identifyUser, type AuthRequest } from "./middleware/auth.ts";
 
 // Builds the configured Express app WITHOUT starting a listener or serving the
@@ -97,6 +98,7 @@ export function createApp() {
   app.use("/api/v1/admin", adminRoutes);
   app.use("/api/v1/org-export", orgExportRoutes);
   app.use("/api/v1/audit-log", auditLogRoutes);
+  app.use("/api/v1/payouts", payoutsRoutes);
   app.use("/api/cron", cronRoutes);
 
   app.get("/api/health", (_req, res) => {

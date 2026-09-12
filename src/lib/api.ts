@@ -31,6 +31,8 @@ import type { EraseStudentResponse } from "../../shared/schemas/students";
 import type { ListAuditEventsResponse } from "../../shared/schemas/auditLog";
 import type { BulkImportInspectResponse, BulkImportPreviewResponse, BulkImportCommitResponse, ImportField, BulkImportResolutions } from "../../shared/schemas/students";
 import type { PaymentPermissions } from "../../shared/paymentPermissions";
+import type { TutorRateRow, EarningsLedgerRow, PayoutRun } from "../../shared/schemas/payouts";
+export type { TutorRateRow, EarningsLedgerRow, PayoutRun } from "../../shared/schemas/payouts";
 
 // Thin authenticated client for the privileged API (/api/v1).
 // Money and attendance mutations must go through here; they have no
@@ -602,4 +604,47 @@ export function runStudentImport(input: {
   form.append("commit", String(input.commit));
   if (input.resolutions) form.append("resolutions", JSON.stringify(input.resolutions));
   return multipartRequest<BulkImportPreviewResponse | BulkImportCommitResponse>("/students/import", form);
+}
+
+// B-08 (EXECUTION_PLAN.md Step 21): tutor payouts and earnings ledger.
+export function getTutorRates() {
+  return api<{ ok: true; rates: TutorRateRow[] }>("/payouts/rates");
+}
+
+export function setTutorRate(tutorId: string, hourlyRatePaise: number) {
+  return api<{ ok: true; tutorId: string; hourlyRatePaise: number }>(
+    `/payouts/tutors/${tutorId}/rate`,
+    { method: "PUT", body: { hourlyRatePaise } }
+  );
+}
+
+export function getMyEarnings() {
+  return api<{ ok: true; earnings: EarningsLedgerRow[]; payouts: PayoutRun[] }>("/payouts/me/earnings");
+}
+
+export function getEarningsForTutor(tutorId: string, from?: string, to?: string) {
+  const params = new URLSearchParams({ tutorId });
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  return api<{ ok: true; earnings: EarningsLedgerRow[] }>(`/payouts/earnings?${params.toString()}`);
+}
+
+export function runPayout(tutorId: string, periodStart: string, periodEnd: string) {
+  return api<{ ok: true; payout: PayoutRun }>("/payouts/payout-runs", {
+    method: "POST",
+    body: { tutorId, periodStart, periodEnd },
+  });
+}
+
+export function listPayoutRuns(tutorId?: string) {
+  const qs = tutorId ? `?tutorId=${tutorId}` : "";
+  return api<{ ok: true; payouts: PayoutRun[] }>(`/payouts/payout-runs${qs}`);
+}
+
+export function markPayoutPaid(payoutId: string) {
+  return api<{ ok: true }>(`/payouts/payout-runs/${payoutId}/mark-paid`, { method: "POST" });
+}
+
+export function downloadPayoutStatement(payoutId: string) {
+  return downloadBlob(`/payouts/payout-runs/${payoutId}/statement`, `payout-${payoutId}.pdf`);
 }

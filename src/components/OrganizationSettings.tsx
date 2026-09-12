@@ -24,7 +24,8 @@ export default function OrganizationSettings() {
     messaging: { autoCreateBatchChannels: true, notifyOnNewSession: true, notifyOnNewMessage: true },
     cancellation: { freeHours: 24, lateFeePercent: 50, noShowForfeitPercent: 100 },
     creditExpiry: { enabled: false, windowDays: 0 },
-    erasure: { walletPolicy: 'block' }
+    erasure: { walletPolicy: 'block' },
+    payouts: { tdsPercent: 0 }
   });
 
   useEffect(() => {
@@ -339,6 +340,27 @@ export default function OrganizationSettings() {
                   Erasure permanently removes a student's personal and academic data. Invoices, payments and wallet
                   history are kept as anonymised records for the 8-year retention period and are never deleted.
                 </p>
+              </div>
+            </div>
+          </section>
+
+          {/* Tutor Payouts */}
+          <section>
+            <h3 className="mb-4 border-b border-[var(--cs-border)] pb-2 text-sm font-semibold text-[var(--cs-text)]">9. Tutor Payouts</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">TDS Deduction (%)</label>
+                <p className="text-xs text-[var(--cs-text-muted)] mb-1">
+                  Withheld from a tutor's gross earnings when running a payout. 0% until you set this — payouts are never taxed by a number this center hasn't configured.
+                </p>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={settings.payouts.tdsPercent}
+                  onChange={(e) => updateSetting('payouts', 'tdsPercent', clampPercent(parseInt(e.target.value) || 0))}
+                  className={FIELD_CLASS}
+                />
               </div>
             </div>
           </section>

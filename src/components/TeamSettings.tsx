@@ -3,11 +3,13 @@ import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabase";
 import { toast } from "sonner";
 import { UserPlus, Copy } from "lucide-react";
-import { createStaffInvite, type InvitableStaffRole } from "../lib/api";
+import { createStaffInvite, getTutorRates, setTutorRate, type InvitableStaffRole } from "../lib/api";
 import { Button } from "./kit";
 
 const SELECT_CLASS =
   "mt-1 block rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-3 py-1.5 text-[13px] text-[var(--cs-text)] outline-none transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] focus:border-[var(--cs-focus)] focus:ring-2 focus:ring-[var(--cs-focus)]/30";
+const RATE_FIELD_CLASS =
+  "w-24 rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface)] px-2 py-1 text-[13px] text-[var(--cs-text)] outline-none transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] focus:border-[var(--cs-focus)] focus:ring-2 focus:ring-[var(--cs-focus)]/30";
 
 // Tech Debt #1: no org could ever get a second staff member because there was
 // no invite UI. Members list is a direct client read (org_members_select RLS
@@ -38,8 +40,16 @@ export default function TeamSettings() {
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
 
+  // B-08 (EXECUTION_PLAN.md Step 21): tutor pay rates, owner/admin only.
+  // Rupees in the input (matches every other money field this settings form
+  // exposes), converted to paise at the API boundary.
+  const [rates, setRates] = useState<Record<string, number>>({});
+  const [rateDrafts, setRateDrafts] = useState<Record<string, string>>({});
+  const [savingRateFor, setSavingRateFor] = useState<string | null>(null);
+
   const isOwner = user?.organizationRole === "owner";
   const canInvite = isOwner || user?.organizationRole === "admin";
+  const canSetRates = canInvite;
 
   const loadMembers = useCallback(async () => {
     if (!user?.organizationId) return;
@@ -71,6 +81,41 @@ export default function TeamSettings() {
   useEffect(() => {
     loadMembers();
   }, [loadMembers]);
+
+  useEffect(() => {
+    if (!canSetRates) return;
+    getTutorRates()
+      .then((res) => {
+        const byTutor: Record<string, number> = {};
+        const drafts: Record<string, string> = {};
+        for (const r of res.rates) {
+          byTutor[r.tutorId] = r.hourlyRatePaise;
+          drafts[r.tutorId] = String(r.hourlyRatePaise / 100);
+        }
+        setRates(byTutor);
+        setRateDrafts(drafts);
+      })
+      .catch(() => {});
+  }, [canSetRates, user?.organizationId]);
+
+  const saveRate = async (tutorId: string) => {
+    const rupees = parseFloat(rateDrafts[tutorId] || "0");
+    if (Number.isNaN(rupees) || rupees < 0) {
+      toast.error("Enter a valid, non-negative rate");
+      return;
+    }
+    const hourlyRatePaise = Math.round(rupees * 100);
+    setSavingRateFor(tutorId);
+    try {
+      await setTutorRate(tutorId, hourlyRatePaise);
+      setRates((prev) => ({ ...prev, [tutorId]: hourlyRatePaise }));
+      toast.success("Pay rate saved");
+    } catch (err: any) {
+      toast.error("Could not save pay rate", { description: err.message });
+    } finally {
+      setSavingRateFor(null);
+    }
+  };
 
   const generateInvite = async () => {
     setGenerating(true);
@@ -111,14 +156,39 @@ export default function TeamSettings() {
           ) : (
             <ul className="divide-y divide-[var(--cs-border)]">
               {members.map((m) => (
-                <li key={m.userId} className="flex items-center justify-between py-3">
-                  <div>
+                <li key={m.userId} className="flex items-center justify-between py-3 gap-4">
+                  <div className="min-w-0">
                     <div className="text-sm font-medium text-[var(--cs-text)]">{m.name}</div>
                     <div className="text-xs text-[var(--cs-text-muted)]">{m.email}</div>
                   </div>
-                  <span className="inline-flex items-center rounded-full bg-[var(--cs-surface-2)] px-2.5 py-0.5 text-xs font-medium capitalize text-[var(--cs-text-muted)]">
-                    {ROLE_LABELS[m.role] || m.role}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    {canSetRates && m.role === "tutor" && (
+                      <div className="flex items-center gap-1.5">
+                        <label htmlFor={`rate-${m.userId}`} className="text-xs text-[var(--cs-text-muted)]">
+                          Pay rate (₹/hr)
+                        </label>
+                        <input
+                          id={`rate-${m.userId}`}
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={rateDrafts[m.userId] ?? ""}
+                          onChange={(e) => setRateDrafts((prev) => ({ ...prev, [m.userId]: e.target.value }))}
+                          className={RATE_FIELD_CLASS}
+                        />
+                        <Button
+                          variant="ghost"
+                          onClick={() => saveRate(m.userId)}
+                          disabled={savingRateFor === m.userId || rateDrafts[m.userId] === String((rates[m.userId] ?? 0) / 100)}
+                        >
+                          {savingRateFor === m.userId ? "Saving…" : "Save"}
+                        </Button>
+                      </div>
+                    )}
+                    <span className="inline-flex items-center rounded-full bg-[var(--cs-surface-2)] px-2.5 py-0.5 text-xs font-medium capitalize text-[var(--cs-text-muted)]">
+                      {ROLE_LABELS[m.role] || m.role}
+                    </span>
+                  </div>
                 </li>
               ))}
             </ul>

@@ -20,6 +20,7 @@ import {
 } from "../../shared/schemas/billing.ts";
 import { rupeesToPaise, paiseToRupees } from "../../shared/money.ts";
 import { getCancellationPolicy } from "../utils/cancellationPolicy.ts";
+import { computeSessionEarningsPaise } from "../../shared/payouts.ts";
 
 const router = express.Router();
 router.use(authenticateToken, requireOrg);
@@ -121,7 +122,7 @@ router.post("/attendance", requireRole(...CAN_MARK), async (req: AuthRequest, re
     // Session and its template in one round trip — the template was a
     // strictly dependent second query on the same request path.
     const sessionRes = await pool.query(
-      `select s.organization_id, s.tutor_id, s.template_id, s.start_time,
+      `select s.organization_id, s.tutor_id, s.template_id, s.start_time, s.end_time,
               t.pricing_model, t.fee_amount, t.type
        from class_sessions s
        left join class_templates t on t.id = s.template_id
@@ -270,6 +271,39 @@ router.post("/attendance", requireRole(...CAN_MARK), async (req: AuthRequest, re
         `update class_sessions set status = 'completed', attendance_marked_at = now(), attendance_marked_by = $1 where id = $2`,
         [actor, sessionId]
       );
+
+      // B-08 (EXECUTION_PLAN.md Step 21): tutor earnings accrue once per
+      // session, the first time attendance is marked for it — independent
+      // of any individual student's billing outcome above (BILLABLE/
+      // invoiced/wallet-debited). A tutor is paid for delivering the
+      // session, not contingent on which students paid, so this is
+      // deliberately outside the `perSession`/BILLABLE branch. `on conflict
+      // (session_id) do nothing` makes re-marking the same session a no-op
+      // here even though the class_sessions status update above always
+      // re-runs. No tutor, or no configured tutor_compensation_rates row
+      // (rate 0/unset) => no row written, same "closed by default, never
+      // invent a number" posture as D-07/D-08/D-05.
+      if (session.tutor_id) {
+        const rateRes = await client.query(
+          `select hourly_rate_paise from tutor_compensation_rates where tutor_id = $1 and organization_id = $2`,
+          [session.tutor_id, orgId]
+        );
+        const ratePaisePerHour = rateRes.rows[0]?.hourly_rate_paise ?? 0;
+        if (ratePaisePerHour > 0) {
+          const durationMinutes = Math.round(
+            (new Date(session.end_time).getTime() - new Date(session.start_time).getTime()) / 60000
+          );
+          const amountPaise = computeSessionEarningsPaise(ratePaisePerHour, durationMinutes);
+          await client.query(
+            `insert into tutor_earnings_ledger
+               (organization_id, tutor_id, session_id, session_start, duration_minutes, rate_paise_per_hour, amount_paise)
+             values ($1, $2, $3, $4, $5, $6, $7)
+             on conflict (session_id) do nothing`,
+            [orgId, session.tutor_id, sessionId, session.start_time, durationMinutes, ratePaisePerHour, amountPaise]
+          );
+        }
+      }
+
       return { billed, invoiced };
     });
 

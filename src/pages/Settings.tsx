@@ -10,8 +10,10 @@ import TutorProfileSettings from "../components/TutorProfileSettings";
 import SubscriptionSettings from "../components/SubscriptionSettings";
 import OrgExportSettings from "../components/OrgExportSettings";
 import TeamSettings from "../components/TeamSettings";
+import PayoutRuns from "../components/PayoutRuns";
+import TutorEarnings from "../components/TutorEarnings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Receipt, CreditCard, Database, Users } from "lucide-react";
+import { Receipt, CreditCard, Database, Users, Wallet } from "lucide-react";
 import { StatusChip, Button } from "../components/kit";
 
 export default function Settings() {
@@ -174,6 +176,18 @@ export default function Settings() {
               Plan & Billing
             </TabsTrigger>
           )}
+          {(user?.organizationRole === "owner" || user?.organizationRole === "admin" || user?.organizationRole === "accountant") && (
+            <TabsTrigger value="payouts" className="flex items-center">
+              <Wallet className="w-4 h-4 mr-2" />
+              Tutor Payouts
+            </TabsTrigger>
+          )}
+          {user?.organizationRole === "tutor" && (
+            <TabsTrigger value="earnings" className="flex items-center">
+              <Wallet className="w-4 h-4 mr-2" />
+              My Earnings
+            </TabsTrigger>
+          )}
           {(user?.organizationRole === "owner" || user?.organizationRole === "admin" || user?.organizationRole === "tutor") && (
             <TabsTrigger value="availability" className="flex items-center">
               <Clock className="w-4 h-4 mr-2" />
@@ -305,6 +319,18 @@ export default function Settings() {
         {(user?.organizationRole === "owner" || user?.organizationRole === "admin") && (
           <TabsContent value="plan">
             <SubscriptionSettings />
+          </TabsContent>
+        )}
+
+        {(user?.organizationRole === "owner" || user?.organizationRole === "admin" || user?.organizationRole === "accountant") && (
+          <TabsContent value="payouts">
+            <PayoutRuns />
+          </TabsContent>
+        )}
+
+        {user?.organizationRole === "tutor" && (
+          <TabsContent value="earnings">
+            <TutorEarnings />
           </TabsContent>
         )}
 
