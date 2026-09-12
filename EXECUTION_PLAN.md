@@ -45,9 +45,7 @@ Full detail: [docs/EXECUTION_PLAN_R1_ARCHIVE.md](docs/EXECUTION_PLAN_R1_ARCHIVE.
 
 Gate numbers at R1 close: tsc clean · 211 unit · 89 RLS · 252 contract · build `dist/server.js` 184.4 KB · bundle 200.7 KB gzip / 260 KB · API bundle 16/16 mounts.
 
-**Two deferrals carried forward** (recorded as explicit non-failing gate lines, not R1 blockers):
-- **B-10 staging** — R1 migrations went straight to production unrehearsed; parent-facing surfaces stay browser-unverifiable (no demo parent account on prod); Supabase Storage upload/download untested anywhere; the migration set has never been applied from zero. **Staging must exist before R2/B-06** (the live-data identity migration).
-- **External pentest + leaked-password toggle** — moved to the pre-GTM procurement bucket (MASTER_PLAN.md §8). Vendor shortlist in the archive's Step 12.
+Two items (B-10 staging, external pentest + leaked-password toggle) were explicitly deferred rather than failing the gate — full reasoning and consequences in the archive's Steps 11-13; current status in MASTER_PLAN.md §3's R1 section and §8's GTM checklist.
 
 ---
 
