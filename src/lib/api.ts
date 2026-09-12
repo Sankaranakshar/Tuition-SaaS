@@ -30,6 +30,7 @@ import type { OffboardResponse } from "../../shared/schemas/orgExport";
 import type { EraseStudentResponse } from "../../shared/schemas/students";
 import type { ListAuditEventsResponse } from "../../shared/schemas/auditLog";
 import type { BulkImportInspectResponse, BulkImportPreviewResponse, BulkImportCommitResponse, ImportField, BulkImportResolutions } from "../../shared/schemas/students";
+import type { PaymentPermissions } from "../../shared/paymentPermissions";
 
 // Thin authenticated client for the privileged API (/api/v1).
 // Money and attendance mutations must go through here; they have no
@@ -353,6 +354,21 @@ export function topUpWalletAsParent(studentId: string, amountPaise: number) {
 /** Ensures a class channel conversation exists for this batch and refreshes it to the current enrolled roster (server-side — needs the student/parent-link lookup RLS doesn't grant clients). */
 export function ensureClassChannel(templateId: string) {
   return api<EnsureClassChannelResponse>(`/inbox/class-channels/${templateId}/ensure`, { method: "POST" });
+}
+
+// D-05 (EXECUTION_PLAN.md Step 19): a parent's per-student payment
+// permissions (self-pay toggle, spending limit, allowed methods). Staff
+// (owner/admin) or the linked parent may read/write; the underlying table
+// is select-only via RLS, so these two routes are the only write path.
+export function getStudentPaymentPermissions(studentId: string) {
+  return api<{ ok: true } & PaymentPermissions>(`/students/${studentId}/payment-permissions`);
+}
+
+export function setStudentPaymentPermissions(studentId: string, input: PaymentPermissions) {
+  return api<{ ok: true } & PaymentPermissions>(`/students/${studentId}/payment-permissions`, {
+    method: "PUT",
+    body: input,
+  });
 }
 
 // Booking-request approval (EXECUTION_PLAN.md Step 5). Not under

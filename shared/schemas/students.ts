@@ -17,6 +17,19 @@ export const eraseStudentRequestSchema = z.object({
 });
 export type EraseStudentRequest = z.infer<typeof eraseStudentRequestSchema>;
 
+// D-05 (MASTER_PLAN.md §5) / EXECUTION_PLAN.md Step 19: per-student
+// parent-controlled payment permissions for PUT
+// /api/v1/students/:studentId/payment-permissions. "wallet"/"razorpay_link"
+// mirror the two payment paths that already exist elsewhere in billing.ts
+// (wallet debit, Razorpay payment link) — no new payment method is being
+// invented here.
+export const setPaymentPermissionsRequestSchema = z.object({
+  selfPayAllowed: z.boolean(),
+  spendingLimitPaise: z.number().int().positive().nullable(),
+  allowedPaymentMethods: z.array(z.enum(["wallet", "razorpay_link"])),
+});
+export type SetPaymentPermissionsRequest = z.infer<typeof setPaymentPermissionsRequestSchema>;
+
 export interface EraseStudentResponse {
   ok: true;
   // Non-null only when the org's erasure policy is "writeoff" and the wallet

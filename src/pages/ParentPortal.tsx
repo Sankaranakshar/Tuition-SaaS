@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { CalendarClock, Wallet as WalletIcon, Receipt, Share2, ExternalLink, Users, Download } from "lucide-react";
+import { CalendarClock, Wallet as WalletIcon, Receipt, Share2, ExternalLink, Users, Download, Settings as SettingsIcon } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { EmptyState, Skeleton, SkeletonText, StatChip, StatusChip, Button, Field, Input, type ChipTone } from "../components/kit";
+import StudentPaymentPermissions from "../components/StudentPaymentPermissions";
 import { formatPaise, formatINR, formatDate, formatTime, formatRelativeDays } from "../lib/format";
 import { rupeesToPaise } from "../../shared/money";
 import { cancellationCutoff, DEFAULT_CANCELLATION_POLICY, type CancellationPolicy } from "../../shared/cancellationPolicy";
@@ -24,7 +25,7 @@ import { debounce } from "../lib/debounce";
 // from the payments query below, not an error. That's an RLS-policy gap,
 // not something this read-side pass is scoped to fix.
 
-type Tab = "overview" | "invoices" | "wallet";
+type Tab = "overview" | "invoices" | "wallet" | "settings";
 
 interface Child {
   studentId: string;
@@ -343,6 +344,7 @@ export default function ParentPortal() {
           ["overview", t("parentPortal.tabOverview"), CalendarClock],
           ["invoices", t("parentPortal.tabInvoices"), Receipt],
           ["wallet", t("parentPortal.tabWallet"), WalletIcon],
+          ["settings", t("parentPortal.tabSettings"), SettingsIcon],
         ] as const).map(([id, label, Icon]) => (
           <button
             key={id}
@@ -504,6 +506,10 @@ export default function ParentPortal() {
             </div>
           )}
         </div>
+      )}
+
+      {tab === "settings" && (
+        <StudentPaymentPermissions studentId={selected.studentId} studentName={selected.name} />
       )}
     </div>
   );

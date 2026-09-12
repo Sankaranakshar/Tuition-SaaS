@@ -10,7 +10,7 @@ import { writeAudit } from "../utils/audit.ts";
 import { setMembership, setActiveOrganization, hasMembership } from "./members.ts";
 import {
   studentInviteRequestSchema, studentRedeemRequestSchema, eraseStudentRequestSchema,
-  bulkImportMappingSchema, bulkImportResolutionsSchema,
+  bulkImportMappingSchema, bulkImportResolutionsSchema, setPaymentPermissionsRequestSchema,
   type ImportField, type BulkImportInspectResponse, type BulkImportPreviewResponse,
   type BulkImportCommitResponse, type BulkImportCandidate, type BulkImportDuplicate,
   type EraseStudentResponse,
@@ -18,6 +18,7 @@ import {
 import { suggestColumnMapping, parseImportRows, detectDuplicates, type ExistingStudent } from "../utils/bulkImport.ts";
 import { eraseStudentTx, deleteErasedStorageObjects, getErasurePolicy, ErasureError } from "../utils/erasure.ts";
 import { CONSENT_VERSION } from "../../shared/consent.ts";
+import { getPaymentPermissions } from "../utils/paymentPermissions.ts";
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -387,6 +388,77 @@ router.post("/:studentId/erase", requireOrg, requireRole(...CAN_ERASE), async (r
 
     const body: EraseStudentResponse = { ok: true, walletWriteOff: result.walletWriteOff, deleted: result.deleted };
     res.json(body);
+  } catch (err) { next(err); }
+});
+
+// D-05 / EXECUTION_PLAN.md Step 19: staff (owner/admin) or a parent linked to
+// this specific student may read/set their payment permissions. Mirrors
+// billing.ts:729-734's exact parent_links lookup pattern. Shared by the GET
+// and PUT routes below; throws a 404/403 the routes' own catch turns into a
+// response, same convention as loadStaffInvite in members.ts.
+async function assertCanManagePaymentPermissions(req: AuthRequest, studentId: string) {
+  const orgId = req.user!.organizationId!;
+  const { data: student, error: studentErr } = await supabaseAdmin
+    .from("students").select("id, organization_id").eq("id", studentId).maybeSingle();
+  if (studentErr) throw studentErr;
+  if (!student || student.organization_id !== orgId) {
+    throw Object.assign(new Error("Student not found"), { status: 404, code: "not_found" });
+  }
+
+  const isStaff = req.user!.role === "owner" || req.user!.role === "admin";
+  if (!isStaff) {
+    const { data: link, error: linkErr } = await supabaseAdmin
+      .from("parent_links").select("parent_user_id")
+      .eq("parent_user_id", req.user!.id).eq("student_id", studentId).maybeSingle();
+    if (linkErr) throw linkErr;
+    if (!link) {
+      throw Object.assign(new Error("Not linked to this student"), { status: 403, code: "forbidden" });
+    }
+  }
+}
+
+router.get("/:studentId/payment-permissions", requireOrg, async (req: AuthRequest, res, next) => {
+  try {
+    const studentId = req.params.studentId;
+    await assertCanManagePaymentPermissions(req, studentId);
+    const permissions = await getPaymentPermissions(studentId);
+    res.json({ ok: true, ...permissions });
+  } catch (err) { next(err); }
+});
+
+// Every write goes through here on service_role; the table's own RLS policy
+// is select-only, so this route is the *only* way this row changes (per the
+// migration's own comment).
+router.put("/:studentId/payment-permissions", requireOrg, async (req: AuthRequest, res, next) => {
+  try {
+    const orgId = req.user!.organizationId!;
+    const uid = req.user!.id;
+    const studentId = req.params.studentId;
+    const body = setPaymentPermissionsRequestSchema.parse(req.body);
+
+    await assertCanManagePaymentPermissions(req, studentId);
+
+    const { error: upsertErr } = await supabaseAdmin.from("student_payment_permissions").upsert(
+      {
+        student_id: studentId,
+        organization_id: orgId,
+        self_pay_allowed: body.selfPayAllowed,
+        spending_limit_paise: body.spendingLimitPaise,
+        allowed_payment_methods: body.allowedPaymentMethods,
+        updated_by: uid,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "student_id" }
+    );
+    if (upsertErr) throw upsertErr;
+
+    await writeAudit(orgId, uid, "student.payment_permissions.update", "student_payment_permissions", studentId, {
+      selfPayAllowed: body.selfPayAllowed,
+      spendingLimitPaise: body.spendingLimitPaise,
+      allowedPaymentMethods: body.allowedPaymentMethods,
+    });
+
+    res.json({ ok: true, ...body });
   } catch (err) { next(err); }
 });
 

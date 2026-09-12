@@ -9,6 +9,11 @@ let app: any;
 let db: PGlite;
 let bodyStudentId: string;
 let bodyTutorId: string;
+// A real v4 uuid, linked to uids.parent — fixtures.ts's ids.stu1 isn't a
+// valid v4 uuid (see members.test.ts's header comment on ORG/OTHER_ORG for
+// the same reason), and createBookingRequestSchema's studentId is
+// zod-validated with .uuid().
+let linkedStudentId: string;
 
 function expectStatus(res: any, status: number) {
   if (res.status !== status) {
@@ -35,6 +40,10 @@ beforeAll(async () => {
   bodyTutorId = crypto.randomUUID();
   await db.query(`insert into auth.users (id) values ($1)`, [bodyTutorId]);
   await db.query(`insert into organization_members (organization_id, user_id, role) values ($1, $2, 'tutor')`, [ORG, bodyTutorId]);
+
+  linkedStudentId = crypto.randomUUID();
+  await db.query(`insert into students (id, organization_id, name) values ($1, $2, 'Linked Student')`, [linkedStudentId, ORG]);
+  await db.query(`insert into parent_links (parent_user_id, student_id, organization_id) values ($1, $2, $3)`, [uids.parent, linkedStudentId, ORG]);
 });
 
 afterAll(async () => {
@@ -236,5 +245,88 @@ describe("propose-alternative / respond-to-proposal flow", () => {
     const row = await db.query<any>(`select status, resulting_enrollment_id from session_requests where id = $1`, [create.body.requestId]);
     expect(row.rows[0].status).toBe("declined");
     expect(row.rows[0].resulting_enrollment_id).toBeNull();
+  });
+});
+
+// D-05 (EXECUTION_PLAN.md Step 19): the one self-serve student-initiated
+// path this codebase has — enforcement lives entirely here, not in a new
+// payment route (none exists to retrofit, per the step's own scope note).
+// Uses linkedStudentId (this file's own real v4-uuid student, linked to
+// uids.parent via parent_links) rather than fixtures.ts's ids.stu1 — see
+// this file's own linkedStudentId comment for why.
+describe("D-05: per-student payment permissions gate a student's own request", () => {
+  it("a student-initiated request with no permissions row is flagged requires_parent_approval, blocks /accept, and a linked parent can clear it", async () => {
+    const templateId = await createTemplate();
+    const create = await request(app)
+      .post("/api/v1/session-requests")
+      .set(...authHeader(uids.student))
+      .send({ studentId: linkedStudentId, templateId });
+    expectStatus(create, 201);
+    expect(create.body.requiresParentApproval).toBe(true);
+
+    const row = await db.query<any>(`select requires_parent_approval from session_requests where id = $1`, [create.body.requestId]);
+    expect(row.rows[0].requires_parent_approval).toBe(true);
+
+    const acceptAttempt = await request(app)
+      .post(`/api/v1/session-requests/${create.body.requestId}/accept`)
+      .set(...authHeader(uids.owner));
+    expectStatus(acceptAttempt, 403);
+    expect(acceptAttempt.body.error.code).toBe("parent_approval_required");
+
+    // Staff in the same org, but not a parent linked to this student, can't clear it.
+    const wrongApprover = await request(app)
+      .post(`/api/v1/session-requests/${create.body.requestId}/parent-approve`)
+      .set(...authHeader(uids.tutor));
+    expectStatus(wrongApprover, 403);
+
+    const approve = await request(app)
+      .post(`/api/v1/session-requests/${create.body.requestId}/parent-approve`)
+      .set(...authHeader(uids.parent));
+    expectStatus(approve, 200);
+
+    const clearedRow = await db.query<any>(`select requires_parent_approval from session_requests where id = $1`, [create.body.requestId]);
+    expect(clearedRow.rows[0].requires_parent_approval).toBe(false);
+
+    const acceptNow = await request(app)
+      .post(`/api/v1/session-requests/${create.body.requestId}/accept`)
+      .set(...authHeader(uids.owner));
+    expectStatus(acceptNow, 200);
+  });
+
+  it("409s re-approving a request that never required parent approval", async () => {
+    const templateId = await createTemplate();
+    const create = await request(app)
+      .post("/api/v1/session-requests")
+      .set(...authHeader(uids.parent)) // parent-initiated, never gated
+      .send({ studentId: linkedStudentId, templateId });
+    expectStatus(create, 201);
+    expect(create.body.requiresParentApproval).toBe(false);
+
+    const approve = await request(app)
+      .post(`/api/v1/session-requests/${create.body.requestId}/parent-approve`)
+      .set(...authHeader(uids.parent));
+    expectStatus(approve, 409);
+    expect(approve.body.error.code).toBe("invalid_status");
+  });
+
+  it("a student-initiated request skips the approval gate entirely when self-pay is allowed, matching today's ungated behavior", async () => {
+    await db.query(
+      `insert into student_payment_permissions (student_id, organization_id, self_pay_allowed) values ($1, $2, true)
+       on conflict (student_id) do update set self_pay_allowed = true`,
+      [linkedStudentId, ORG]
+    );
+
+    const templateId = await createTemplate();
+    const create = await request(app)
+      .post("/api/v1/session-requests")
+      .set(...authHeader(uids.student))
+      .send({ studentId: linkedStudentId, templateId });
+    expectStatus(create, 201);
+    expect(create.body.requiresParentApproval).toBe(false);
+
+    const accept = await request(app)
+      .post(`/api/v1/session-requests/${create.body.requestId}/accept`)
+      .set(...authHeader(uids.owner));
+    expectStatus(accept, 200);
   });
 });

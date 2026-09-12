@@ -12,6 +12,7 @@
  * must keep this suite green.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import crypto from "node:crypto";
 import type { PGlite } from "@electric-sql/pglite";
 import { bootDb, scenario, expectDenied, type As } from "./db.ts";
 import { seed, ORG, OTHER_ORG, uids, ids } from "./fixtures.ts";
@@ -827,6 +828,61 @@ describe("inbox_state: per-viewer triage, never shared", () => {
       // The parent can only ever see their own row (none, in this case) — the
       // tutor's archive is invisible to them, not shared thread state.
       expect(res.rows.length).toBe(0);
+    })
+  );
+});
+
+// D-05 (EXECUTION_PLAN.md Step 19): student_payment_permissions is
+// select-only (no client write policy at all — every write goes through
+// PUT /api/v1/students/:studentId/payment-permissions on service_role), same
+// posture as consent_records. This proves the select policy's family
+// isolation: staff/parent-of/student-self read it, an unrelated org member
+// or a different family's parent cannot.
+describe("student_payment_permissions: staff/parent-of/self read, others denied", () => {
+  it(
+    "staff, the linked parent, and the student themselves can read the row",
+    withFixtures(async (tx, as) => {
+      await tx.query(
+        `insert into student_payment_permissions (student_id, organization_id, self_pay_allowed) values ($1, $2, false)`,
+        [ids.stu1, ORG]
+      );
+
+      await as(uids.owner, "authenticated");
+      expect((await tx.query(`select * from student_payment_permissions where student_id = $1`, [ids.stu1])).rows.length).toBe(1);
+
+      await as(uids.parent, "authenticated");
+      expect((await tx.query(`select * from student_payment_permissions where student_id = $1`, [ids.stu1])).rows.length).toBe(1);
+
+      await as(uids.student, "authenticated");
+      expect((await tx.query(`select * from student_payment_permissions where student_id = $1`, [ids.stu1])).rows.length).toBe(1);
+    })
+  );
+
+  it(
+    "a member of a different org entirely cannot read it",
+    withFixtures(async (tx, as) => {
+      await tx.query(
+        `insert into student_payment_permissions (student_id, organization_id, self_pay_allowed) values ($1, $2, false)`,
+        [ids.stu1, ORG]
+      );
+
+      await as(uids.outsider, "authenticated"); // owner of OTHER_ORG, not staff of ORG
+      expect((await tx.query(`select * from student_payment_permissions where student_id = $1`, [ids.stu1])).rows.length).toBe(0);
+    })
+  );
+
+  it(
+    "a parent not linked to the student cannot select another family's row",
+    withFixtures(async (tx, as) => {
+      const otherStudentId = crypto.randomUUID();
+      await tx.query(`insert into students (id, organization_id, name) values ($1, $2, 'Other Kid')`, [otherStudentId, ORG]);
+      await tx.query(
+        `insert into student_payment_permissions (student_id, organization_id, self_pay_allowed) values ($1, $2, true)`,
+        [otherStudentId, ORG]
+      );
+
+      await as(uids.parent, "authenticated"); // linked only to ids.stu1, not otherStudentId
+      expect((await tx.query(`select * from student_payment_permissions where student_id = $1`, [otherStudentId])).rows.length).toBe(0);
     })
   );
 });

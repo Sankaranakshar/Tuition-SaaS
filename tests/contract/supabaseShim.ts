@@ -27,6 +27,14 @@ const DEFAULT_CONFLICT_TARGET: Record<string, string> = {
 };
 
 function toParam(value: unknown): unknown {
+  // A plain array (e.g. a text[]/uuid[] column's value) must reach PGlite as
+  // a real array, not a JSON string — Postgres array literal syntax
+  // ("{a,b}") isn't JSON ("["a","b"]"), and PGlite's query() already encodes
+  // a raw JS array correctly on its own, same as the direct pool/
+  // withTransaction path (server/routes/scheduling.ts's student_ids writes)
+  // already relies on. Only a non-array object (e.g. a jsonb column) needs
+  // the JSON.stringify fallback.
+  if (Array.isArray(value)) return value;
   if (value !== null && typeof value === "object" && !(value instanceof Date)) {
     return JSON.stringify(value);
   }

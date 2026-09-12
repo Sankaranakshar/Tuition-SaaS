@@ -500,6 +500,7 @@
     "tabOverview": "Overview",
     "tabInvoices": "Invoices",
     "tabWallet": "Wallet",
+    "tabSettings": "Settings",
     "upcomingFor": "Upcoming for {{name}}",
     "noUpcomingTitle": "No upcoming classes",
     "noUpcomingDescription": "Nothing scheduled right now.",
@@ -524,6 +525,23 @@
     "payFailed": "Couldn't start payment",
     "downloadFailed": "Couldn't download the invoice",
     "shareFailed": "Couldn't create a link to share"
+  },
+  "studentPaymentPermissions": {
+    "title": "Payment permissions for {{name}}",
+    "description": "Control whether {{name}} can request their own sessions without your approval, and how much they can spend.",
+    "selfPayLabel": "Allow self-serve session requests without my approval",
+    "spendingLimitLabel": "Spending limit (₹, blank = no limit)",
+    "spendingLimitPlaceholder": "No limit",
+    "methodsLabel": "Allowed payment methods",
+    "methodWallet": "Wallet credits",
+    "methodRazorpayLink": "Razorpay payment link",
+    "save": "Save",
+    "saving": "Saving…",
+    "saved": "Payment permissions saved",
+    "saveFailed": "Couldn't save payment permissions",
+    "loading": "Loading payment permissions…",
+    "loadFailed": "Couldn't load payment permissions",
+    "invalidLimit": "Enter a spending limit greater than ₹0, or leave it blank for no limit"
   },
   "preferences": {
     "title": "Preferences",

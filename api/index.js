@@ -1968,6 +1968,11 @@ var studentRedeemRequestSchema = z5.object({ token: z5.string().min(10) });
 var eraseStudentRequestSchema = z5.object({
   confirmName: z5.string().min(1)
 });
+var setPaymentPermissionsRequestSchema = z5.object({
+  selfPayAllowed: z5.boolean(),
+  spendingLimitPaise: z5.number().int().positive().nullable(),
+  allowedPaymentMethods: z5.array(z5.enum(["wallet", "razorpay_link"]))
+});
 var IMPORT_FIELDS = ["name", "phone", "parentName", "parentPhone", "grade", "subject"];
 var bulkImportMappingSchema = z5.array(z5.enum(IMPORT_FIELDS).nullable());
 var bulkImportResolutionsSchema = z5.record(z5.string(), z5.enum(["skip", "import"]));
@@ -2214,6 +2219,28 @@ async function deleteErasedStorageObjects(paths) {
   } catch (err) {
     console.error("Erasure: failed to delete Storage objects", err);
   }
+}
+
+// shared/paymentPermissions.ts
+var DEFAULT_PAYMENT_PERMISSIONS = {
+  selfPayAllowed: false,
+  spendingLimitPaise: null,
+  allowedPaymentMethods: []
+};
+function resolvePaymentPermissions(row) {
+  if (!row) return DEFAULT_PAYMENT_PERMISSIONS;
+  return {
+    selfPayAllowed: row.self_pay_allowed ?? DEFAULT_PAYMENT_PERMISSIONS.selfPayAllowed,
+    spendingLimitPaise: row.spending_limit_paise ?? null,
+    allowedPaymentMethods: row.allowed_payment_methods ?? []
+  };
+}
+
+// server/utils/paymentPermissions.ts
+async function getPaymentPermissions(studentId) {
+  const { data, error } = await supabaseAdmin.from("student_payment_permissions").select("self_pay_allowed, spending_limit_paise, allowed_payment_methods").eq("student_id", studentId).maybeSingle();
+  if (error) throw error;
+  return resolvePaymentPermissions(data);
 }
 
 // server/routes/students.ts
@@ -2502,6 +2529,62 @@ router6.post("/:studentId/erase", requireOrg, requireRole(...CAN_ERASE), async (
     });
     const body = { ok: true, walletWriteOff: result.walletWriteOff, deleted: result.deleted };
     res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+async function assertCanManagePaymentPermissions(req, studentId) {
+  const orgId = req.user.organizationId;
+  const { data: student, error: studentErr } = await supabaseAdmin.from("students").select("id, organization_id").eq("id", studentId).maybeSingle();
+  if (studentErr) throw studentErr;
+  if (!student || student.organization_id !== orgId) {
+    throw Object.assign(new Error("Student not found"), { status: 404, code: "not_found" });
+  }
+  const isStaff = req.user.role === "owner" || req.user.role === "admin";
+  if (!isStaff) {
+    const { data: link, error: linkErr } = await supabaseAdmin.from("parent_links").select("parent_user_id").eq("parent_user_id", req.user.id).eq("student_id", studentId).maybeSingle();
+    if (linkErr) throw linkErr;
+    if (!link) {
+      throw Object.assign(new Error("Not linked to this student"), { status: 403, code: "forbidden" });
+    }
+  }
+}
+router6.get("/:studentId/payment-permissions", requireOrg, async (req, res, next) => {
+  try {
+    const studentId = req.params.studentId;
+    await assertCanManagePaymentPermissions(req, studentId);
+    const permissions = await getPaymentPermissions(studentId);
+    res.json({ ok: true, ...permissions });
+  } catch (err) {
+    next(err);
+  }
+});
+router6.put("/:studentId/payment-permissions", requireOrg, async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const uid = req.user.id;
+    const studentId = req.params.studentId;
+    const body = setPaymentPermissionsRequestSchema.parse(req.body);
+    await assertCanManagePaymentPermissions(req, studentId);
+    const { error: upsertErr } = await supabaseAdmin.from("student_payment_permissions").upsert(
+      {
+        student_id: studentId,
+        organization_id: orgId,
+        self_pay_allowed: body.selfPayAllowed,
+        spending_limit_paise: body.spendingLimitPaise,
+        allowed_payment_methods: body.allowedPaymentMethods,
+        updated_by: uid,
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      },
+      { onConflict: "student_id" }
+    );
+    if (upsertErr) throw upsertErr;
+    await writeAudit(orgId, uid, "student.payment_permissions.update", "student_payment_permissions", studentId, {
+      selfPayAllowed: body.selfPayAllowed,
+      spendingLimitPaise: body.spendingLimitPaise,
+      allowedPaymentMethods: body.allowedPaymentMethods
+    });
+    res.json({ ok: true, ...body });
   } catch (err) {
     next(err);
   }
@@ -4174,7 +4257,7 @@ router16.get("/", requireRole(...CAN_RESPOND), async (req, res, next) => {
          sr.id, sr.status, sr.notes, sr.response_note, sr.created_at, sr.responded_at,
          sr.student_id, sr.template_id, sr.tutor_id, sr.requested_start_time, sr.requested_end_time,
          sr.proposed_template_id, sr.proposed_start_time, sr.proposed_end_time,
-         sr.requested_by_user_id,
+         sr.requested_by_user_id, sr.requires_parent_approval,
          s.name as student_name,
          ct.name as template_name,
          tp.name as tutor_name,
@@ -4219,15 +4302,16 @@ router16.post("/", async (req, res, next) => {
         return res.status(404).json({ error: { code: "not_found", message: "Tutor not found in this organization" } });
       }
     }
+    const requiresParentApproval = req.user.role === "student" ? !(await getPaymentPermissions(body.studentId)).selfPayAllowed : false;
     const insertRes = await pool.query(
-      "templateId" in body ? `insert into session_requests (organization_id, requested_by_user_id, student_id, template_id, notes)
-           values ($1, $2, $3, $4, $5) returning id` : `insert into session_requests (organization_id, requested_by_user_id, student_id, tutor_id, requested_start_time, requested_end_time, notes)
-           values ($1, $2, $3, $4, $5, $6, $7) returning id`,
-      "templateId" in body ? [orgId, uid, body.studentId, body.templateId, body.notes ?? null] : [orgId, uid, body.studentId, body.tutorId, body.requestedStartTime, body.requestedEndTime, body.notes ?? null]
+      "templateId" in body ? `insert into session_requests (organization_id, requested_by_user_id, student_id, template_id, notes, requires_parent_approval)
+           values ($1, $2, $3, $4, $5, $6) returning id` : `insert into session_requests (organization_id, requested_by_user_id, student_id, tutor_id, requested_start_time, requested_end_time, notes, requires_parent_approval)
+           values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+      "templateId" in body ? [orgId, uid, body.studentId, body.templateId, body.notes ?? null, requiresParentApproval] : [orgId, uid, body.studentId, body.tutorId, body.requestedStartTime, body.requestedEndTime, body.notes ?? null, requiresParentApproval]
     );
     const requestId = insertRes.rows[0].id;
-    await writeAudit(orgId, uid, "booking_request.create", "session_requests", requestId, { studentId: body.studentId });
-    res.status(201).json({ ok: true, requestId });
+    await writeAudit(orgId, uid, "booking_request.create", "session_requests", requestId, { studentId: body.studentId, requiresParentApproval });
+    res.status(201).json({ ok: true, requestId, requiresParentApproval });
   } catch (err) {
     next(err);
   }
@@ -4252,6 +4336,9 @@ router16.post("/:id/accept", requireRole(...CAN_RESPOND), async (req, res, next)
       const row = await loadRequestForUpdate(client, orgId, requestId);
       if (row.status !== "pending") {
         throw Object.assign(new Error(`Request is already ${row.status}`), { status: 409, code: "invalid_status" });
+      }
+      if (row.requires_parent_approval) {
+        throw Object.assign(new Error("Awaiting parent approval before this request can be accepted"), { status: 403, code: "parent_approval_required" });
       }
       let enrollmentId = null;
       let sessionId = null;
@@ -4298,6 +4385,31 @@ router16.post("/:id/decline", requireRole(...CAN_RESPOND), async (req, res, next
       );
     });
     await writeAudit(orgId, uid, "booking_request.decline", "session_requests", requestId, { responseNote });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+router16.post("/:id/parent-approve", async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const uid = req.user.id;
+    const requestId = req.params.id;
+    await withTransaction(async (client) => {
+      const row = await loadRequestForUpdate(client, orgId, requestId);
+      const linkRes = await client.query(
+        `select 1 from parent_links where parent_user_id = $1 and student_id = $2`,
+        [uid, row.student_id]
+      );
+      if (linkRes.rowCount === 0) {
+        throw Object.assign(new Error("Not linked to this student"), { status: 403, code: "forbidden" });
+      }
+      if (!row.requires_parent_approval) {
+        throw Object.assign(new Error("This request does not require parent approval"), { status: 409, code: "invalid_status" });
+      }
+      await client.query(`update session_requests set requires_parent_approval = false where id = $1`, [requestId]);
+    });
+    await writeAudit(orgId, uid, "booking_request.parent_approve", "session_requests", requestId, {});
     res.json({ ok: true });
   } catch (err) {
     next(err);

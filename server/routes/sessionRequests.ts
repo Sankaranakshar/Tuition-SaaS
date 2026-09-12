@@ -3,6 +3,7 @@ import { pool, withTransaction } from "../db.ts";
 import { authenticateToken, requireRole, requireOrg, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
 import { createEnrollmentTx, createSessionTx } from "./scheduling.ts";
+import { getPaymentPermissions } from "../utils/paymentPermissions.ts";
 import {
   createBookingRequestSchema,
   declineBookingRequestSchema,
@@ -33,7 +34,7 @@ router.get("/", requireRole(...CAN_RESPOND), async (req: AuthRequest, res, next)
          sr.id, sr.status, sr.notes, sr.response_note, sr.created_at, sr.responded_at,
          sr.student_id, sr.template_id, sr.tutor_id, sr.requested_start_time, sr.requested_end_time,
          sr.proposed_template_id, sr.proposed_start_time, sr.proposed_end_time,
-         sr.requested_by_user_id,
+         sr.requested_by_user_id, sr.requires_parent_approval,
          s.name as student_name,
          ct.name as template_name,
          tp.name as tutor_name,
@@ -79,20 +80,27 @@ router.post("/", async (req: AuthRequest, res, next) => {
       }
     }
 
+    // D-05 (EXECUTION_PLAN.md Step 19): this route has no requireRole gate —
+    // a student-role account can submit its own request with no parent
+    // involved. Gate it here: closed by default, per the student's own
+    // student_payment_permissions row (no row = no self-pay).
+    const requiresParentApproval =
+      req.user!.role === "student" ? !(await getPaymentPermissions(body.studentId)).selfPayAllowed : false;
+
     const insertRes = await pool.query(
       "templateId" in body
-        ? `insert into session_requests (organization_id, requested_by_user_id, student_id, template_id, notes)
-           values ($1, $2, $3, $4, $5) returning id`
-        : `insert into session_requests (organization_id, requested_by_user_id, student_id, tutor_id, requested_start_time, requested_end_time, notes)
-           values ($1, $2, $3, $4, $5, $6, $7) returning id`,
+        ? `insert into session_requests (organization_id, requested_by_user_id, student_id, template_id, notes, requires_parent_approval)
+           values ($1, $2, $3, $4, $5, $6) returning id`
+        : `insert into session_requests (organization_id, requested_by_user_id, student_id, tutor_id, requested_start_time, requested_end_time, notes, requires_parent_approval)
+           values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
       "templateId" in body
-        ? [orgId, uid, body.studentId, body.templateId, body.notes ?? null]
-        : [orgId, uid, body.studentId, body.tutorId, body.requestedStartTime, body.requestedEndTime, body.notes ?? null]
+        ? [orgId, uid, body.studentId, body.templateId, body.notes ?? null, requiresParentApproval]
+        : [orgId, uid, body.studentId, body.tutorId, body.requestedStartTime, body.requestedEndTime, body.notes ?? null, requiresParentApproval]
     );
     const requestId = insertRes.rows[0].id as string;
 
-    await writeAudit(orgId, uid, "booking_request.create", "session_requests", requestId, { studentId: body.studentId });
-    res.status(201).json({ ok: true, requestId });
+    await writeAudit(orgId, uid, "booking_request.create", "session_requests", requestId, { studentId: body.studentId, requiresParentApproval });
+    res.status(201).json({ ok: true, requestId, requiresParentApproval });
   } catch (err) { next(err); }
 });
 
@@ -118,6 +126,12 @@ router.post("/:id/accept", requireRole(...CAN_RESPOND), async (req: AuthRequest,
       const row = await loadRequestForUpdate(client, orgId, requestId);
       if (row.status !== "pending") {
         throw Object.assign(new Error(`Request is already ${row.status}`), { status: 409, code: "invalid_status" });
+      }
+      // D-05 (EXECUTION_PLAN.md Step 19): a student-self request with no
+      // self-pay permission can't be accepted until a parent clears it via
+      // POST /:id/parent-approve.
+      if (row.requires_parent_approval) {
+        throw Object.assign(new Error("Awaiting parent approval before this request can be accepted"), { status: 403, code: "parent_approval_required" });
       }
 
       let enrollmentId: string | null = null;
@@ -168,6 +182,38 @@ router.post("/:id/decline", requireRole(...CAN_RESPOND), async (req: AuthRequest
     });
 
     await writeAudit(orgId, uid, "booking_request.decline", "session_requests", requestId, { responseNote });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// D-05 (EXECUTION_PLAN.md Step 19): the student's own request has
+// requires_parent_approval set; only a parent linked to that student can
+// clear it (mirrors billing.ts:729-734's parent_links lookup). Not gated to
+// CAN_RESPOND — a parent's org role is "parent", not staff.
+router.post("/:id/parent-approve", async (req: AuthRequest, res, next) => {
+  try {
+    const orgId = req.user!.organizationId!;
+    const uid = req.user!.id;
+    const requestId = req.params.id;
+
+    await withTransaction(async (client) => {
+      const row = await loadRequestForUpdate(client, orgId, requestId);
+
+      const linkRes = await client.query(
+        `select 1 from parent_links where parent_user_id = $1 and student_id = $2`,
+        [uid, row.student_id]
+      );
+      if (linkRes.rowCount === 0) {
+        throw Object.assign(new Error("Not linked to this student"), { status: 403, code: "forbidden" });
+      }
+      if (!row.requires_parent_approval) {
+        throw Object.assign(new Error("This request does not require parent approval"), { status: 409, code: "invalid_status" });
+      }
+
+      await client.query(`update session_requests set requires_parent_approval = false where id = $1`, [requestId]);
+    });
+
+    await writeAudit(orgId, uid, "booking_request.parent_approve", "session_requests", requestId, {});
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

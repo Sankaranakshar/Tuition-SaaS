@@ -233,3 +233,93 @@ describe("POST /api/v1/students/redeem", () => {
     expect(res.body.error.code).toBe("invite_used");
   });
 });
+
+describe("payment-permissions (D-05, EXECUTION_PLAN.md Step 19)", () => {
+  const validBody = { selfPayAllowed: true, spendingLimitPaise: 50000, allowedPaymentMethods: ["wallet"] };
+
+  it("401s with no token (PUT)", async () => {
+    const res = await request(app).put(`/api/v1/students/${bodyStudentId}/payment-permissions`).send(validBody);
+    expectStatus(res, 401);
+  });
+
+  it("404s for a student that doesn't exist (PUT)", async () => {
+    const res = await request(app)
+      .put(`/api/v1/students/${crypto.randomUUID()}/payment-permissions`)
+      .set(...authHeader(uids.owner))
+      .send(validBody);
+    expectStatus(res, 404);
+  });
+
+  it("403s a parent not linked to the student (PUT)", async () => {
+    const res = await request(app)
+      .put(`/api/v1/students/${bodyStudentId}/payment-permissions`)
+      .set(...authHeader(uids.parent))
+      .send(validBody);
+    expectStatus(res, 403);
+  });
+
+  it("403s a non-owner/admin staff role, e.g. tutor (PUT)", async () => {
+    const res = await request(app)
+      .put(`/api/v1/students/${bodyStudentId}/payment-permissions`)
+      .set(...authHeader(uids.tutor))
+      .send(validBody);
+    expectStatus(res, 403);
+  });
+
+  it("422s a malformed body (PUT)", async () => {
+    const res = await request(app)
+      .put(`/api/v1/students/${bodyStudentId}/payment-permissions`)
+      .set(...authHeader(uids.owner))
+      .send({ selfPayAllowed: "yes", spendingLimitPaise: null, allowedPaymentMethods: [] });
+    expectStatus(res, 422);
+  });
+
+  it("200s for owner/admin, upserts the row, and GET reflects it back", async () => {
+    const putRes = await request(app)
+      .put(`/api/v1/students/${bodyStudentId}/payment-permissions`)
+      .set(...authHeader(uids.owner))
+      .send(validBody);
+    expectStatus(putRes, 200);
+
+    const row = await db.query<any>(
+      `select self_pay_allowed, spending_limit_paise, allowed_payment_methods, updated_by from student_payment_permissions where student_id = $1`,
+      [bodyStudentId]
+    );
+    expect(row.rows[0].self_pay_allowed).toBe(true);
+    expect(row.rows[0].spending_limit_paise).toBe(50000);
+    expect(row.rows[0].allowed_payment_methods).toEqual(["wallet"]);
+    expect(row.rows[0].updated_by).toBe(uids.owner);
+
+    const getRes = await request(app)
+      .get(`/api/v1/students/${bodyStudentId}/payment-permissions`)
+      .set(...authHeader(uids.admin));
+    expectStatus(getRes, 200);
+    expect(getRes.body).toMatchObject(validBody);
+  });
+
+  it("200s for a linked parent, and GET reflects DEFAULT_PAYMENT_PERMISSIONS when no row has ever been written", async () => {
+    const freshStudentId = crypto.randomUUID();
+    await db.query(`insert into students (id, organization_id, name) values ($1, $2, 'Fresh Kid')`, [freshStudentId, ORG]);
+    await db.query(`insert into parent_links (parent_user_id, student_id, organization_id) values ($1, $2, $3)`, [uids.parent, freshStudentId, ORG]);
+
+    const getBefore = await request(app)
+      .get(`/api/v1/students/${freshStudentId}/payment-permissions`)
+      .set(...authHeader(uids.parent));
+    expectStatus(getBefore, 200);
+    expect(getBefore.body).toMatchObject({ selfPayAllowed: false, spendingLimitPaise: null, allowedPaymentMethods: [] });
+
+    const putRes = await request(app)
+      .put(`/api/v1/students/${freshStudentId}/payment-permissions`)
+      .set(...authHeader(uids.parent))
+      .send(validBody);
+    expectStatus(putRes, 200);
+    expect(putRes.body).toMatchObject(validBody);
+  });
+
+  it("403s a parent not linked to the student (GET)", async () => {
+    const res = await request(app)
+      .get(`/api/v1/students/${bodyStudentId}/payment-permissions`)
+      .set(...authHeader(uids.parent));
+    expectStatus(res, 403);
+  });
+});
