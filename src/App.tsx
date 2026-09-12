@@ -16,6 +16,7 @@ import Home from "./pages/public/Home";
 const Features = lazy(() => import("./pages/public/Features"));
 const Pricing = lazy(() => import("./pages/public/Pricing"));
 const HowItWorks = lazy(() => import("./pages/public/HowItWorks"));
+const Contact = lazy(() => import("./pages/public/Contact"));
 
 // Lazy load protected app pages
 const Today = lazy(() => import("./pages/Today"));
@@ -110,6 +111,7 @@ export default function App() {
               <Route path="/features" element={<Features />} />
               <Route path="/pricing" element={<Pricing />} />
               <Route path="/how-it-works" element={<HowItWorks />} />
+              <Route path="/contact" element={<Contact />} />
             </Route>
 
             <Route path="/login" element={<Login />} />
