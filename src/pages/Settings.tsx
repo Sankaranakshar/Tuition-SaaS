@@ -150,7 +150,7 @@ export default function Settings() {
             <SettingsIcon className="w-4 h-4 mr-2" />
             General
           </TabsTrigger>
-          {(user?.role === "admin" || user?.role === "tutor") && (
+          {(user?.organizationRole === "owner" || user?.organizationRole === "admin") && (
             <TabsTrigger value="organization" className="flex items-center">
               <Building className="w-4 h-4 mr-2" />
               Organization
@@ -162,31 +162,31 @@ export default function Settings() {
               Team
             </TabsTrigger>
           )}
-          {(user?.role === "admin" || user?.role === "tutor") && (
+          {(user?.organizationRole === "owner" || user?.organizationRole === "admin") && (
             <TabsTrigger value="billing" className="flex items-center">
               <Receipt className="w-4 h-4 mr-2" />
               Billing & Invoices
             </TabsTrigger>
           )}
-          {(user?.role === "admin" || user?.role === "tutor") && (
+          {(user?.organizationRole === "owner" || user?.organizationRole === "admin") && (
             <TabsTrigger value="plan" className="flex items-center">
               <CreditCard className="w-4 h-4 mr-2" />
               Plan & Billing
             </TabsTrigger>
           )}
-          {(user?.role === "admin" || user?.role === "tutor") && (
+          {(user?.organizationRole === "owner" || user?.organizationRole === "admin" || user?.organizationRole === "tutor") && (
             <TabsTrigger value="availability" className="flex items-center">
               <Clock className="w-4 h-4 mr-2" />
               Availability
             </TabsTrigger>
           )}
-          {(user?.role === "admin" || user?.role === "tutor") && (
+          {(user?.organizationRole === "owner" || user?.organizationRole === "admin") && (
             <TabsTrigger value="export" className="flex items-center">
               <Database className="w-4 h-4 mr-2" />
               Data & Offboarding
             </TabsTrigger>
           )}
-          {(user?.role === "admin" || user?.role === "tutor") && (
+          {(user?.organizationRole === "owner" || user?.organizationRole === "admin" || user?.organizationRole === "tutor") && (
             <TabsTrigger value="profile" className="flex items-center">
               <UserIcon className="w-4 h-4 mr-2" />
               Tutor Profile
@@ -284,7 +284,7 @@ export default function Settings() {
           </div>
         </TabsContent>
 
-        {(user?.role === "admin" || user?.role === "tutor") && (
+        {(user?.organizationRole === "owner" || user?.organizationRole === "admin") && (
           <TabsContent value="organization">
             <OrganizationSettings />
           </TabsContent>
@@ -296,31 +296,31 @@ export default function Settings() {
           </TabsContent>
         )}
 
-        {(user?.role === "admin" || user?.role === "tutor") && (
+        {(user?.organizationRole === "owner" || user?.organizationRole === "admin") && (
           <TabsContent value="billing">
             <BillingInvoiceSettings />
           </TabsContent>
         )}
 
-        {(user?.role === "admin" || user?.role === "tutor") && (
+        {(user?.organizationRole === "owner" || user?.organizationRole === "admin") && (
           <TabsContent value="plan">
             <SubscriptionSettings />
           </TabsContent>
         )}
 
-        {(user?.role === "admin" || user?.role === "tutor") && (
+        {(user?.organizationRole === "owner" || user?.organizationRole === "admin") && (
           <TabsContent value="export">
             <OrgExportSettings />
           </TabsContent>
         )}
 
-        {(user?.role === "admin" || user?.role === "tutor") && (
+        {(user?.organizationRole === "owner" || user?.organizationRole === "admin" || user?.organizationRole === "tutor") && (
           <TabsContent value="availability">
             <TutorAvailabilitySettings />
           </TabsContent>
         )}
 
-        {(user?.role === "admin" || user?.role === "tutor") && (
+        {(user?.organizationRole === "owner" || user?.organizationRole === "admin" || user?.organizationRole === "tutor") && (
           <TabsContent value="profile">
             <TutorProfileSettings />
           </TabsContent>

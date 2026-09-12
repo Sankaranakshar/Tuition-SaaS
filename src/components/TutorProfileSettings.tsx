@@ -110,7 +110,7 @@ export default function TutorProfileSettings() {
     setProfile(prev => ({ ...prev, [field]: value }));
   };
 
-  if (!user || (user.role !== 'admin' && user.role !== 'tutor')) {
+  if (!user || (user.organizationRole !== 'owner' && user.organizationRole !== 'admin' && user.organizationRole !== 'tutor')) {
     return <div className="p-4 text-[var(--cs-text-muted)]">You do not have permission to view tutor profiles.</div>;
   }
 
