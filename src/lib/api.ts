@@ -42,11 +42,20 @@ export async function api<T = unknown>(
   const token = session?.access_token;
   if (!token) throw new Error("Not signed in");
 
+  // B-06c (EXECUTION_PLAN.md Step 17): tells the server which org this
+  // request acts in when the caller holds more than one membership (Step
+  // 16) — AuthContext.tsx persists this under the same key it resolves on
+  // load. No entry (never signed in with a multi-org account, or storage
+  // cleared) omits the header entirely, which the server treats identically
+  // to today: falls back to the earliest-joined membership.
+  const activeOrganizationId = localStorage.getItem("activeOrganizationId");
+
   const resp = await fetch(`/api/v1${path}`, {
     method: options.method || "GET",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
+      ...(activeOrganizationId ? { "X-Organization-Id": activeOrganizationId } : {}),
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });

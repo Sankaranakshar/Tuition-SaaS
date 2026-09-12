@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { supabase } from "../supabase";
+import { resolveActiveOrganizationId, type OrganizationMembership } from "../../shared/activeOrganization";
 
 enum OperationType {
   CREATE = 'create',
@@ -48,12 +49,25 @@ interface User {
   // display preference, not an authorization boundary. Admin-tier UI must
   // gate on this field, not role_type.
   organizationRole?: 'owner' | 'admin' | 'tutor' | 'frontdesk' | 'accountant' | 'parent' | 'student' | null;
+  // Every org this person belongs to (B-06c, EXECUTION_PLAN.md Step 17),
+  // ordered earliest-first — a person can now hold more than one membership
+  // (Step 16). `organizationId`/`organizationRole` above always mirror
+  // whichever entry here is currently active. No switcher UI consumes this
+  // yet (that's B-07) — it exists so the API layer can send the active org
+  // on every request instead of the server silently guessing.
+  organizations?: OrganizationMembership[];
 }
 
 interface AuthContextType {
   user: User | null;
   currentRole: string | null;
   setCurrentRole: (role: string | null) => void;
+  // The org the client is currently acting in, sent as the X-Organization-Id
+  // header on every api() call (src/lib/api.ts). Persisted the same way
+  // currentRole is; no switcher UI writes this yet (B-07), but exposing the
+  // setter now means B-07 doesn't need any AuthContext changes to land.
+  activeOrganizationId: string | null;
+  setActiveOrganizationId: (organizationId: string | null) => void;
   loading: boolean;
   login: () => Promise<void>;
   loginWithEmail: (email: string, password: string) => Promise<void>;
@@ -71,6 +85,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [currentRole, setCurrentRoleState] = useState<string | null>(() => {
     return localStorage.getItem('currentRole');
   });
+  const [activeOrganizationId, setActiveOrganizationIdState] = useState<string | null>(() => {
+    return localStorage.getItem('activeOrganizationId');
+  });
   const [loading, setLoading] = useState(true);
 
   const setCurrentRole = (role: string | null) => {
@@ -79,6 +96,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('currentRole', role);
     } else {
       localStorage.removeItem('currentRole');
+    }
+  };
+
+  const setActiveOrganizationId = (organizationId: string | null) => {
+    setActiveOrganizationIdState(organizationId);
+    if (organizationId) {
+      localStorage.setItem('activeOrganizationId', organizationId);
+    } else {
+      localStorage.removeItem('activeOrganizationId');
     }
   };
 
@@ -156,21 +182,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // creates the org, the owner membership row, atomically). Unlike the
       // old Firebase-custom-claims model, there's no token refresh needed
       // here — RLS reads organization_members fresh on every query.
+      //
+      // B-06c (EXECUTION_PLAN.md Step 17): a person can now hold more than
+      // one membership (Step 16), so this fetches the *full* list via the
+      // server (GET /me/organizations — a direct client-side Supabase query
+      // can't see which one the server would pick without a switcher's
+      // input) instead of just the earliest row, and resolves + persists
+      // which one is "active" the same way currentRole already is.
       try {
-        // A user can hold more than one membership row (primary key is
-        // org_id+user_id); order deterministically so this always agrees
-        // with the server's own pick in loadMembership (server/middleware/auth.ts).
-        const { data: membership } = await supabase
-          .from("organization_members")
-          .select("organization_id, role")
-          .eq("user_id", authUserId)
-          .order("created_at", { ascending: true })
-          .limit(1)
-          .maybeSingle();
+        const { data: { session: freshSession } } = await supabase.auth.getSession();
+        const token = freshSession?.access_token;
+        let organizations: OrganizationMembership[] = [];
 
-        if (!membership && (currentUserData.role_type === 'tutor' || currentUserData.role === 'admin')) {
-          const { data: { session: freshSession } } = await supabase.auth.getSession();
-          const token = freshSession?.access_token;
+        if (token) {
+          const resp = await fetch('/api/v1/members/me/organizations', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (resp.ok) {
+            const body = await resp.json();
+            organizations = (body.organizations ?? []) as OrganizationMembership[];
+          }
+        }
+
+        if (organizations.length === 0 && (currentUserData.role_type === 'tutor' || currentUserData.role === 'admin')) {
           const resp = await fetch('/api/v1/members/bootstrap', {
             method: 'POST',
             headers: {
@@ -181,13 +215,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
           if (resp.ok) {
             const body = await resp.json();
-            currentUserData.organizationId = body.organizationId;
             // Bootstrap always creates the caller as owner (server/routes/members.ts).
-            currentUserData.organizationRole = "owner";
+            organizations = [{ organizationId: body.organizationId, organizationName: null, role: "owner" }];
           }
-        } else if (membership) {
-          currentUserData.organizationId = membership.organization_id as string;
-          currentUserData.organizationRole = membership.role as User["organizationRole"];
+        }
+
+        currentUserData.organizations = organizations;
+
+        const resolvedActiveOrgId = resolveActiveOrganizationId(localStorage.getItem('activeOrganizationId'), organizations);
+        setActiveOrganizationId(resolvedActiveOrgId);
+
+        const activeOrg = organizations.find((org) => org.organizationId === resolvedActiveOrgId);
+        if (activeOrg) {
+          currentUserData.organizationId = activeOrg.organizationId;
+          currentUserData.organizationRole = activeOrg.role as User["organizationRole"];
         }
       } catch (error) {
         console.error("Failed to resolve organization membership", error);
@@ -296,13 +337,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await supabase.auth.signOut();
       setUser(null);
       setCurrentRole(null);
+      setActiveOrganizationId(null);
     } catch (error) {
       console.error("Logout failed", error);
     }
   };
 
   return (
-    <AuthContext.Provider value={{ user, currentRole, setCurrentRole, loading, login, loginWithEmail, registerWithEmail, sendOTP, verifyOTP, logout, checkAuth }}>
+    <AuthContext.Provider value={{ user, currentRole, setCurrentRole, activeOrganizationId, setActiveOrganizationId, loading, login, loginWithEmail, registerWithEmail, sendOTP, verifyOTP, logout, checkAuth }}>
       {children}
     </AuthContext.Provider>
   );
