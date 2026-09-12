@@ -2925,29 +2925,29 @@ async function resolveUserIds(client, studentIds) {
     parentUserIds: rows.filter((r) => r.kind === "parent").map((r) => r.user_id)
   };
 }
-async function lockTutorSchedule(client, orgId, tutorId) {
-  await client.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [`${orgId}:${tutorId}`]);
+async function lockTutorSchedule(client, tutorId) {
+  await client.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [tutorId]);
 }
-async function assertNoTutorConflict(client, orgId, tutorId, startTime, endTime, excludeSessionId) {
+async function assertNoTutorConflict(client, tutorId, startTime, endTime, excludeSessionId) {
   const conflict = await client.query(
     `select 1 from class_sessions
-     where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
-       and start_time < $4::timestamptz and end_time > $3::timestamptz
-       and ($5::uuid is null or id <> $5::uuid)
+     where tutor_id = $1 and status = 'scheduled'
+       and start_time < $3::timestamptz and end_time > $2::timestamptz
+       and ($4::uuid is null or id <> $4::uuid)
      limit 1`,
-    [orgId, tutorId, startTime, endTime, excludeSessionId ?? null]
+    [tutorId, startTime, endTime, excludeSessionId ?? null]
   );
   if (conflict.rowCount) {
     throw Object.assign(new Error("Tutor has a conflicting session at this time."), { status: 409, code: "conflict" });
   }
 }
-async function checkTutorConflictAndInsert(client, orgId, tutorId, startTime, endTime, insert, excludeSessionId) {
-  await lockTutorSchedule(client, orgId, tutorId);
-  await assertNoTutorConflict(client, orgId, tutorId, startTime, endTime, excludeSessionId);
+async function checkTutorConflictAndInsert(client, tutorId, startTime, endTime, insert, excludeSessionId) {
+  await lockTutorSchedule(client, tutorId);
+  await assertNoTutorConflict(client, tutorId, startTime, endTime, excludeSessionId);
   return insert();
 }
 async function createSessionTx(client, orgId, body) {
-  return checkTutorConflictAndInsert(client, orgId, body.tutorId, body.startTime, body.endTime, async () => {
+  return checkTutorConflictAndInsert(client, body.tutorId, body.startTime, body.endTime, async () => {
     const studentIds = body.studentIds || [];
     const { studentUserIds, parentUserIds } = await resolveUserIds(client, studentIds);
     const insertRes = await client.query(
@@ -2992,7 +2992,6 @@ router8.patch("/sessions/:id", requireRole(...CAN_SCHEDULE), async (req, res, ne
       }
       await checkTutorConflictAndInsert(
         client,
-        orgId,
         row.tutor_id,
         body.startTime,
         body.endTime,
@@ -3048,7 +3047,7 @@ async function materializeTemplate(template) {
   const windowStart = candidates[0].start.toISOString();
   const windowEnd = candidates[candidates.length - 1].end.toISOString();
   return withTransaction(async (client) => {
-    await lockTutorSchedule(client, orgId, tutorId);
+    await lockTutorSchedule(client, tutorId);
     const existingRes = await client.query(
       `select to_char(materialized_date, 'YYYY-MM-DD') as date_key
        from class_sessions
@@ -3058,9 +3057,9 @@ async function materializeTemplate(template) {
     const alreadyMaterialized = new Set(existingRes.rows.map((r) => r.date_key));
     const busyRes = await client.query(
       `select start_time, end_time from class_sessions
-       where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
-         and start_time < $4::timestamptz and end_time > $3::timestamptz`,
-      [orgId, tutorId, windowStart, windowEnd]
+       where tutor_id = $1 and status = 'scheduled'
+         and start_time < $3::timestamptz and end_time > $2::timestamptz`,
+      [tutorId, windowStart, windowEnd]
     );
     const busy = busyRes.rows.map((r) => ({
       start: new Date(r.start_time).getTime(),

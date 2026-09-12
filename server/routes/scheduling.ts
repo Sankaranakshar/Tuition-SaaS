@@ -103,16 +103,27 @@ async function resolveUserIds(
   };
 }
 
-/** Serializes all session-creation attempts for one (org, tutor) pair.
+/** Serializes all session-creation attempts for one tutor, across every org
+ *  they belong to (B-07, EXECUTION_PLAN.md Step 20) — a tutor's calendar is
+ *  one calendar regardless of which org booked into it, so two orgs racing
+ *  to book the same tutor at the same time must serialize against each
+ *  other, not just against same-org attempts. Previously keyed `${orgId}:${tutorId}`,
+ *  which let two different orgs take independent locks and both "win".
  *  pg_advisory_xact_lock auto-releases at COMMIT/ROLLBACK — no manual unlock. */
-async function lockTutorSchedule(client: PoolClient, orgId: string, tutorId: string): Promise<void> {
-  await client.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [`${orgId}:${tutorId}`]);
+async function lockTutorSchedule(client: PoolClient, tutorId: string): Promise<void> {
+  await client.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [tutorId]);
 }
 
 /**
- * Range-overlap conflict check for a tutor, scoped by an advisory lock on
- * (org, tutor). `excludeSessionId` lets a reschedule of an existing session
- * re-check against every *other* session without tripping over itself.
+ * Range-overlap conflict check for a tutor, scoped by an advisory lock on the
+ * tutor alone (not (org, tutor) — B-07, EXECUTION_PLAN.md Step 20: since
+ * class_sessions.tutor_id is the same auth.users id regardless of which org's
+ * session it is, a tutor who belongs to two orgs must not be bookable into
+ * both at an overlapping time — the old organization_id-scoped query let
+ * exactly that happen, since each org's booking path only ever saw its own
+ * rows). `excludeSessionId` lets a reschedule of an existing session re-check
+ * against every *other* session, in any org, without tripping over itself
+ * (session ids are globally unique, so this still works cross-org).
  *
  * The overlap test is a SQL predicate with `limit 1` rather than the previous
  * "pull every session starting within 12h and compare in JS". That reads one
@@ -123,7 +134,6 @@ async function lockTutorSchedule(client: PoolClient, orgId: string, tutorId: str
  */
 async function assertNoTutorConflict(
   client: PoolClient,
-  orgId: string,
   tutorId: string,
   startTime: string,
   endTime: string,
@@ -131,11 +141,11 @@ async function assertNoTutorConflict(
 ): Promise<void> {
   const conflict = await client.query(
     `select 1 from class_sessions
-     where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
-       and start_time < $4::timestamptz and end_time > $3::timestamptz
-       and ($5::uuid is null or id <> $5::uuid)
+     where tutor_id = $1 and status = 'scheduled'
+       and start_time < $3::timestamptz and end_time > $2::timestamptz
+       and ($4::uuid is null or id <> $4::uuid)
      limit 1`,
-    [orgId, tutorId, startTime, endTime, excludeSessionId ?? null]
+    [tutorId, startTime, endTime, excludeSessionId ?? null]
   );
   if (conflict.rowCount) {
     throw Object.assign(new Error("Tutor has a conflicting session at this time."), { status: 409, code: "conflict" });
@@ -144,15 +154,14 @@ async function assertNoTutorConflict(
 
 async function checkTutorConflictAndInsert(
   client: PoolClient,
-  orgId: string,
   tutorId: string,
   startTime: string,
   endTime: string,
   insert: () => Promise<string>,
   excludeSessionId?: string
 ): Promise<string> {
-  await lockTutorSchedule(client, orgId, tutorId);
-  await assertNoTutorConflict(client, orgId, tutorId, startTime, endTime, excludeSessionId);
+  await lockTutorSchedule(client, tutorId);
+  await assertNoTutorConflict(client, tutorId, startTime, endTime, excludeSessionId);
   return insert();
 }
 
@@ -165,7 +174,7 @@ export async function createSessionTx(
   orgId: string,
   body: { templateId?: string | null; tutorId: string; studentIds?: string[]; startTime: string; endTime: string; isOnline?: boolean; roomNumber?: string | null }
 ): Promise<string> {
-  return checkTutorConflictAndInsert(client, orgId, body.tutorId, body.startTime, body.endTime, async () => {
+  return checkTutorConflictAndInsert(client, body.tutorId, body.startTime, body.endTime, async () => {
     const studentIds = body.studentIds || [];
     const { studentUserIds, parentUserIds } = await resolveUserIds(client, studentIds);
     const insertRes = await client.query(
@@ -219,7 +228,7 @@ router.patch("/sessions/:id", requireRole(...CAN_SCHEDULE), async (req: AuthRequ
       }
 
       await checkTutorConflictAndInsert(
-        client, orgId, row.tutor_id, body.startTime, body.endTime,
+        client, row.tutor_id, body.startTime, body.endTime,
         async () => {
           await client.query(
             `update class_sessions set start_time = $1, end_time = $2, updated_at = now() where id = $3`,
@@ -335,7 +344,7 @@ async function materializeTemplate(template: Template): Promise<MaterializeResul
   const windowEnd = candidates[candidates.length - 1].end.toISOString();
 
   return withTransaction(async (client) => {
-    await lockTutorSchedule(client, orgId, tutorId);
+    await lockTutorSchedule(client, tutorId);
 
     // materialized_date is a `date`; format it in SQL so the comparison key
     // never round-trips through a timezone-sensitive JS Date.
@@ -347,11 +356,15 @@ async function materializeTemplate(template: Template): Promise<MaterializeResul
     );
     const alreadyMaterialized = new Set(existingRes.rows.map((r) => r.date_key as string));
 
+    // Scoped by tutor_id alone, not organization_id (B-07, EXECUTION_PLAN.md
+    // Step 20) — a materialization sweep for this org's template must also
+    // see the tutor's sessions in any other org they belong to, or it could
+    // materialize a slot that's already booked elsewhere for them.
     const busyRes = await client.query(
       `select start_time, end_time from class_sessions
-       where organization_id = $1 and tutor_id = $2 and status = 'scheduled'
-         and start_time < $4::timestamptz and end_time > $3::timestamptz`,
-      [orgId, tutorId, windowStart, windowEnd]
+       where tutor_id = $1 and status = 'scheduled'
+         and start_time < $3::timestamptz and end_time > $2::timestamptz`,
+      [tutorId, windowStart, windowEnd]
     );
     const busy = busyRes.rows.map((r) => ({
       start: new Date(r.start_time).getTime(),

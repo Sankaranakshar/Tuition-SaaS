@@ -148,8 +148,16 @@ export async function downloadInvoicePdf(invoiceId: string): Promise<void> {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
   if (!token) throw new Error("Not signed in");
+  // B-07 (EXECUTION_PLAN.md Step 20): now load-bearing once the org switcher
+  // lets a multi-org user make a non-default org active — without this, the
+  // server would resolve the wrong org and 404 an invoice that exists in the
+  // active org. Same header logic as api() above.
+  const activeOrganizationId = localStorage.getItem("activeOrganizationId");
   const resp = await fetch(`/api/v1/billing/invoices/${invoiceId}/pdf`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(activeOrganizationId ? { "X-Organization-Id": activeOrganizationId } : {}),
+    },
   });
   if (!resp.ok) {
     const data = await resp.json().catch(() => ({}));
@@ -186,9 +194,14 @@ export async function uploadDocument(input: { file: File; studentId: string; cat
   form.append("category", input.category);
   form.append("notes", input.notes || "");
 
+  // B-07 (EXECUTION_PLAN.md Step 20): see downloadInvoicePdf's comment above.
+  const activeOrganizationId = localStorage.getItem("activeOrganizationId");
   const resp = await fetch("/api/v1/documents", {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(activeOrganizationId ? { "X-Organization-Id": activeOrganizationId } : {}),
+    },
     body: form,
   });
   const data = await resp.json().catch(() => ({}));
@@ -440,6 +453,16 @@ export async function bootstrapOrganization(
   }
 }
 
+// B-07 (EXECUTION_PLAN.md Step 20): the org switcher's write path. 403s if
+// the caller isn't actually a member of organizationId (server re-validates,
+// Step 16's PUT /me/active-organization).
+export function switchActiveOrganization(organizationId: string) {
+  return api<{ ok: true }>("/members/me/active-organization", {
+    method: "PUT",
+    body: { organizationId },
+  });
+}
+
 export function getSubscription() {
   return api<SubscriptionResponse>("/subscription");
 }
@@ -495,7 +518,14 @@ async function downloadBlob(path: string, fallbackFilename: string): Promise<voi
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
   if (!token) throw new Error("Not signed in");
-  const resp = await fetch(`/api/v1${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  // B-07 (EXECUTION_PLAN.md Step 20): see downloadInvoicePdf's comment above.
+  const activeOrganizationId = localStorage.getItem("activeOrganizationId");
+  const resp = await fetch(`/api/v1${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(activeOrganizationId ? { "X-Organization-Id": activeOrganizationId } : {}),
+    },
+  });
   if (!resp.ok) {
     const data = await resp.json().catch(() => ({}));
     throw Object.assign(
@@ -535,9 +565,14 @@ async function multipartRequest<T>(path: string, form: FormData): Promise<T> {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
   if (!token) throw new Error("Not signed in");
+  // B-07 (EXECUTION_PLAN.md Step 20): see downloadInvoicePdf's comment above.
+  const activeOrganizationId = localStorage.getItem("activeOrganizationId");
   const resp = await fetch(`/api/v1${path}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(activeOrganizationId ? { "X-Organization-Id": activeOrganizationId } : {}),
+    },
     body: form,
   });
   const data = await resp.json().catch(() => ({}));

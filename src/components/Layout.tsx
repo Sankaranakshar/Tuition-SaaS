@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import CommandPalette from "./CommandPalette";
+import OrgSwitcher from "./OrgSwitcher";
 import { BottomSheet } from "./kit";
 import { useNotificationsList } from "../hooks/useInbox";
 import { useIsPlatformAdmin } from "../hooks/usePlatformAdmin";
@@ -131,13 +132,9 @@ export default function Layout() {
           c
         </button>
 
-        {/* Org-switcher slot: reserved for R2 (B-06/B-07), visual placeholder only */}
-        <div
-          className="mb-2 mt-1.5 flex h-[30px] w-full items-center justify-center rounded-[var(--cs-radius-control)] border border-dashed border-[var(--cs-border-strong)] text-[10px] text-[var(--cs-text-faint)]"
-          aria-hidden="true"
-        >
-          org ▾
-        </div>
+        {/* Org switcher (B-07, EXECUTION_PLAN.md Step 20): renders nothing
+            for a single-org user, matching that step's no-op requirement. */}
+        <OrgSwitcher />
 
         <nav className="flex flex-1 flex-col items-center gap-0.5">
           {rail.map((item) => (

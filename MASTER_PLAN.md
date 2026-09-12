@@ -76,14 +76,14 @@ Each release has a single thesis, a gate, and an effort total. Effort is in engi
 | ID | Item | ed |
 |---|---|---|
 | B-06 | Person-centric identity: one login, many memberships. Independent tutor modelled as a single-member org so the schema never forks (D-01) | 8 |
-| B-07 | Org switcher plus cross-org conflict checking | 5 |
+| B-07 | Org switcher plus cross-org conflict checking | 5 | ✅ Done 2026-09-12 (EXECUTION_PLAN.md Step 20) |
 | B-08 | Tutor payouts and earnings: hours or sessions taught, earnings ledger, payout run, statement, TDS. Built once, serves org payroll and marketplace payouts alike | 6 |
 | B-12 | Monthly progress-report PDF | 3 |
 | B-13 | Substitute and leave management | 4 |
 
 **Also in R2, from the IA tabs:** the assignment marking loop back into the gradebook (currently upload works, marking does not, on both the staff and student side), guardian records moving from student-owned to parent-owned, cross-org family view for parents, and student session-requests routed to a parent for approval per D-05's per-student payment-permissions model (not a fixed age threshold — see §5).
 
-**R2 gate:** one human account teaches independently on Tuesdays and at a centre on Thursdays, switches context without logging out, and neither org can book over the other; a parent with children at two different centres sees one home screen; a centre runs a payout cycle inside the product.
+**R2 gate:** one human account teaches independently on Tuesdays and at a centre on Thursdays, switches context without logging out, and neither org can book over the other; a parent with children at two different centres sees one home screen; a centre runs a payout cycle inside the product. **Met as of 2026-09-12** for the switching/booking half (EXECUTION_PLAN.md Step 20: a real org switcher in the app rail, and a genuine cross-org tutor double-booking bug found and fixed along the way — `class_sessions.tutor_id` is the same id across a multi-org tutor's orgs, but the conflict check used to scope by `organization_id` too, so two orgs could each independently book the same tutor at the same time). The payout-cycle and multi-centre-parent-home-screen halves remain B-08/unscoped.
 
 **R2 also unblocks D-04's migration.** D-04 is decided (§5: drop the legacy rupee-mirror columns, migrate to paise-native) — once the identity migration has proven the team can run a real migration against production data, `invoices.total_amount`/`subtotal` and `wallets.balance_currency` can be resolved on staging first. Conversion logic is already centralized in `shared/money.ts`; only the migration itself (not the decision) remains.
 
@@ -144,7 +144,7 @@ Score = Impact × Confidence ÷ Effort, effort floored at 0.5 ed. Highest score 
 | B-14 | Public profiles + verification | R3 | 5 | 0.7 | 8 | 0.44 |
 | B-15 | Search, enquiry, trial | R3 | 5 | 0.6 | 12 | 0.25 |
 | B-16 | Escrow, take rate, reviews | R3 | 4 | 0.6 | 10 | 0.24 |
-| B-07 | Org switcher + cross-org conflicts | R2 | 4 | 0.9 | 5 | 0.72 |
+| ~~B-07~~ | ~~Org switcher + cross-org conflicts~~ | R2 | 4 | 0.9 | 5 | **Done 2026-09-12** |
 
 **Total: 90.5 ed at plan-time** (R1 22.5, R2 26, R3 30, R4 12); **76 ed remaining** after B-02, B-20 (1.5 ed), B-01 (3 ed) shipped 2026-08-06 and B-03 (2 ed), the booking-request approval UI (~1 ed), B-09 (3 ed), B-05 (4 ed) shipped 2026-09-05. At one engineer that is roughly 16 calendar weeks of pure build; budget 24 to 28 with review, migrations and the browser walkthroughs this stack demonstrably needs.
 

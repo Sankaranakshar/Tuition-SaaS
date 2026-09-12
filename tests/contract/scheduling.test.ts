@@ -185,6 +185,58 @@ describe("POST /api/v1/scheduling/sessions", () => {
     expectStatus(overlapping, 409);
     expect(overlapping.body.error.code).toBe("conflict");
   });
+
+  // B-07 (EXECUTION_PLAN.md Step 20): class_sessions.tutor_id is the same
+  // auth.users id regardless of which org's session it is, but the
+  // pre-Step-20 conflict check filtered by organization_id too — so a tutor
+  // belonging to two orgs could be double-booked at the same time in each.
+  // This proves the fix (scheduling.ts's assertNoTutorConflict/lockTutorSchedule
+  // now scope by tutor_id alone) actually closes that gap: it fails against
+  // the pre-fix code, since the two sessions live in different orgs.
+  it("409s a session in one org that overlaps the same multi-org tutor's session in another org", async () => {
+    const multiOrgTutorId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [multiOrgTutorId]);
+    await db.query(
+      `insert into organization_members (organization_id, user_id, role) values ($1, $2, 'tutor'), ($3, $2, 'tutor')`,
+      [ORG, multiOrgTutorId, OTHER_ORG]
+    );
+
+    const templateInOrg = crypto.randomUUID();
+    await db.query(
+      `insert into class_templates (id, organization_id, name, type, capacity, days_of_week)
+       values ($1, $2, 'Cross-org A', 'ONE_ON_ONE', 1, '{}')`,
+      [templateInOrg, ORG]
+    );
+    const templateInOtherOrg = crypto.randomUUID();
+    await db.query(
+      `insert into class_templates (id, organization_id, name, type, capacity, days_of_week)
+       values ($1, $2, 'Cross-org B', 'ONE_ON_ONE', 1, '{}')`,
+      [templateInOtherOrg, OTHER_ORG]
+    );
+
+    const first = await request(app)
+      .post("/api/v1/scheduling/sessions")
+      .set(...authHeader(uids.owner))
+      .send({
+        templateId: templateInOrg,
+        tutorId: multiOrgTutorId,
+        startTime: "2027-01-06T10:00:00.000Z",
+        endTime: "2027-01-06T11:00:00.000Z",
+      });
+    expectStatus(first, 200);
+
+    const crossOrgOverlap = await request(app)
+      .post("/api/v1/scheduling/sessions")
+      .set(...authHeader(uids.outsider)) // owner of OTHER_ORG
+      .send({
+        templateId: templateInOtherOrg,
+        tutorId: multiOrgTutorId,
+        startTime: "2027-01-06T10:30:00.000Z",
+        endTime: "2027-01-06T11:30:00.000Z",
+      });
+    expectStatus(crossOrgOverlap, 409);
+    expect(crossOrgOverlap.body.error.code).toBe("conflict");
+  });
 });
 
 describe("PATCH /api/v1/scheduling/sessions/:id", () => {
