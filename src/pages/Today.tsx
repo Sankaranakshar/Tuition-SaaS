@@ -143,13 +143,23 @@ export default function Today() {
   if (currentRole === "student") return <StudentDashboard />;
   if (currentRole === "parent") return <ParentPortal />;
 
-  return <StaffToday user={user} currentRole={currentRole} />;
+  return <StaffToday user={user} />;
 }
 
-function StaffToday({ user, currentRole }: { user: any; currentRole: string | null }) {
+function StaffToday({ user }: { user: any }) {
   const { t } = useTranslation();
   const orgId = user?.organizationId as string | undefined;
-  const isTutor = (currentRole || user?.role) === "tutor";
+  // Data-scoping (which sessions/students/invoices/leads this viewer sees)
+  // must key off the org-level authorization tier, not the person-type role
+  // (user.role, an alias for profiles.role_type) or the persona-switcher's
+  // currentRole — same "role vs organizationRole" conflation already fixed
+  // in People.tsx/Documents.tsx/Settings.tsx's tab gating (HANDOFF.md §8).
+  // An owner or admin who is also personally a tutor (role_type: 'tutor')
+  // must still see the whole org's roster here, not just their own sessions
+  // — confirmed as a real bug 2026-09-12 while live-testing B-08 (the demo
+  // owner account, organizationRole 'owner' + role_type 'tutor', couldn't
+  // see a different tutor's session on their own Today page).
+  const isTutor = user?.organizationRole === "tutor";
   const isAdminTier = user?.organizationRole === "owner" || user?.organizationRole === "admin";
 
   const [sessions, setSessions] = useState<TodaySession[] | null>(null);
