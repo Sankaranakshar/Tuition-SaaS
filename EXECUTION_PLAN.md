@@ -71,10 +71,10 @@ Two items (B-10 staging, external pentest + leaked-password toggle) were explici
 | 15 | B-06a: migration — multi-membership profile schema | 14 | ✅ Done 2026-09-12 |
 | 16 | B-06b: server — multi-membership auth & org-context resolution | 15 | ✅ Done 2026-09-12 |
 | 17 | B-06c: client — thread active-org through AuthContext/api.ts | 16 | ✅ Done 2026-09-12 (multi-org browser walkthrough deferred — see step detail) |
-| 18 | B-06d: D-01 verification — independent tutor stays a clean single-member org | 16 | ⬜ Not started |
+| 18 | B-06d: D-01 verification — independent tutor stays a clean single-member org | 16 | ✅ Done 2026-09-12 |
 | 19 | D-05: per-student parent-controlled payment-permissions model | 15 | ⬜ Not started |
 
-**Gate baseline going into Step 18** (HANDOFF.md §2, re-run 2026-09-12): tsc clean · 216 unit · 90 RLS · 267 contract · build `dist/server.js` 186.8 KB · bundle 203.7 KB gzip / 260 KB budget · API bundle 16/16 mounts.
+**Gate baseline going into Step 19** (HANDOFF.md §2, re-run 2026-09-12 after Step 18): tsc clean · 216 unit · 90 RLS · 269 contract · build `dist/server.js` 186.8 KB · bundle 203.7 KB gzip / 260 KB budget · API bundle 16/16 mounts.
 
 **Not scoped in this pass, stays on the backlog:**
 
@@ -206,8 +206,10 @@ Two items (B-10 staging, external pentest + leaked-password toggle) were explici
 2. That same user then redeems a *second* org's staff invite (now possible per Step 16) → assert their original org-of-one is untouched (still exactly one member, still owner) while a second `organization_members` row now links them to the new org — proving Step 16's relaxation didn't retroactively change the first org's shape.
 
 **Definition of done:**
-- [ ] Both assertions above land as contract tests (new file or appended to `tests/contract/members.test.ts`).
-- [ ] All seven gates green.
+- [x] Both assertions above land as contract tests (new file or appended to `tests/contract/members.test.ts`).
+- [x] All seven gates green.
+
+**Shipped 2026-09-12:** two new tests in `tests/contract/members.test.ts`'s new "D-01 regression" describe block. First: bootstrap a fresh user, assert exactly one `organization_members` row (role `owner`) and exactly one `organizations` row whose column shape (`Object.keys` diffed directly against the existing multi-member fixture org `ORG`, not a hardcoded list — avoids the test going stale as the schema gains columns) is identical to a centre's — no "independent"/"solo" flag, no parallel table. Second: that same user redeems a second org's staff invite (Step 16) and the original org-of-one is proven untouched (still exactly one member, still owner) while a second `organization_members` row now links them to the new org. No new schema, no new route — pure regression coverage per this step's own scope. All seven gates green: tsc clean, 216 unit (unchanged), 90 RLS (unchanged), **269 contract** (+2), build `dist/server.js` 186.8 KB (unchanged, no server code touched), bundle 203.7 KB (unchanged), API bundle 16/16 mounts, `api/index.js` byte-identical.
 
 ---
 

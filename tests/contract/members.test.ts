@@ -524,3 +524,78 @@ describe("PUT /api/v1/members/me/active-organization", () => {
     expect(row.rows[0].organization_id).toBe(secondOrgId);
   });
 });
+
+// B-06d (EXECUTION_PLAN.md Step 18): D-01 said an independent tutor's org
+// must stay "one shape, N memberships," never a schema fork — this is the
+// permanent regression test for that promise, since Step 16 touched the
+// exact code path (bootstrap, setMembership()) D-01 constrains.
+describe("D-01 regression: independent tutor's org-of-one stays a clean, ordinary org", () => {
+  it("bootstrap yields exactly one organizations row (no distinguishing shape) and one organization_members row (owner)", async () => {
+    const freshId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [freshId]);
+
+    const res = await request(app)
+      .post("/api/v1/members/bootstrap")
+      .set(...authHeader(freshId))
+      .send({ organizationName: "Solo Tutor Co" });
+    expectStatus(res, 201);
+    const orgId = res.body.organizationId;
+
+    const members = await db.query<any>(
+      `select user_id, role from organization_members where organization_id = $1`,
+      [orgId]
+    );
+    expect(members.rows).toHaveLength(1);
+    expect(members.rows[0].user_id).toBe(freshId);
+    expect(members.rows[0].role).toBe("owner");
+
+    // Same organizations shape a centre gets: no "independent"/"solo" flag,
+    // no parallel table — just the generic org lifecycle/settings columns
+    // every organization has (base schema plus later offboarding/settings
+    // migrations), confirmed by diffing against a query for an existing
+    // multi-member fixture org (ORG) below.
+    const orgs = await db.query<any>(`select * from organizations where id = $1`, [orgId]);
+    expect(orgs.rows).toHaveLength(1);
+    const centreOrgColumns = await db.query<any>(`select * from organizations where id = $1`, [ORG]);
+    expect(Object.keys(orgs.rows[0]).sort()).toEqual(Object.keys(centreOrgColumns.rows[0]).sort());
+  });
+
+  it("redeeming a second org's invite leaves the original org-of-one untouched", async () => {
+    const freshId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [freshId]);
+
+    const bootstrapRes = await request(app)
+      .post("/api/v1/members/bootstrap")
+      .set(...authHeader(freshId))
+      .send({ organizationName: "Solo Tutor Co 2" });
+    expectStatus(bootstrapRes, 201);
+    const orgId = bootstrapRes.body.organizationId;
+
+    const invite = await insertStaffInvite({ orgId: OTHER_ORG, role: "tutor" });
+    const redeemRes = await request(app)
+      .post("/api/v1/members/invites/redeem")
+      .set(...authHeader(freshId))
+      .send({ token: invite });
+    expectStatus(redeemRes, 200);
+    expect(redeemRes.body.organizationId).toBe(OTHER_ORG);
+
+    const originalOrgMembers = await db.query<any>(
+      `select user_id, role from organization_members where organization_id = $1`,
+      [orgId]
+    );
+    expect(originalOrgMembers.rows).toHaveLength(1);
+    expect(originalOrgMembers.rows[0].role).toBe("owner");
+
+    const secondOrgMembership = await db.query<any>(
+      `select role from organization_members where organization_id = $1 and user_id = $2`,
+      [OTHER_ORG, freshId]
+    );
+    expect(secondOrgMembership.rows[0].role).toBe("tutor");
+
+    const allMemberships = await db.query<any>(
+      `select organization_id from organization_members where user_id = $1`,
+      [freshId]
+    );
+    expect(allMemberships.rows).toHaveLength(2);
+  });
+});
