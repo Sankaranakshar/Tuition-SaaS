@@ -2,7 +2,7 @@
 
 Tuition management that collects your fees. Scheduling, attendance, billing, and parent communication for tuition centers and independent tutors.
 
-**Project documents:** [MASTER_PLAN.md](MASTER_PLAN.md) (start here: source map, release plan, ranked backlog, open founder decisions), [EXECUTION_PLAN.md](EXECUTION_PLAN.md) (step-by-step execution order — R1 tracker + R2 scaffold; R1 detail archived under `docs/`), [HANDOFF.md](HANDOFF.md) (current state, architecture, runbook, invariants), [DEV_PLAN.md](DEV_PLAN.md) (Tech Debt #N backlog, testing layers; superseded release numbering), [REDESIGN.md](REDESIGN.md) (product experience), [GO_TO_MARKET_BLUEPRINT.md](GO_TO_MARKET_BLUEPRINT.md) (GTM strategy; its architecture and security sections are Firestore-era history).
+**Project documents:** [MASTER_PLAN.md](MASTER_PLAN.md) (start here: source map, release plan, ranked backlog, open founder decisions, tech-debt backlog, testing strategy, and market/GTM strategy), [EXECUTION_PLAN.md](EXECUTION_PLAN.md) (step-by-step execution order — R1 tracker + R2 scaffold; R1 detail archived under `docs/`), [HANDOFF.md](HANDOFF.md) (current state, architecture, runbook, invariants), [REDESIGN.md](REDESIGN.md) (product experience), [docs/GO_TO_MARKET_BLUEPRINT_ARCHIVE.md](docs/GO_TO_MARKET_BLUEPRINT_ARCHIVE.md) (frozen; superseded by MASTER_PLAN.md's market-strategy section, kept only for still-cited section numbers).
 
 ## Architecture
 
