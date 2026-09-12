@@ -8,22 +8,34 @@ for full control and portability.
 
 # Option A — Hosted (Supabase Cloud) — RECOMMENDED
 
-A project already exists: ref `cwugpiernnwrhcximjwh`. The SQL migrations here reference
-only standard Postgres plus the `auth.*` and `storage.*` schemas that hosted Supabase
-provides out of the box, so they apply with no changes.
+Two projects exist: **production** (ref `cwugpiernnwrhcximjwh`) and **staging**
+(ref `fcshxorkxsaerwnuqrjh`, `classstackr-staging`, created 2026-09-12, same org,
+same `ap-south-1` region). The SQL migrations here reference only standard Postgres
+plus the `auth.*` and `storage.*` schemas that hosted Supabase provides out of the
+box, so they apply with no changes to either.
+
+**Staging** exists to rehearse migrations and browser-verify parent/student-facing
+flows without touching production — see HANDOFF.md §4 for why it was stood up and
+what's still open (a Vercel preview environment pointed at it). To target it locally
+instead of production, use its API URL/keys/DB connection string in your `.env`
+(get them from Dashboard → Project Settings → API/Database on the `classstackr-staging`
+project, or ask whoever provisioned it for the local `.env.staging` they used — it is
+gitignored and never committed). All 33 migrations have been applied to it from an
+empty database with `supabase db push --db-url <staging connection string>`, which
+also serves as the from-zero rehearsal that production's own history never got.
 
 ## 1. Apply the migrations (CLI, tracked)
 
 ```bash
 brew install supabase/tap/supabase        # or: npm i -g supabase
 supabase login                            # opens browser for an access token
-supabase link --project-ref cwugpiernnwrhcximjwh   # prompts for the DB password
+supabase link --project-ref cwugpiernnwrhcximjwh   # or fcshxorkxsaerwnuqrjh for staging — prompts for the DB password
 supabase db push                          # applies migrations/*.sql in timestamp order
 ```
 
 Migration files are named `<14-digit-timestamp>_name.sql` (e.g. `20260709020100_schema.sql`),
 which is the format `supabase db push` tracks in `supabase_migrations.schema_migrations`.
-The 13 files apply in filename order; the storage migration creates the private
+The 33 files apply in filename order; the storage migration creates the private
 `documents` bucket used by `server/routes/documents.ts`.
 
 _Alternative (no CLI):_ paste each file, in filename order, into the project's SQL editor.

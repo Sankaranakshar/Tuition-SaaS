@@ -26,7 +26,7 @@ Multi-tenant SaaS for Indian tuition centers: INR, GST invoices, UPI/Razorpay co
 | 3 | Schedule rebuild, subscription billing, super-admin, org export, audit log | Complete, all five browser-verified |
 | 3 (rest) | Hardening: axe pass, route contracts, optimization audit, and real-scale k6 (p95 79-101ms vs 400ms target, live-prod verified 2026-08-01) done; external pentest open | Only the pentest remains, see DEV_PLAN §2 |
 | 4 | Mobile polish (done); growth-loop payment-link footer (done, not live-verified — no Razorpay creds locally); reporting (done, see DEV_PLAN §3.3); AI morning brief deferred by founder (2026-08-02); activation-funnel analytics not started | **Active**, see DEV_PLAN §3 |
-| External | Razorpay live keys, Google OAuth, phone OTP, Sentry, staging, legal, AI integrations | Deferred by founder, see §7 |
+| External | Razorpay live keys, Google OAuth, phone OTP, Sentry, legal, AI integrations | Deferred by founder, see §7. **Staging (B-10) is done as of 2026-09-12 — see §4**, no longer in this deferred bucket. |
 
 **Gates, all re-run and green on 2026-09-12 (after merging the 13-step UI overhaul + the `/contact` route fix to `main` — same numbers as 2026-09-05 except the bundle, which grew as expected from the new kit primitives and token plumbing):**
 
@@ -70,11 +70,13 @@ tests/        unit/ · integration/ (RLS) · contract/ (supertest) · load/ (k6)
 
 **Live:** `https://tuition-saas-two.vercel.app` (Vercel project `tuition-saas`) against Supabase Cloud `cwugpiernnwrhcximjwh` (ap-south-1). Repo `Sankaranakshar/Tuition-SaaS`, branch `main`, push auto-deploys.
 
-**There is no staging.** Local dev points at the production Supabase project. Be deliberate about test data and clean up after walkthroughs. **Confirmed founder decision 2026-09-05: hold on B-10 for R1** (EXECUTION_PLAN.md Step 11) — R1 ships its migrations straight to production. To be revisited before R2, whose identity migration (B-06) runs against live data.
+**Staging exists as of 2026-09-12** (B-10, EXECUTION_PLAN.md Step 11 — the founder's 2026-09-05 hold was for R1, then re-opened as R2's first work item per MASTER_PLAN.md §10). Second Supabase Cloud project `classstackr-staging` (ref `fcshxorkxsaerwnuqrjh`, same org, same ap-south-1 region). All 33 migrations were pushed to it from an empty database via `supabase db push --db-url ...` — the first-ever from-zero application of the full migration set, and it applied clean with zero errors. Seeded (including a demo parent + student, same `scripts/seed.ts`) and a real Storage upload → signed URL → fetch → delete round trip was verified against its `documents` bucket. The `supabase_realtime` publication carries all 21 expected tables, confirming every realtime-publication migration re-applies correctly from zero, not just incrementally on top of production's history. **What's still open:** a second Vercel preview environment pointed at this project (needs an interactive Vercel login, not yet done), and `supabase/README.md`/`.env.example` don't yet document how to target it (see below). Credentials for it live in a local, gitignored `.env.staging` — not committed, ask whoever ran the provisioning for a copy.
+
+**Local dev still points at the production Supabase project by default** (`.env`) — staging is additive, not a replacement, until the Vercel side exists. Be deliberate about test data on whichever project `.env` targets and clean up after walkthroughs.
 
 ```bash
 npm install
-cp .env.example .env     # then fill in, see below
+cp .env.example .env     # then fill in, see below — production by default
 npm run dev              # Express + Vite on :3000
 npm run seed             # idempotent demo org, tutor, courses, students, sessions
 supabase db push         # apply migrations to the hosted project
@@ -185,5 +187,7 @@ Each of these cost real debugging time. They are distilled here so they cost nob
 **Two standing gaps from this pass:** `RoleSelection.tsx` was verified by code review only, never a live render — it needs a genuine multi-role account (parent+student, or tutor+admin in two orgs), and no seed script creates one. And `Contact.tsx` was fully built and retoned in `design/public-site` but had **no route in `App.tsx`** — `/contact` 404'd in prod, and `PublicLayout`'s own footer linked to `/how-it-works` instead as an apparent workaround; the step's own verification of `Contact.tsx` was therefore via a temporary local route + import, screenshotted and confirmed working, then reverted before commit (deliberately, since that pass was presentation-only). **Fixed 2026-09-12** on branch `fix/contact-route` (commit `0749b18`, merged to `main` the same day, independent of the design-stack merge): the lazy import + `Route path="/contact"` entry were added to `App.tsx`, all 7 gates re-confirmed green, and `/contact` now renders correctly live in both themes.
 
 **Correction to a line that used to read differently here:** "parent portal at 375px" is no longer a founder-deferral gap — it was browser-verified in `design/portals` (`ParentPortal.tsx`, `StudentDashboard.tsx`, `Profile.tsx`, `Preferences.tsx`, all four at 375px, including a same-pass fix to a `Preferences` theme-toggle overflow bug at that width).
+
+**Second correction, found 2026-09-12 while standing up staging (below):** the "no demo parent account exists (`scripts/seed.ts` seeds no `parent_links` row)" line repeated above in the 2026-09-05/2026-08-06 entries (Steps 3, 5, 7) is stale. `design/portals` (this same UI-overhaul pass, just above) added a demo parent + student to `scripts/seed.ts`, complete with a `parent_links` row and a `class_sessions.student_user_ids`/`parent_user_ids` backfill — confirmed live by re-running `npm run seed` against production, which reused the existing account rather than creating a new one, meaning it has existed since this pass, just never flagged as closing those earlier-cited gaps. Login: `demo.parent@classstackr.dev` / `demo.student@classstackr.dev`, both `ClassStackrDemo2026!`. **B-05's parent top-up and Step 5's requester counter-offer are still blocked** on the demo-parent side of things no longer — only on no live Razorpay creds locally for the former, and nothing for the latter beyond someone actually clicking through it.
 
 **Blocked on the founder's deferral, not on engineering:** Google OAuth, phone OTP, and any real Razorpay flow.
