@@ -138,7 +138,7 @@ Score = Impact × Confidence ÷ Effort, effort floored at 0.5 ed. Highest score 
 | B-17 | WhatsApp comms router | R4 | 5 | 0.7 | 5 | 0.70 |
 | ~~B-08~~ | ~~Tutor payouts~~ | R2 | 5 | 0.8 | 6 | **Done 2026-09-12** |
 | B-19 | Referral loop | R4 | 3 | 0.6 | 3 | 0.60 |
-| B-06 | Person-centric identity | R2 | 5 | 0.9 | 8 | 0.56 |
+| ~~B-06~~ | ~~Person-centric identity~~ | R2 | 5 | 0.9 | 8 | **Done 2026-09-12** |
 | B-13 | Substitute and leave | R2 | 3 | 0.7 | 4 | 0.53 |
 | B-18 | Leading indicators | R4 | 3 | 0.7 | 4 | 0.53 |
 | B-14 | Public profiles + verification | R3 | 5 | 0.7 | 8 | 0.44 |
