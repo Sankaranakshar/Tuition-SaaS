@@ -4,7 +4,7 @@ import multer from "multer";
 import ExcelJS from "exceljs";
 import Papa from "papaparse";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
-import { withTransaction } from "../db.ts";
+import { pool, withTransaction } from "../db.ts";
 import { authenticateToken, requireOrg, requireRole, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
 import { setMembership, setActiveOrganization, hasMembership } from "./members.ts";
@@ -19,6 +19,8 @@ import { suggestColumnMapping, parseImportRows, detectDuplicates, type ExistingS
 import { eraseStudentTx, deleteErasedStorageObjects, getErasurePolicy, ErasureError } from "../utils/erasure.ts";
 import { CONSENT_VERSION } from "../../shared/consent.ts";
 import { getPaymentPermissions } from "../utils/paymentPermissions.ts";
+import { resolveMonthRange, computeAttendanceSummary, type AttendanceStatus } from "../../shared/progressReport.ts";
+import { renderProgressReportPdf, formatMonthLabel } from "../utils/progressReportPdf.ts";
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -459,6 +461,109 @@ router.put("/:studentId/payment-permissions", requireOrg, async (req: AuthReques
     });
 
     res.json({ ok: true, ...body });
+  } catch (err) { next(err); }
+});
+
+// B-12 (MASTER_PLAN.md §4 / EXECUTION_PLAN.md Step 22): a monthly
+// progress-report PDF, read-only, no new table. Access mirrors the RLS
+// policies that already gate attendance_records/assessments directly
+// (supabase/migrations/20260709020200_rls.sql's is_staff/is_parent_of/
+// is_student_self) rather than inventing a narrower rule: any org staff
+// role (owner/admin/tutor/frontdesk/accountant — is_staff's own set), the
+// student's linked parent, or the student themselves.
+const PROGRESS_REPORT_STAFF_ROLES = new Set(["owner", "admin", "tutor", "frontdesk", "accountant"]);
+
+async function assertCanReadProgressReport(req: AuthRequest, studentId: string) {
+  const orgId = req.user!.organizationId!;
+  const { data: student, error } = await supabaseAdmin
+    .from("students").select("id, organization_id, name, parent_name, student_user_id")
+    .eq("id", studentId).maybeSingle();
+  if (error) throw error;
+  if (!student || student.organization_id !== orgId) {
+    throw Object.assign(new Error("Student not found"), { status: 404, code: "not_found" });
+  }
+
+  const role = req.user!.role;
+  if (role && PROGRESS_REPORT_STAFF_ROLES.has(role)) return student;
+
+  if (role === "parent") {
+    const { data: link, error: linkErr } = await supabaseAdmin
+      .from("parent_links").select("parent_user_id")
+      .eq("parent_user_id", req.user!.id).eq("student_id", studentId).maybeSingle();
+    if (linkErr) throw linkErr;
+    if (link) return student;
+  }
+
+  if (role === "student" && student.student_user_id === req.user!.id) return student;
+
+  throw Object.assign(new Error("No access to this student's progress report"), { status: 403, code: "forbidden" });
+}
+
+router.get("/:studentId/progress-report", requireOrg, async (req: AuthRequest, res, next) => {
+  try {
+    const orgId = req.user!.organizationId!;
+    const studentId = req.params.studentId;
+    const month = req.query.month as string | undefined;
+    if (!month) {
+      return res.status(422).json({ error: { code: "validation", message: "month is required, format YYYY-MM" } });
+    }
+    const range = resolveMonthRange(month);
+    if (!range) {
+      return res.status(422).json({ error: { code: "validation", message: "month must be a valid YYYY-MM string" } });
+    }
+
+    const student = await assertCanReadProgressReport(req, studentId);
+
+    const [orgRes, attendanceRes, assessmentsRes] = await Promise.all([
+      supabaseAdmin.from("organizations").select("name, address, phone, email").eq("id", orgId).maybeSingle(),
+      pool.query(
+        `select status from attendance_records
+         where organization_id = $1 and student_id = $2 and session_start >= $3 and session_start < $4`,
+        [orgId, studentId, range.start, range.end]
+      ),
+      // Graded assessments only (type distinct from 'assignment' = homework,
+      // same distinction src/lib/studentStory.ts already draws); dated by
+      // `date` when set, falling back to `created_at` — mirrors the same
+      // fallback studentStory.ts's buildTimeline uses for the same table.
+      pool.query(
+        `select title, type, date, score, total_score, feedback
+         from assessments
+         where organization_id = $1 and student_id = $2
+           and (type is distinct from 'assignment')
+           and coalesce(date, created_at::date) >= $3 and coalesce(date, created_at::date) < $4
+         order by coalesce(date, created_at::date) asc`,
+        [orgId, studentId, range.start, range.end]
+      ),
+    ]);
+
+    const attendance = computeAttendanceSummary(
+      attendanceRes.rows.map((r) => ({ status: r.status as AttendanceStatus }))
+    );
+
+    const pdf = renderProgressReportPdf({
+      org: {
+        name: orgRes.data?.name || "Tuition Center",
+        address: orgRes.data?.address || null,
+        phone: orgRes.data?.phone || null,
+        email: orgRes.data?.email || null,
+      },
+      student: { name: student.name, parentName: student.parent_name || null },
+      monthLabel: formatMonthLabel(range.start),
+      attendance,
+      assessments: assessmentsRes.rows.map((a) => ({
+        title: a.title, type: a.type, date: a.date,
+        score: a.score != null ? Number(a.score) : null,
+        totalScore: a.total_score != null ? Number(a.total_score) : null,
+        feedback: a.feedback,
+      })),
+    });
+
+    const filename = `progress-report-${student.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${month}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", String(pdf.byteLength));
+    res.setHeader("Cache-Control", "private, no-store");
+    res.end(pdf);
   } catch (err) { next(err); }
 });
 

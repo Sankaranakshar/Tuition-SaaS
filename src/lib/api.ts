@@ -182,6 +182,42 @@ export async function downloadInvoicePdf(invoiceId: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+/** Download the server-rendered monthly progress-report PDF for a student
+ *  (B-12, EXECUTION_PLAN.md Step 22). `month` is "YYYY-MM". Same
+ *  Blob/anchor-click pattern as downloadInvoicePdf above, including its
+ *  X-Organization-Id header (this is a raw fetch, not the api() helper). */
+export async function downloadProgressReport(studentId: string, month: string): Promise<void> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Not signed in");
+  const activeOrganizationId = localStorage.getItem("activeOrganizationId");
+  const resp = await fetch(`/api/v1/students/${studentId}/progress-report?month=${encodeURIComponent(month)}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(activeOrganizationId ? { "X-Organization-Id": activeOrganizationId } : {}),
+    },
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw Object.assign(
+      new Error((data as any)?.error?.message || `Couldn't download report (${resp.status})`),
+      { status: resp.status }
+    );
+  }
+  const blob = await resp.blob();
+  const cd = resp.headers.get("content-disposition") || "";
+  const match = cd.match(/filename="([^"]+)"/);
+  const filename = match?.[1] || `progress-report-${studentId}-${month}.pdf`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 /** Uploads a document to Cloud Storage via the server (DEV_PLAN E3.9): the
  *  server sniffs the real file signature and sanitizes the filename before
  *  it ever lands in storage, so this can't go through the JSON `api()`

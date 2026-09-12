@@ -2271,6 +2271,141 @@ async function getPaymentPermissions(studentId) {
   return resolvePaymentPermissions(data);
 }
 
+// shared/progressReport.ts
+function resolveMonthRange(month) {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const monthNum = Number(match[2]);
+  if (monthNum < 1 || monthNum > 12) return null;
+  const start = new Date(Date.UTC(year, monthNum - 1, 1));
+  const end = new Date(Date.UTC(year, monthNum, 1));
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+}
+function computeAttendanceSummary(records) {
+  const present = records.filter((r) => r.status === "present").length;
+  const absent = records.filter((r) => r.status === "absent").length;
+  const late = records.filter((r) => r.status === "late").length;
+  const excused = records.filter((r) => r.status === "excused").length;
+  const countedTotal = present + absent + late;
+  const attendanceRatePct = countedTotal > 0 ? Math.round((present + late) / countedTotal * 100) : 100;
+  return { present, absent, late, excused, countedTotal, attendanceRatePct };
+}
+
+// server/utils/progressReportPdf.ts
+import { jsPDF as jsPDF2 } from "jspdf";
+import autoTable2 from "jspdf-autotable";
+function readDate2(d) {
+  if (!d) return null;
+  if (d instanceof Date) return d;
+  const parsed = new Date(d);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+function formatDate2(d) {
+  const parsed = readDate2(d);
+  if (!parsed) return "\u2014";
+  return parsed.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+}
+function formatMonthLabel(monthStart) {
+  const parsed = readDate2(monthStart);
+  if (!parsed) return monthStart;
+  return parsed.toLocaleDateString("en-IN", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+function renderProgressReportPdf(input) {
+  const { org, student, monthLabel, attendance, assessments } = input;
+  const doc = new jsPDF2({ unit: "pt", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const marginX = 40;
+  let cursorY = 48;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.text(org.name, marginX, cursorY);
+  doc.setFontSize(16);
+  doc.setTextColor(60);
+  doc.text("PROGRESS REPORT", pageWidth - marginX, cursorY, { align: "right" });
+  doc.setTextColor(0);
+  cursorY += 18;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  const orgLines = [];
+  if (org.address) orgLines.push(org.address);
+  const contact = [org.phone, org.email].filter(Boolean).join(" \xB7 ");
+  if (contact) orgLines.push(contact);
+  for (const line of orgLines) {
+    doc.text(line, marginX, cursorY);
+    cursorY += 13;
+  }
+  cursorY += 8;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text(student.name, marginX, cursorY);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  if (student.parentName) {
+    doc.text(`Parent/guardian: ${student.parentName}`, marginX, cursorY + 14);
+  }
+  doc.setFont("helvetica", "bold");
+  doc.text(`Period: ${monthLabel}`, pageWidth - marginX, cursorY, { align: "right" });
+  doc.setFont("helvetica", "normal");
+  cursorY += 36;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text("Attendance", marginX, cursorY);
+  cursorY += 16;
+  autoTable2(doc, {
+    startY: cursorY,
+    margin: { left: marginX, right: marginX },
+    head: [["Present", "Late", "Absent", "Excused", "Attendance rate"]],
+    body: [[
+      String(attendance.present),
+      String(attendance.late),
+      String(attendance.absent),
+      String(attendance.excused),
+      `${attendance.attendanceRatePct}%`
+    ]],
+    styles: { font: "helvetica", fontSize: 10, cellPadding: 6, halign: "center" },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255 }
+  });
+  cursorY = (doc.lastAutoTable?.finalY ?? cursorY + 40) + 24;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text("Academic performance", marginX, cursorY);
+  cursorY += 16;
+  if (assessments.length === 0) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(120);
+    doc.text("No graded assessments recorded for this period.", marginX, cursorY);
+    doc.setTextColor(0);
+  } else {
+    autoTable2(doc, {
+      startY: cursorY,
+      margin: { left: marginX, right: marginX },
+      head: [["Date", "Assessment", "Score", "Feedback"]],
+      body: assessments.map((a) => [
+        formatDate2(a.date),
+        a.title || a.type || "\u2014",
+        a.score != null ? `${a.score} / ${a.totalScore ?? 100}` : "\u2014",
+        a.feedback || "\u2014"
+      ]),
+      styles: { font: "helvetica", fontSize: 9, cellPadding: 6 },
+      headStyles: { fillColor: [30, 41, 59], textColor: 255 },
+      columnStyles: {
+        0: { cellWidth: 70 },
+        2: { cellWidth: 60, halign: "center" }
+      }
+    });
+  }
+  doc.setFontSize(9);
+  doc.setTextColor(120);
+  doc.text(
+    "This is a computer-generated document. For questions about this report, contact the tuition center.",
+    marginX,
+    doc.internal.pageSize.getHeight() - 32
+  );
+  return Buffer.from(doc.output("arraybuffer"));
+}
+
 // server/routes/students.ts
 var router6 = express6.Router();
 router6.use(authenticateToken);
@@ -2613,6 +2748,90 @@ router6.put("/:studentId/payment-permissions", requireOrg, async (req, res, next
       allowedPaymentMethods: body.allowedPaymentMethods
     });
     res.json({ ok: true, ...body });
+  } catch (err) {
+    next(err);
+  }
+});
+var PROGRESS_REPORT_STAFF_ROLES = /* @__PURE__ */ new Set(["owner", "admin", "tutor", "frontdesk", "accountant"]);
+async function assertCanReadProgressReport(req, studentId) {
+  const orgId = req.user.organizationId;
+  const { data: student, error } = await supabaseAdmin.from("students").select("id, organization_id, name, parent_name, student_user_id").eq("id", studentId).maybeSingle();
+  if (error) throw error;
+  if (!student || student.organization_id !== orgId) {
+    throw Object.assign(new Error("Student not found"), { status: 404, code: "not_found" });
+  }
+  const role = req.user.role;
+  if (role && PROGRESS_REPORT_STAFF_ROLES.has(role)) return student;
+  if (role === "parent") {
+    const { data: link, error: linkErr } = await supabaseAdmin.from("parent_links").select("parent_user_id").eq("parent_user_id", req.user.id).eq("student_id", studentId).maybeSingle();
+    if (linkErr) throw linkErr;
+    if (link) return student;
+  }
+  if (role === "student" && student.student_user_id === req.user.id) return student;
+  throw Object.assign(new Error("No access to this student's progress report"), { status: 403, code: "forbidden" });
+}
+router6.get("/:studentId/progress-report", requireOrg, async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const studentId = req.params.studentId;
+    const month = req.query.month;
+    if (!month) {
+      return res.status(422).json({ error: { code: "validation", message: "month is required, format YYYY-MM" } });
+    }
+    const range = resolveMonthRange(month);
+    if (!range) {
+      return res.status(422).json({ error: { code: "validation", message: "month must be a valid YYYY-MM string" } });
+    }
+    const student = await assertCanReadProgressReport(req, studentId);
+    const [orgRes, attendanceRes, assessmentsRes] = await Promise.all([
+      supabaseAdmin.from("organizations").select("name, address, phone, email").eq("id", orgId).maybeSingle(),
+      pool.query(
+        `select status from attendance_records
+         where organization_id = $1 and student_id = $2 and session_start >= $3 and session_start < $4`,
+        [orgId, studentId, range.start, range.end]
+      ),
+      // Graded assessments only (type distinct from 'assignment' = homework,
+      // same distinction src/lib/studentStory.ts already draws); dated by
+      // `date` when set, falling back to `created_at` — mirrors the same
+      // fallback studentStory.ts's buildTimeline uses for the same table.
+      pool.query(
+        `select title, type, date, score, total_score, feedback
+         from assessments
+         where organization_id = $1 and student_id = $2
+           and (type is distinct from 'assignment')
+           and coalesce(date, created_at::date) >= $3 and coalesce(date, created_at::date) < $4
+         order by coalesce(date, created_at::date) asc`,
+        [orgId, studentId, range.start, range.end]
+      )
+    ]);
+    const attendance = computeAttendanceSummary(
+      attendanceRes.rows.map((r) => ({ status: r.status }))
+    );
+    const pdf = renderProgressReportPdf({
+      org: {
+        name: orgRes.data?.name || "Tuition Center",
+        address: orgRes.data?.address || null,
+        phone: orgRes.data?.phone || null,
+        email: orgRes.data?.email || null
+      },
+      student: { name: student.name, parentName: student.parent_name || null },
+      monthLabel: formatMonthLabel(range.start),
+      attendance,
+      assessments: assessmentsRes.rows.map((a) => ({
+        title: a.title,
+        type: a.type,
+        date: a.date,
+        score: a.score != null ? Number(a.score) : null,
+        totalScore: a.total_score != null ? Number(a.total_score) : null,
+        feedback: a.feedback
+      }))
+    });
+    const filename = `progress-report-${student.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${month}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", String(pdf.byteLength));
+    res.setHeader("Cache-Control", "private, no-store");
+    res.end(pdf);
   } catch (err) {
     next(err);
   }
@@ -4546,8 +4765,8 @@ async function getPayoutSettings(organizationId) {
 }
 
 // server/utils/payoutStatementPdf.ts
-import { jsPDF as jsPDF2 } from "jspdf";
-import autoTable2 from "jspdf-autotable";
+import { jsPDF as jsPDF3 } from "jspdf";
+import autoTable3 from "jspdf-autotable";
 var inrNumber2 = new Intl.NumberFormat("en-IN", {
   maximumFractionDigits: 2,
   minimumFractionDigits: 0
@@ -4555,14 +4774,14 @@ var inrNumber2 = new Intl.NumberFormat("en-IN", {
 function paise2(v) {
   return `Rs. ${inrNumber2.format(paiseToRupees(v || 0))}`;
 }
-function formatDate2(d) {
+function formatDate3(d) {
   if (!d) return "\u2014";
   const parsed = d instanceof Date ? d : new Date(d);
   return Number.isNaN(parsed.getTime()) ? "\u2014" : parsed.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 function renderPayoutStatementPdf(input) {
   const { payout, org, tutor, lines } = input;
-  const doc = new jsPDF2({ unit: "pt", format: "a4" });
+  const doc = new jsPDF3({ unit: "pt", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const marginX = 40;
   let cursorY = 48;
@@ -4587,15 +4806,15 @@ function renderPayoutStatementPdf(input) {
   const metaX = pageWidth - marginX;
   let metaY = 66;
   doc.setFont("helvetica", "bold");
-  doc.text(`${formatDate2(payout.periodStart)} \u2013 ${formatDate2(payout.periodEnd)}`, metaX, metaY, { align: "right" });
+  doc.text(`${formatDate3(payout.periodStart)} \u2013 ${formatDate3(payout.periodEnd)}`, metaX, metaY, { align: "right" });
   doc.setFont("helvetica", "normal");
   metaY += 14;
-  doc.text(`Issued: ${formatDate2(payout.createdAt)}`, metaX, metaY, { align: "right" });
+  doc.text(`Issued: ${formatDate3(payout.createdAt)}`, metaX, metaY, { align: "right" });
   metaY += 13;
   doc.text(`Status: ${payout.status}`, metaX, metaY, { align: "right" });
   if (payout.paidAt) {
     metaY += 13;
-    doc.text(`Paid: ${formatDate2(payout.paidAt)}`, metaX, metaY, { align: "right" });
+    doc.text(`Paid: ${formatDate3(payout.paidAt)}`, metaX, metaY, { align: "right" });
   }
   cursorY = Math.max(cursorY, metaY) + 20;
   doc.setFont("helvetica", "bold");
@@ -4609,12 +4828,12 @@ function renderPayoutStatementPdf(input) {
     cursorY += 13;
   }
   cursorY += 12;
-  autoTable2(doc, {
+  autoTable3(doc, {
     startY: cursorY,
     margin: { left: marginX, right: marginX },
     head: [["Session date", "Duration", "Rate", "Amount"]],
     body: lines.map((l) => [
-      formatDate2(l.sessionStart),
+      formatDate3(l.sessionStart),
       `${l.durationMinutes} min`,
       `${paise2(l.ratePaisePerHour)}/hr`,
       paise2(l.amountPaise)

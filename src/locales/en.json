@@ -526,6 +526,14 @@
     "downloadFailed": "Couldn't download the invoice",
     "shareFailed": "Couldn't create a link to share"
   },
+  "progressReport": {
+    "title": "Progress report",
+    "description": "Download a PDF summarizing attendance and academic performance for a selected month.",
+    "monthLabel": "Month",
+    "download": "Download PDF",
+    "downloading": "Preparing…",
+    "downloadFailed": "Couldn't download the progress report"
+  },
   "studentPaymentPermissions": {
     "title": "Payment permissions for {{name}}",
     "description": "Control whether {{name}} can request their own sessions without your approval, and how much they can spend.",

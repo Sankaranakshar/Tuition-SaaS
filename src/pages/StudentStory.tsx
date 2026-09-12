@@ -15,6 +15,7 @@ import { buildTimeline, filterTimeline, filterForNonStaff, computeHeaderStats, t
 import { EmptyState, Skeleton, StatChip, Button, Input } from "../components/kit";
 import { formatINR, formatPaise, formatDate } from "../lib/format";
 import { recordManualPayment } from "../lib/api";
+import ProgressReportDownload from "../components/ProgressReportDownload";
 
 // Student Story (DEV_PLAN §2a Stage 2 item 2, REDESIGN §6.3): one scrollable,
 // reverse-chronological timeline replacing StudentProfile.tsx's five tabs and
@@ -327,6 +328,11 @@ export default function StudentStory() {
           </button>
         ))}
       </div>
+
+      {/* B-12 (EXECUTION_PLAN.md Step 22): visible to staff and to the
+          student themselves on /app/my-story — not gated on isStaff, unlike
+          the composer below, since a student may download their own report. */}
+      <ProgressReportDownload studentId={student.id} />
 
       {/* Inline composer: staff only, no modals for the common cases */}
       {isStaff && (

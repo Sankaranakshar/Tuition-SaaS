@@ -6,6 +6,7 @@ import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { EmptyState, Skeleton, SkeletonText, StatChip, StatusChip, Button, Field, Input, type ChipTone } from "../components/kit";
 import StudentPaymentPermissions from "../components/StudentPaymentPermissions";
+import ProgressReportDownload from "../components/ProgressReportDownload";
 import { formatPaise, formatINR, formatDate, formatTime, formatRelativeDays } from "../lib/format";
 import { rupeesToPaise } from "../../shared/money";
 import { cancellationCutoff, DEFAULT_CANCELLATION_POLICY, type CancellationPolicy } from "../../shared/cancellationPolicy";
@@ -509,7 +510,10 @@ export default function ParentPortal() {
       )}
 
       {tab === "settings" && (
-        <StudentPaymentPermissions studentId={selected.studentId} studentName={selected.name} />
+        <div className="space-y-4">
+          <ProgressReportDownload studentId={selected.studentId} />
+          <StudentPaymentPermissions studentId={selected.studentId} studentName={selected.name} />
+        </div>
       )}
     </div>
   );
