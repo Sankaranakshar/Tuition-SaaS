@@ -180,13 +180,17 @@ Billing is the highest-stakes surface and currently the most fragmented. Rebuild
 
 ### 6.6 Settings (merges Settings + Profile + Preferences + org/billing/availability components)
 
-One page, left-anchored section list (Workspace / Profile / Availability / Billing rules / Integrations / Notifications / Members). Searchable via palette ("change my UPI id" jumps straight to the field). Availability editing gets the same drag interaction as Schedule; it is the same concept and must feel like it.
+**Shipped (2026-09, `design/settings` — HANDOFF §9):** the existing horizontal `Tabs` strip was retoned onto `--cs-*` tokens and the shared `FIELD_CLASS`/`SELECT_CLASS`/`CHECKBOX_CLASS` recipe (HANDOFF §6) — General, Organization, Team, Billing & Invoices, Plan & Billing, Availability, Data & Offboarding, Tutor Profile (8 tabs, unchanged IA, unchanged tab order). The left-anchored section-list rebuild described below was explicitly out of scope for this pass (visual + interaction polish only, no workspace/hierarchy restructuring — a locked decision) and remains unbuilt.
+
+*Original proposal, not yet built:* one page, left-anchored section list (Workspace / Profile / Availability / Billing rules / Integrations / Notifications / Members). Searchable via palette ("change my UPI id" jumps straight to the field). Availability editing gets the same drag interaction as Schedule; it is the same concept and must feel like it.
 
 ### 6.7 Onboarding
 
 The current onboarding is a 399-line form sequence. Replace with a **conversational, three-beat setup**: (1) solo tutor or center? (2) create your first class from a template gallery ("Class 10 Maths batch, Mon/Wed/Fri" pre-filled), (3) add two students or import a CSV/contacts. The goal: a booked session on the calendar within 3 minutes, because a calendar with one real class is the "aha," not a completed profile.
 
 ### 6.8 Public site
+
+**Shipped (2026-09, `design/public-site` — HANDOFF §9):** `PublicLayout` and all 5 public pages (Home, Features, Pricing, HowItWorks, Contact) adopted the `--cs-*` type scale and color system, exactly as proposed below — including the public site's first real dark-mode support ever. Its dark hero/footer/trust bands were previously hardcoded `gray-900`/`slate-900`; they now use the inverted-surface recipe (`bg-[var(--cs-text)]`/`text-[var(--cs-bg)]`, §13) so they correctly flip per-theme instead of always rendering dark. FindTutors was never built, consistent with the cut recommendation below.
 
 Out of scope for deep treatment here, but the public pages (Home, Features, Pricing, FindTutors) should adopt the same type scale and color system so the product does not change personality at the login wall. FindTutors is a marketplace feature that dilutes the SaaS positioning; recommend cutting it entirely (see section 18).
 
@@ -308,6 +312,7 @@ dark mode with no per-component change.
 | `--cs-danger` | `#b54747` | `#d98a8a` | overdue, conflict, destructive |
 | `--cs-danger-soft` | `#f6e8e8` | `#3a2020` | danger chip / row bg |
 | `--cs-warn` → grey, `--cs-ok` → accent | — | — | legacy aliases; do not use for new work |
+| `--cs-warn-soft` / `--cs-ok-soft` | `#f1f1ee` / `#e5eeeb` | `#262622` / `#1d312b` | legacy soft-chip aliases (same values as `--cs-surface-2` / `--cs-accent-soft`); do not use for new work |
 | `--cs-chart-1..4` | pine→faint | pine→faint | chart series, calm ramp |
 | `--cs-radius-control` / `-container` | 5px / 8px | — | controls / containers |
 | `--cs-shadow-pop` | — | — | popover / palette / drag lift only |

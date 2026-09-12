@@ -11,7 +11,7 @@ _Written 2026-08-02 against commit `f44f085` plus the uncommitted reporting-job 
 | Document | Still authoritative for | Stale, do not trust for |
 |---|---|---|
 | **HANDOFF.md** | Current state, architecture, runbook, security invariants, the trap list | Nothing. Keep it current. |
-| **REDESIGN.md** | Product experience, IA, motion, visual language, interaction vocabulary | §17 (dual-store), §23 phasing (delivered) |
+| **REDESIGN.md** | Product experience, IA, motion, visual language, interaction vocabulary | §17 (dual-store), §23 phasing (delivered), §6.6's left-anchored Settings IA (never built — Settings shipped 2026-09 as a token-retoned version of the pre-existing horizontal tab strip; see REDESIGN §6.6 and HANDOFF §9) |
 | **DEV_PLAN.md** | The Tech Debt #N backlog (§4, numbering frozen as a citation anchor), the testing-layer description (§5) | Its stage numbering, replaced by R1 to R4 below; old code comments citing `DEV_PLAN §2/§5/E16.x` point at a pre-2026-07-25 layout that no longer exists |
 | **Spec v2 (xlsx)** | Role matrix, per-screen IA, marketplace spec, backlog scoring, open decisions | Nothing. It is the newest artifact. |
 | **GO_TO_MARKET_BLUEPRINT.md** | Market position, ICP, the wedge, monetization logic, launch-gate checklist | §2, §7, §8, §9, §10 entirely. Firestore-era history, the stack is now Supabase/Postgres. |
@@ -26,7 +26,7 @@ _Written 2026-08-02 against commit `f44f085` plus the uncommitted reporting-job 
 
 **Shipped and verified live:** the whole management product. Six workspaces (Today, People, Student Story, Money, Inbox, Schedule), three-beat onboarding, server-authoritative money with `FOR UPDATE` locks and idempotency keys, invoices with GST snapshot and PDF and Razorpay links and webhook reconciliation, refunds against invoices, subscription billing with a DB-enforced student cap, super-admin console, org export and offboarding, audit log, staff/parent/student invite flows, mobile polish, the nightly `org_stats_daily` job.
 
-**Gates, all green:** tsc, 211 unit, 89 RLS, 252 contract, build, bundle 200.7KB against a 260KB budget, API-bundle route verification (16 mounts). All seven run in CI. None need Docker, Java or a live database. (Numbers as of 2026-09-05, EXECUTION_PLAN.md Step 10; HANDOFF.md §2 is the live source.)
+**Gates, all green:** tsc, 211 unit, 89 RLS, 252 contract, build, bundle 203.6KB against a 260KB budget, API-bundle route verification (16 mounts). All seven run in CI. None need Docker, Java or a live database. (Numbers as of 2026-09-12, post the ClassStackr UI overhaul merge; HANDOFF.md §2 is the live source.)
 
 **Load:** k6 `attendance_burst` against live production, p95 79 to 101ms against a 400ms target, no duplicate invoice under 15 concurrent VUs.
 
