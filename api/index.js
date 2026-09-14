@@ -3675,22 +3675,42 @@ function computeCreditExpiry(rows, windowDays, now) {
 var router9 = express9.Router();
 router9.use((req, res, next) => {
   const secret = process.env.CRON_SECRET;
-  if (!secret || req.header("x-cron-secret") !== secret) {
+  const bearer = req.header("authorization");
+  const bearerToken = bearer?.startsWith("Bearer ") ? bearer.slice("Bearer ".length) : null;
+  const authorized = !!secret && (req.header("x-cron-secret") === secret || bearerToken === secret);
+  if (!authorized) {
     return res.status(404).json({ error: { code: "not_found", message: "Not found" } });
   }
   next();
 });
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err);
+}
 router9.post("/materialize-sessions", async (_req, res, next) => {
   try {
     const templatesRes = await pool.query(`${TEMPLATE_SELECT} where ${MATERIALIZABLE}`);
     const aggregate = { created: [], conflicts: [], templatesProcessed: 0 };
+    const failures = [];
     for (const row of templatesRes.rows) {
-      const r = await materializeTemplate(row);
-      aggregate.created.push(...r.created);
-      aggregate.conflicts.push(...r.conflicts);
-      aggregate.templatesProcessed++;
+      try {
+        const r = await materializeTemplate(row);
+        aggregate.created.push(...r.created);
+        aggregate.conflicts.push(...r.conflicts);
+        aggregate.templatesProcessed++;
+      } catch (err) {
+        const error = errorMessage(err);
+        failures.push({ organizationId: row.organization_id, templateId: row.id, error });
+        await writeAudit(
+          row.organization_id,
+          { system: "materialize_sessions_cron" },
+          "cron.materialize_sessions_failed",
+          "class_templates",
+          row.id,
+          { error }
+        );
+      }
     }
-    res.json({ ok: true, ...aggregate });
+    res.json({ ok: failures.length === 0, ...aggregate, ...failures.length ? { failures } : {} });
   } catch (err) {
     next(err);
   }
@@ -3700,105 +3720,133 @@ router9.post("/reporting-daily", async (req, res, next) => {
   try {
     const body = req.body ?? {};
     const targetDate = typeof body.date === "string" && DATE_RE.test(body.date) ? body.date : new Date(Date.now() - 24 * 3600 * 1e3).toISOString().slice(0, 10);
-    const result = await pool.query(
-      `with day_payments as (
-         select organization_id, coalesce(sum(amount_paise), 0) as revenue_paise, count(*) as payment_count
-         from payments
-         where at >= $1::date and at < $1::date + 1
-         group by organization_id
-       ),
-       day_invoices as (
-         select organization_id, count(*) as invoices_created
-         from invoices
-         where created_at >= $1::date and created_at < $1::date + 1
-         group by organization_id
-       ),
-       day_attendance as (
-         select organization_id, count(*) as attendance_marked,
-                count(*) filter (where status in ('present', 'late')) as attendance_present
-         from attendance_records
-         where marked_at >= $1::date and marked_at < $1::date + 1
-         group by organization_id
-       ),
-       outstanding as (
-         select organization_id, coalesce(sum(total_paise - paid_paise), 0) as outstanding_paise
-         from invoices
-         where status <> 'void'
-         group by organization_id
-       ),
-       active_students as (
-         select organization_id, count(*) as active_student_count
-         from students
-         where status = 'active' and is_deleted = false
-         group by organization_id
-       )
-       insert into org_stats_daily (organization_id, date, stats)
-       select
-         o.id,
-         $1::date,
-         jsonb_build_object(
-           'revenueCollectedPaise', coalesce(dp.revenue_paise, 0),
-           'paymentCount', coalesce(dp.payment_count, 0),
-           'invoicesCreated', coalesce(di.invoices_created, 0),
-           'outstandingPaise', coalesce(os.outstanding_paise, 0),
-           'activeStudentCount', coalesce(ac.active_student_count, 0),
-           'attendanceMarked', coalesce(da.attendance_marked, 0),
-           'attendancePresent', coalesce(da.attendance_present, 0)
-         )
-       from organizations o
-       left join day_payments dp on dp.organization_id = o.id
-       left join day_invoices di on di.organization_id = o.id
-       left join day_attendance da on da.organization_id = o.id
-       left join outstanding os on os.organization_id = o.id
-       left join active_students ac on ac.organization_id = o.id
-       where o.status = 'active'
-       on conflict (organization_id, date) do update set stats = excluded.stats
-       returning organization_id`,
-      [targetDate]
-    );
-    res.json({ ok: true, date: targetDate, orgsProcessed: result.rowCount });
+    const orgsRes = await pool.query(`select id from organizations where status = 'active'`);
+    let orgsProcessed = 0;
+    const failures = [];
+    for (const org of orgsRes.rows) {
+      try {
+        await pool.query(
+          `with day_payments as (
+             select coalesce(sum(amount_paise), 0) as revenue_paise, count(*) as payment_count
+             from payments
+             where organization_id = $2 and at >= $1::date and at < $1::date + 1
+           ),
+           day_invoices as (
+             select count(*) as invoices_created
+             from invoices
+             where organization_id = $2 and created_at >= $1::date and created_at < $1::date + 1
+           ),
+           day_attendance as (
+             select count(*) as attendance_marked,
+                    count(*) filter (where status in ('present', 'late')) as attendance_present
+             from attendance_records
+             where organization_id = $2 and marked_at >= $1::date and marked_at < $1::date + 1
+           ),
+           outstanding as (
+             select coalesce(sum(total_paise - paid_paise), 0) as outstanding_paise
+             from invoices
+             where organization_id = $2 and status <> 'void'
+           ),
+           active_students as (
+             select count(*) as active_student_count
+             from students
+             where organization_id = $2 and status = 'active' and is_deleted = false
+           )
+           insert into org_stats_daily (organization_id, date, stats)
+           select
+             $2,
+             $1::date,
+             jsonb_build_object(
+               'revenueCollectedPaise', (select revenue_paise from day_payments),
+               'paymentCount', (select payment_count from day_payments),
+               'invoicesCreated', (select invoices_created from day_invoices),
+               'outstandingPaise', (select outstanding_paise from outstanding),
+               'activeStudentCount', (select active_student_count from active_students),
+               'attendanceMarked', (select attendance_marked from day_attendance),
+               'attendancePresent', (select attendance_present from day_attendance)
+             )
+           on conflict (organization_id, date) do update set stats = excluded.stats`,
+          [targetDate, org.id]
+        );
+        orgsProcessed++;
+      } catch (err) {
+        const error = errorMessage(err);
+        failures.push({ organizationId: org.id, error });
+        await writeAudit(
+          org.id,
+          { system: "reporting_daily_cron" },
+          "cron.reporting_daily_failed",
+          "org_stats_daily",
+          org.id,
+          { date: targetDate, error }
+        );
+      }
+    }
+    res.json({ ok: failures.length === 0, date: targetDate, orgsProcessed, ...failures.length ? { failures } : {} });
   } catch (err) {
     next(err);
   }
 });
 router9.post("/reconcile-wallets", async (_req, res, next) => {
   try {
-    const mismatches = await pool.query(
-      `with expected as (
-         select organization_id, student_id,
-                coalesce(sum(credits), 0)::int as expected_credits,
-                coalesce(sum(paise), 0)::bigint as expected_paise
-         from wallet_ledger
-         group by organization_id, student_id
-       )
-       select w.id, w.organization_id, w.student_id,
-              w.balance_credits, w.balance_currency,
-              coalesce(e.expected_credits, 0) as expected_credits,
-              coalesce(e.expected_paise, 0) as expected_paise
-       from wallets w
-       left join expected e
-         on e.organization_id = w.organization_id and e.student_id = w.student_id
-       where w.balance_credits <> coalesce(e.expected_credits, 0)
-          or w.balance_currency <> round(coalesce(e.expected_paise, 0)::numeric / 100, 2)`
-    );
-    for (const row of mismatches.rows) {
-      await writeAudit(
-        row.organization_id,
-        { system: "wallet_reconciliation_cron" },
-        "wallet.reconciliation_mismatch",
-        "wallets",
-        row.id,
-        {
-          studentId: row.student_id,
-          actualCredits: row.balance_credits,
-          expectedCredits: row.expected_credits,
-          actualCurrency: row.balance_currency,
-          expectedCurrency: paiseToRupees(Number(row.expected_paise))
+    const orgsRes = await pool.query(`select distinct organization_id as id from wallets`);
+    let walletsChecked = 0;
+    let mismatches = 0;
+    const failures = [];
+    for (const org of orgsRes.rows) {
+      try {
+        const walletsRes = await pool.query(
+          `with expected as (
+             select student_id,
+                    coalesce(sum(credits), 0)::int as expected_credits,
+                    coalesce(sum(paise), 0)::bigint as expected_paise
+             from wallet_ledger
+             where organization_id = $1
+             group by student_id
+           )
+           select w.id, w.student_id, w.balance_credits, w.balance_currency,
+                  coalesce(e.expected_credits, 0) as expected_credits,
+                  coalesce(e.expected_paise, 0) as expected_paise,
+                  w.balance_credits <> coalesce(e.expected_credits, 0)
+                    or w.balance_currency <> round(coalesce(e.expected_paise, 0)::numeric / 100, 2) as mismatch
+           from wallets w
+           left join expected e on e.student_id = w.student_id
+           where w.organization_id = $1`,
+          [org.id]
+        );
+        for (const row of walletsRes.rows) {
+          walletsChecked++;
+          if (!row.mismatch) continue;
+          mismatches++;
+          await writeAudit(
+            org.id,
+            { system: "wallet_reconciliation_cron" },
+            "wallet.reconciliation_mismatch",
+            "wallets",
+            row.id,
+            {
+              studentId: row.student_id,
+              actualCredits: row.balance_credits,
+              expectedCredits: row.expected_credits,
+              actualCurrency: row.balance_currency,
+              expectedCurrency: paiseToRupees(Number(row.expected_paise))
+            }
+          );
         }
-      );
+      } catch (err) {
+        const error = errorMessage(err);
+        failures.push({ organizationId: org.id, error });
+        await writeAudit(
+          org.id,
+          { system: "wallet_reconciliation_cron" },
+          "cron.reconcile_wallets_failed",
+          "wallets",
+          org.id,
+          { error }
+        );
+      }
     }
-    const totalRes = await pool.query(`select count(*)::int as total from wallets`);
-    res.json({ ok: true, walletsChecked: totalRes.rows[0].total, mismatches: mismatches.rowCount });
+    res.json({ ok: failures.length === 0, walletsChecked, mismatches, ...failures.length ? { failures } : {} });
   } catch (err) {
     next(err);
   }
@@ -3814,80 +3862,95 @@ router9.post("/expire-credits", async (_req, res, next) => {
     let creditsExpired = 0;
     let paiseExpired = 0;
     let warningsSent = 0;
+    const failures = [];
     for (const org of orgsRes.rows) {
-      const policy = resolveCreditExpiryPolicy(org.settings?.creditExpiry);
-      if (!policy.enabled) continue;
-      const walletsRes = await pool.query(
-        `select id, student_id, balance_credits, balance_currency
-         from wallets where organization_id = $1`,
-        [org.id]
-      );
-      for (const wallet of walletsRes.rows) {
-        walletsChecked++;
-        const ledgerRes = await pool.query(
-          `select id, credits, paise, at from wallet_ledger
-           where organization_id = $1 and student_id = $2
-           order by at asc, id asc`,
-          [org.id, wallet.student_id]
+      try {
+        const policy = resolveCreditExpiryPolicy(org.settings?.creditExpiry);
+        if (!policy.enabled) continue;
+        const walletsRes = await pool.query(
+          `select id, student_id, balance_credits, balance_currency
+           from wallets where organization_id = $1`,
+          [org.id]
         );
-        const { expired, warnings } = computeCreditExpiry(ledgerRes.rows, policy.windowDays, /* @__PURE__ */ new Date());
-        if (expired.length > 0) {
-          await withTransaction(async (client) => {
-            let dCredits = 0;
-            let dPaise = 0;
-            for (const lot of expired) {
-              const key = `credit_expiry_${lot.lotLedgerId}_${lot.denom === "credits" ? "c" : "p"}`;
-              const dup = await client.query(
-                `select 1 from wallet_ledger where organization_id = $1 and idempotency_key = $2`,
-                [org.id, key]
-              );
-              if ((dup.rowCount ?? 0) > 0) continue;
-              const credits = lot.denom === "credits" ? -lot.amount : 0;
-              const paise3 = lot.denom === "paise" ? -lot.amount : 0;
-              await client.query(
-                `insert into wallet_ledger
-                   (organization_id, student_id, type, credits, paise, reason, by, idempotency_key, at)
-                 values ($1, $2, 'credit_expiry', $3, $4, 'credit_expiry', 'credit_expiry_cron', $5, now())`,
-                [org.id, wallet.student_id, credits, paise3, key]
-              );
-              dCredits += credits;
-              dPaise += paise3;
-              lotsExpired++;
-              if (lot.denom === "credits") creditsExpired += lot.amount;
-              else paiseExpired += lot.amount;
-            }
-            if (dCredits !== 0 || dPaise !== 0) {
-              await client.query(
-                `update wallets
-                   set balance_credits = balance_credits + $1,
-                       balance_currency = balance_currency + $2
-                 where id = $3`,
-                [dCredits, paiseToRupees(dPaise), wallet.id]
-              );
-              await writeAudit(
-                org.id,
-                { system: "credit_expiry_cron" },
-                "wallet.credit_expiry",
-                "wallets",
-                wallet.id,
-                { studentId: wallet.student_id, creditsExpired: -dCredits, paiseExpired: -dPaise }
-              );
-            }
-          });
+        for (const wallet of walletsRes.rows) {
+          walletsChecked++;
+          const ledgerRes = await pool.query(
+            `select id, credits, paise, at from wallet_ledger
+             where organization_id = $1 and student_id = $2
+             order by at asc, id asc`,
+            [org.id, wallet.student_id]
+          );
+          const { expired, warnings } = computeCreditExpiry(ledgerRes.rows, policy.windowDays, /* @__PURE__ */ new Date());
+          if (expired.length > 0) {
+            await withTransaction(async (client) => {
+              let dCredits = 0;
+              let dPaise = 0;
+              for (const lot of expired) {
+                const key = `credit_expiry_${lot.lotLedgerId}_${lot.denom === "credits" ? "c" : "p"}`;
+                const dup = await client.query(
+                  `select 1 from wallet_ledger where organization_id = $1 and idempotency_key = $2`,
+                  [org.id, key]
+                );
+                if ((dup.rowCount ?? 0) > 0) continue;
+                const credits = lot.denom === "credits" ? -lot.amount : 0;
+                const paise3 = lot.denom === "paise" ? -lot.amount : 0;
+                await client.query(
+                  `insert into wallet_ledger
+                     (organization_id, student_id, type, credits, paise, reason, by, idempotency_key, at)
+                   values ($1, $2, 'credit_expiry', $3, $4, 'credit_expiry', 'credit_expiry_cron', $5, now())`,
+                  [org.id, wallet.student_id, credits, paise3, key]
+                );
+                dCredits += credits;
+                dPaise += paise3;
+                lotsExpired++;
+                if (lot.denom === "credits") creditsExpired += lot.amount;
+                else paiseExpired += lot.amount;
+              }
+              if (dCredits !== 0 || dPaise !== 0) {
+                await client.query(
+                  `update wallets
+                     set balance_credits = balance_credits + $1,
+                         balance_currency = balance_currency + $2
+                   where id = $3`,
+                  [dCredits, paiseToRupees(dPaise), wallet.id]
+                );
+                await writeAudit(
+                  org.id,
+                  { system: "credit_expiry_cron" },
+                  "wallet.credit_expiry",
+                  "wallets",
+                  wallet.id,
+                  { studentId: wallet.student_id, creditsExpired: -dCredits, paiseExpired: -dPaise }
+                );
+              }
+            });
+          }
+          for (const warn of warnings) {
+            if (await sendExpiryWarning(org.id, wallet.student_id, warn)) warningsSent++;
+          }
         }
-        for (const warn of warnings) {
-          if (await sendExpiryWarning(org.id, wallet.student_id, warn)) warningsSent++;
-        }
+      } catch (err) {
+        const error = errorMessage(err);
+        failures.push({ organizationId: org.id, error });
+        await writeAudit(
+          org.id,
+          { system: "credit_expiry_cron" },
+          "cron.expire_credits_failed",
+          "organizations",
+          org.id,
+          { error }
+        );
       }
     }
     res.json({
-      ok: true,
+      ok: failures.length === 0,
       orgsProcessed: orgsRes.rowCount,
       walletsChecked,
       lotsExpired,
       creditsExpired,
       paiseExpired,
-      warningsSent
+      warningsSent,
+      ...failures.length ? { failures } : {}
     });
   } catch (err) {
     next(err);
