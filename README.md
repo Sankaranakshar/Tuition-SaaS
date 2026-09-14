@@ -2,7 +2,7 @@
 
 Tuition management that collects your fees. Scheduling, attendance, billing, and parent communication for tuition centers and independent tutors.
 
-**Project documents:** [MASTER_PLAN.md](MASTER_PLAN.md) (start here: source map, release plan, ranked backlog, open founder decisions, tech-debt backlog, testing strategy, and market/GTM strategy), [EXECUTION_PLAN.md](EXECUTION_PLAN.md) (step-by-step execution order — R1 tracker + R2 scaffold; R1 detail archived under `docs/`), [HANDOFF.md](HANDOFF.md) (current state, architecture, runbook, invariants), [REDESIGN.md](REDESIGN.md) (product experience), [docs/GO_TO_MARKET_BLUEPRINT_ARCHIVE.md](docs/GO_TO_MARKET_BLUEPRINT_ARCHIVE.md) (frozen; superseded by MASTER_PLAN.md's market-strategy section, kept only for still-cited section numbers).
+**Project documents:** [MASTER_PLAN.md](MASTER_PLAN.md) (start here: product thesis, ICP, the strategic wedge, current state, release strategy R3 to R6, ranked backlog, quality and security gates, product analytics, GTM implications, and the open founder decisions. Rewritten 2026-09-12; §1 carries an anchor map for source comments citing the old numbering), [EXECUTION_PLAN.md](EXECUTION_PLAN.md) (step-by-step execution order derived from it; "Start here" at the top names the current pick. R1 detail archived under `docs/`, R2 detail in git history), [HANDOFF.md](HANDOFF.md) (current state, architecture, runbook, invariants), [REDESIGN.md](REDESIGN.md) (product experience), [docs/GO_TO_MARKET_BLUEPRINT_ARCHIVE.md](docs/GO_TO_MARKET_BLUEPRINT_ARCHIVE.md) (frozen; superseded, kept only for still-cited section numbers).
 
 ## Architecture
 

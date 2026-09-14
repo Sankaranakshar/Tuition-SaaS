@@ -1,533 +1,411 @@
 # ClassStackr Execution Plan
 
-**What this is:** [MASTER_PLAN.md](MASTER_PLAN.md) §3's current release turned into an ordered sequence of steps small enough to execute one at a time, each with a concrete definition of done. This is the doc to hand a fresh Claude session with "do the next unchecked step."
-
-**Where things stand:** **R1 ("Money is correct") is complete and merged to `main`** (2026-09-05). Its 13 steps, their definitions of done, the premise corrections found mid-step, and the Step 13 gate re-verification are archived in full at [docs/EXECUTION_PLAN_R1_ARCHIVE.md](docs/EXECUTION_PLAN_R1_ARCHIVE.md) — source comments still cite its "Step N" anchors, so it is frozen, not deleted.
-
-**R2 ("identity is org-independent"), Steps 14-20, is complete as of 2026-09-12 — MASTER_PLAN.md §3's full R2 gate is now closed.** Staging (B-10) completed 2026-09-12 and the R2-gating founder decisions (D-02/D-03/D-05/D-06) were all answered the same day (MASTER_PLAN.md §5). Steps 14-19 closed out B-06 (person-centric identity: multi-membership schema, server auth, client active-org threading, and the D-01 regression proof) and D-05 (per-student payment permissions, which landed as a real feature, not a config flag — see Step 19). Step 17's previously-deferred DoD line (a live multi-org browser walkthrough) is folded into and closed by Step 20 below, now that a real switcher UI exists to walk through — no `.env` swap to staging was needed; it was walked live against production with a throwaway second membership, cleaned up afterward. **Step 20 (B-07: org switcher + cross-org conflict checking) closes the remaining half of R2's gate** ("switches context without logging out," "neither org can book over the other") — see its own section for what shipped, including a real cross-org double-booking bug found and fixed along the way. **Step 21 (B-08: tutor payouts & earnings ledger), done the same day, closes the last item of R2's original 26 ed** — the "a centre runs a payout cycle inside the product" half of the R2 gate. A real "role vs organizationRole" bug found live while testing Step 21 (`Today.tsx` scoping a multi-tutor org's session list to just the viewer's own sessions) was also fixed and re-verified live the same day — see HANDOFF.md §8. **R1 and R2 are now both fully complete.** **B-12 (Step 22, monthly progress-report PDF) is also done as of 2026-09-12**, picked up next by ranked-backlog score once R2's gate closed — see its own section below. B-13 and the "also in R2" IA items stay scaffold-only — see "R2 backlog" below for what's actually left, and "For the next session" at the very end of this file for where to start.
-
----
+**Derived from [MASTER_PLAN.md](MASTER_PLAN.md), rewritten 2026-09-12.** The master plan says what to build and why; this file says what to do next, in what order, and how you will know it is done.
 
 ## How to use this document
 
-- **Work top to bottom.** Steps are ordered by real dependency (what unblocks what), not backlog score — this differs from MASTER_PLAN.md §4's ranked list on purpose.
-- **Each step is self-contained.** It names the exact files to touch, the pattern to follow (usually an existing route in the same file), and the gates that must be green before checking the box.
-- **"Needs you" steps are not engineering.** They need a decision, a signature, or money leaving the building. Everything else, Claude executes end to end: code, migration, tests, gate run, doc update.
-- **Definition of done always includes** the seven gates from HANDOFF.md §2 (tsc, unit, RLS, contract, build, bundle, API-bundle — run all seven), plus any browser walkthrough called out for that step (per MASTER_PLAN.md §7, money-touching interactive flows are exactly what automated gates can't see).
-- **After finishing a step:** update this file's checkbox/status line and the affected numbers in HANDOFF.md / MASTER_PLAN.md in the same pass — this repo's established convention (MASTER_PLAN.md §9, HANDOFF.md's "last verified" line).
-- **Do not start a step whose "Depends on" isn't checked yet.**
-- **Start a session by reading the "For the next session" section at the very end of this file** — it names the current pick and carries a ready-to-paste prompt. **End a session by updating that same section** before finishing, so the next one never has to re-derive "what's next" from scratch.
+- **Steps are numbered continuously and never renumbered.** Source comments cite `EXECUTION_PLAN.md Step N`; those anchors must stay stable. Steps 1 to 13 (R1) are archived in [docs/EXECUTION_PLAN_R1_ARCHIVE.md](docs/EXECUTION_PLAN_R1_ARCHIVE.md); Steps 14 to 24 (R2) are summarized in §"Completed work" below, with full detail in git history at commit `86ca0e4`.
+- **Order is dependency order, not priority order.** Where they conflict, dependency wins.
+- **Every step ends the same way:** all seven gates green, a live browser walkthrough against a real environment, this file's tracker and "Start here" section updated, HANDOFF.md's gate line and verification log updated, then commit.
+- **Standing rule, do not self-authorize:** no migration is pushed to `classstackr-staging` or production, and nothing is pushed to `main`, without explicit founder go-ahead. Rehearse on staging first, always.
+
+**The seven gates.** `npm run lint` · `npm test` · `npm run test:rls` · `npm run test:contract` · `npm run build` · `npm run check:bundle-size` · `npm run build:api && npm run check:api-bundle`. All seven run in CI; none need Docker, Java or a live database.
+
+**Baseline as of 2026-09-12,** re-run and confirmed in this session: typecheck clean, 249 unit, 106 RLS, 353 contract, bundle 205.4 KB against a 260 KB budget, 19 of 19 API route mounts.
 
 ---
 
-## R1 — complete (2026-09-05)
+## Start here
 
-Full detail: [docs/EXECUTION_PLAN_R1_ARCHIVE.md](docs/EXECUTION_PLAN_R1_ARCHIVE.md). Summary tracker:
+**Current pick: Step 25 (C-01, the timezone model).**
 
-| # | Step | Status |
-|---|---|---|
-| 0a | B-02 rate limiter fix | ✅ 2026-08-06 |
-| 0b | B-20 README rewrite | ✅ 2026-08-06 |
-| 0c | D-08 decided (cancellation policy) | ✅ 2026-08-06 |
-| 0d | D-01 decided (independent tutor identity) | ✅ 2026-08-06 |
-| 1 | Cancellation-policy settings (D-08 schema) | ✅ 2026-08-06 |
-| 2 | B-01 attendance reversal engine | ✅ 2026-08-06 |
-| 3 | Cancellation-policy surface (parent-facing) | ✅ 2026-08-06 |
-| 4 | B-03 wallet-to-ledger reconciliation job | ✅ 2026-09-05 |
-| 5 | Booking-request approval UI | ✅ 2026-09-05 |
-| 6 | B-09 bulk import (CSV/Excel) | ✅ 2026-09-05 |
-| 7 | B-05 self-serve parent top-up | ✅ 2026-09-05 |
-| 8 | **Needs you** — D-07 credit expiry period | ✅ Decided 2026-09-05 |
-| 9 | B-04 credit expiry policy | ✅ 2026-09-05 (browser walkthrough deferred — no wallet data on prod) |
-| 10 | B-11 DPDP consent centre + per-student erasure | ✅ 2026-09-05 (erasure UI browser-verified; DB-state via PGlite contract suite) |
-| 11 | **Needs you** — B-10 staging environment | ⏸️ Deferred 2026-09-05 (founder: hold) for R1. **Re-opened and completed 2026-09-12** (Supabase + Vercel) as R2's opening move — see Step 14 below. |
-| 12 | **Needs you** — external pentest + leaked-password toggle | ⏸️ Both deferred to pre-GTM 2026-09-05 |
-| 13 | R1 gate checkpoint (full re-verification) | ✅ 2026-09-05 — all 7 gates green (211/89/252, 200.7 KB, 16 mounts); money flows re-walked live. **R1 COMPLETE.** |
+**Why that and not Step 24.** Step 24 (B-19, the referral loop) is fully coded. It was committed to local `main` as `1eedd13` during the 2026-09-12 planning session, but was **parked before this session started work on Step 25**: the commit now lives on branch `parked/b-19-referral`, and `main` was rebuilt at `86ca0e4` (plus this session's docs commit). Its migration `20260912150000_referral_loop.sql` has never been applied to staging or production and it has never been walked live. MASTER_PLAN.md §8 parks it: it pays out wallet credit, wallet credit needs a live Razorpay that no org has connected, and there are no users to refer anyone. **Do not push `parked/b-19-referral` and do not apply its migration.** Revisit in R5, after Steps 27 to 29.
 
-Gate numbers at R1 close: tsc clean · 211 unit · 89 RLS · 252 contract · build `dist/server.js` 184.4 KB · bundle 200.7 KB gzip / 260 KB · API bundle 16/16 mounts.
+**Why Step 25 is first.** It is a live correctness defect in the feature everything else hangs off, it needs nothing external, and every later step that touches scheduling inherits it if it is not fixed now.
 
-Two items (B-10 staging, external pentest + leaked-password toggle) were explicitly deferred rather than failing the gate — full reasoning and consequences in the archive's Steps 11-13; current status in MASTER_PLAN.md §3's R1 section and §8's GTM checklist.
+**Run in parallel with Step 25, starting today, because they are procurement and not engineering** (MASTER_PLAN.md §12): WhatsApp Business API onboarding and template approval, SMS DLT registration, Razorpay live KYC for both the platform account and the pilot org, and booking an external pentest vendor. These have multi-week lead times and they gate Steps 27, 28 and 34.
+
+**Founder decisions that block steps below:** D-10 blocks Step 27, D-11 blocks Step 32, D-03's actual tier numbers block Step 28. See MASTER_PLAN.md §13.
 
 ---
-
-# R2
-
-**R2 thesis (from MASTER_PLAN.md §3):** make identity org-independent — one login, many memberships. Gate: one human account teaches independently on Tuesdays and at a centre on Thursdays, switches context without logging out, neither org can book over the other; a parent with children at two centres sees one home screen; a centre runs a payout cycle in-product. **Steps 14-19 did not close this gate on their own** — the "switches context without logging out" and "neither org can book over the other" halves needed B-07 (org switcher + cross-org conflict checking), scoped and shipped as Step 20 below once B-06 (Steps 15-18) had landed. What Steps 14-19 closed: staging exists (R2-0), a person can hold more than one org membership without the schema forking (B-06, D-01's shape), and a parent controls whether/how much a student can pay for themselves (D-05). **Step 20 closes the rest — the full R2 gate is now met.**
-
-**Schema reality check, done while scoping this (the founder's own flag going in):** `tutor_profiles`/`parent_profiles`/`student_profiles` are PK'd on bare `user_id` with `organization_id not null` — confirmed by reading `supabase/migrations/20260709020100_schema.sql:44-64`. But the bigger finding is that this is a *narrower* blocker than it looks: `organization_members` is already PK'd `(organization_id, user_id)` (same file, line 18-24) and `server/middleware/auth.ts`'s `loadMembership()` already has a comment acknowledging a user can hold more than one row there — it just deterministically picks the earliest-created one today, "no org-switcher UI yet" (`server/middleware/auth.ts:104-113`). The actual hard blockers to "one login, many memberships" are four concrete spots, not a schema-wide fork:
-1. `tutor_profiles`/`parent_profiles`/`student_profiles`'s single-row-per-user PK (Step 15).
-2. `POST /api/v1/members/bootstrap` 409s `already_member` if the caller has *any* membership, anywhere (`server/routes/members.ts:35-37`).
-3. All three invite-redeem routes — staff (`members.ts:154-157`), parent (`parents.ts:98-101`), student (`students.ts:113-116`) — 409 `org_conflict` if the caller already belongs to a *different* org.
-4. `setMembership()` unconditionally overwrites `profiles.organization_id` on every join (`members.ts:27`), and that column is today's only "which org am I in" pointer on both sides — `Today.tsx` reads it server-side, `AuthContext.tsx` picks `membership[0]` client-side, no switcher.
-
-(2)-(4) are Step 16. `parent_profiles`/`student_profiles` turn out to be almost dead code, by the way — grepped the whole tree, no route or component reads either table; only `tutor_profiles` is live (Settings, People's tutor directory). That narrows Step 15's blast radius.
-
-**D-05 doesn't fit inside B-06** — it's a parent/student payment-permissions feature, orthogonal to the multi-org identity plumbing above. Scoped as its own step (19), sequenced after Step 15 (it reuses the same migration window) but not blocked on Steps 16-18.
 
 ## Progress tracker
 
-| # | Step | Depends on | Status |
+| Step | Item | Release | Status |
 |---|---|---|---|
-| 14 | R2-0: staging environment (B-10) — retroactive write-up | — | ✅ Done 2026-09-12 (already shipped; this closes the paperwork loop) |
-| 15 | B-06a: migration — multi-membership profile schema | 14 | ✅ Done 2026-09-12 |
-| 16 | B-06b: server — multi-membership auth & org-context resolution | 15 | ✅ Done 2026-09-12 |
-| 17 | B-06c: client — thread active-org through AuthContext/api.ts | 16 | ✅ Done 2026-09-12 (multi-org browser walkthrough deferred — see step detail) |
-| 18 | B-06d: D-01 verification — independent tutor stays a clean single-member org | 16 | ✅ Done 2026-09-12 |
-| 19 | D-05: per-student parent-controlled payment-permissions model | 15 | ✅ Done 2026-09-12 |
-| 20 | B-07: org switcher + cross-org conflict checking — closes R2's full gate | 17 | ✅ Done 2026-09-12 |
-| 21 | B-08: tutor payouts & earnings ledger | 15; partly D-02 | ✅ Done 2026-09-12 |
-| 22 | B-12: monthly progress-report PDF | — | ✅ Done 2026-09-12 |
-| 23 | B-13: substitute & leave management | 15 | ✅ Done 2026-09-12 |
+| 1-13 | R1, money is correct | R1 | ✅ Complete 2026-09-05 |
+| 14-20 | Staging, multi-membership identity, org switcher | R2 | ✅ Complete 2026-09-12 |
+| 21 | B-08 tutor payouts and earnings ledger | R2 | ✅ Complete 2026-09-12 |
+| 22 | B-12 monthly progress-report PDF | R2 | ✅ Complete 2026-09-12 |
+| 23 | B-13 substitute and leave management | R2 | ✅ Complete 2026-09-12, one gap (see below) |
+| 24 | B-19 referral loop | — | ⏸ **Parked.** Moved to branch `parked/b-19-referral` (commit `1eedd13`), `main` rebuilt at `86ca0e4`. Migration unpushed, never deployed or walked live. Do not push. |
+| **25** | **C-01 timezone model** | **R3** | **← next** |
+| 26 | C-02 wire the scheduler | R3 | Not started |
+| 27 | B-17 outbound comms router | R3 | Blocked on D-10 + provider onboarding |
+| 28 | C-03 platform billing switch-on | R3 | Blocked on D-03 numbers + platform KYC |
+| 29 | C-04 Razorpay live rehearsal | R3 | Blocked on pilot-org KYC |
+| 30 | C-05 parent-visible tutor-student threads | R4 | Not started |
+| 31 | C-06 Playwright golden journeys | R4 | Not started |
+| 32 | C-07 activation analytics | R4 | Blocked on D-11 |
+| 33 | C-08 operational floor | R4 | Not started |
+| 34 | C-09 onboarding friction pass | R4 | Not started |
+| 35 | TD-3 paise-native migration | R4 | Not started |
+| 36+ | R5 (C-10, C-11, C-12, B-18, C-13) | R5 | Not scoped as steps yet |
 
-**Gate baseline after Step 20, R2's full gate now closed** (HANDOFF.md §2, re-run 2026-09-12): see Step 20's own Shipped note for the exact numbers.
-
-**Not scoped in this pass, stays on the backlog:** nothing — B-13 was the only remaining scoped-but-not-started R2 backlog item and is done as of Step 23. See "R2 backlog" below for what's still genuinely unscoped.
-
-**Also in R2, from the spec v2 IA tabs, not scoped here:** the assignment-marking loop into the gradebook (upload works, marking doesn't, both sides); guardian records moving from student-owned to parent-owned; cross-org family view for parents (needs B-07's switcher first).
-
----
-
-## Step 14 — R2-0: staging environment (B-10)
-
-**Status: complete 2026-09-12.** This step is a retroactive write-up, not new engineering — B-10 shipped as R1's deferred item, reopened and finished before this scoping pass per MASTER_PLAN.md §10 item 2. Recorded here as a numbered step because everything downstream (Step 15's migration rehearsal) cites it as a dependency, and this doc's own convention (Step 8/Step 11 in the R1 archive) is to give a founder-facing or infra-facing milestone its own step even when no code was written in this session.
-
-**What exists:** second Supabase project `classstackr-staging` (ref `fcshxorkxsaerwnuqrjh`, ap-south-1, same org as prod). All 33 migrations pushed from an empty database with zero errors — the first real from-zero test of the set. Seeded via `scripts/seed.ts` (demo parent + student included, unlike prod's demo org). A real Storage upload → signed URL → fetch → delete round trip verified against its `documents` bucket. `supabase_realtime` publication confirmed to carry all 21 expected tables. The `tuition-saas` Vercel project's Preview environment (Production untouched) carries staging's env vars — any push to a non-`main` branch auto-deploys against it, verified end to end (signed in as the seeded demo tutor, JWT verified via staging's JWKS, a query executed against staging Postgres via the pooler). `supabase/README.md` and `.env.example` document targeting it locally, including the pooler-host gotcha (HANDOFF.md §4). Credentials live in a local, gitignored `.env.staging`.
-
-**Definition of done:**
-- [x] `supabase db push` against `classstackr-staging` from empty, zero errors, all 33 migrations applied.
-- [x] Seed script run, demo parent + student exist (the two roles prod's demo org lacks, per HANDOFF.md §9).
-- [x] Storage round trip (upload/signed-URL/fetch/delete) verified against staging's bucket.
-- [x] `supabase_realtime` publication carries all 21 expected tables.
-- [x] A Vercel Preview deployment on a non-`main` branch resolves against staging end to end (auth JWKS, Postgres via pooler), Production untouched.
-- [x] `supabase/README.md` / `.env.example` document the local-targeting workflow.
+**Carried gap from Step 23:** the "Assign to all" substitute-reassignment mutation has never been clicked live. It needs a second real tutor account in the demo org, created through the app's own Team-tab invite link rather than a backend script. Fold this into Step 31's Playwright coverage rather than doing it by hand.
 
 ---
 
-## Step 15 — B-06a: migration — multi-membership profile schema
+## Step 25: C-01, the timezone model
 
-**Goal:** make it possible for `tutor_profiles`/`parent_profiles`/`student_profiles` to hold one row per `(user, org)` instead of one row per user, so a person who joins a second org doesn't collide with (or silently overwrite) their profile at the first.
+**Objective.** Make an org's classes sit at the wall-clock time its staff chose, regardless of what timezone the server process happens to be in.
 
-**Why:** MASTER_PLAN.md §3 R2, B-06, "independent tutor modelled as a single-member org so the schema never forks." These three tables are the literal fork point today — confirmed by reading `supabase/migrations/20260709020100_schema.sql:44-64`: each is `primary key (user_id)` with `organization_id uuid not null`. `organization_members` already supports multi-org membership at the row level (composite PK), so this migration is the one piece of the schema that's actually single-org-locked.
+**Why this step exists.** `server/routes/scheduling.ts`'s `materializeTemplate()` reconstructs each session's time with `new Date()` and `setHours(template.start_hour, template.start_minute)`, and `localDateKey()` formats with `getFullYear/getMonth/getDate`. Both depend on the server process's local timezone. The client writes `start_hour` from the browser's `getHours()`. There is no timezone column in the schema and no `TZ` is set in `vercel.json`, the `Dockerfile` or any env file. Vercel's Node functions run UTC, so a 6:30pm IST class materializes at 18:30 UTC, which is midnight IST. One-off sessions are unaffected (the client sends absolute timestamps); recurring ones, which are most of a real centre's schedule, are. This is silent data corruption in the feature attendance, billing, payouts and the parent portal all read from.
 
-**Scope:**
-1. **New migration** `supabase/migrations/20260912100000_multi_membership_profiles.sql` — rehearse on `classstackr-staging` first (per MASTER_PLAN.md §3 R2's own instruction, same discipline as the B-10 hold was meant to protect), then push to production:
-   ```sql
-   -- B-06a: a tutor/parent/student profile row is keyed per (user, org), not
-   -- per user, so one person can hold a role-profile at more than one
-   -- organization. organization_members already allows this (PK
-   -- (organization_id, user_id)); these three tables were the holdout.
-   -- Additive only — every existing row already has exactly one
-   -- (user_id, organization_id) pair, so no backfill/dedup is needed.
+**Files and systems likely affected.**
+- `supabase/migrations/<ts>_org_timezone.sql` (new): `organizations.timezone text not null default 'Asia/Kolkata'`, plus the backfill described below.
+- `server/routes/scheduling.ts`: `materializeTemplate()`, `localDateKey()`, `TEMPLATE_SELECT`, the `/gaps` window computation.
+- `server/routes/cron.ts`: `/materialize-sessions` (it sweeps every org, so it must resolve each org's zone, not one global one) and `/reporting-daily` (its "UTC yesterday" default becomes "the org's yesterday").
+- `shared/` : a new Zod-free `shared/timezone.ts` holding the pure zone-aware construction and date-key helpers, so client and server share one definition. It must import no Zod (HANDOFF §6's bundle rule).
+- `src/components/OrganizationSettings.tsx`: a timezone selector.
+- `src/lib/schedule.ts`, `src/pages/Schedule.tsx`: verify the client's `getHours()` writes and its rendering agree with the new server semantics.
 
-   alter table tutor_profiles drop constraint tutor_profiles_pkey;
-   alter table tutor_profiles add primary key (user_id, organization_id);
+**Dependencies.** None. This is why it is first.
 
-   alter table parent_profiles drop constraint parent_profiles_pkey;
-   alter table parent_profiles add primary key (user_id, organization_id);
+**Implementation scope.**
+1. Add `organizations.timezone`, defaulting to `Asia/Kolkata` (the entire current customer base is India; a default is correct here, unlike D-07's credit expiry where the founder chose no default).
+2. Move the wall-clock construction into `shared/timezone.ts` as a pure, unit-testable function that takes `(dateInZone, hour, minute, zone)` and returns a correct UTC instant. Use `Intl.DateTimeFormat` with `timeZone` to derive the offset rather than hand-rolling arithmetic, because IST is a half-hour offset and DST-free but the helper should not assume either.
+3. Rewrite `materializeTemplate()` and `localDateKey()` to take the org's zone explicitly. No function in this path may read the ambient process timezone.
+4. **Decide and record the backfill.** Existing production `class_sessions` rows created by materialization on a UTC host are wrong by the offset; rows created on an IST dev machine are right. Establish which is which before writing any UPDATE. The safest shape: identify materialized rows (`materialized_date is not null`) whose `start_time` does not match their template's `start_hour` when interpreted in the org's zone, and correct only those, inside a transaction, with the before-and-after row counts recorded. **Do not run this against production without founder go-ahead and a fresh backup.**
+5. Surface the timezone in Organization Settings, read-only-after-set if changing it would retroactively move sessions (decide and document which, do not leave it ambiguous).
 
-   alter table student_profiles drop constraint student_profiles_pkey;
-   alter table student_profiles add primary key (user_id, organization_id);
-   ```
-   No other table has an FK referencing `tutor_profiles(user_id)` etc. (grepped `supabase/migrations/` for `references tutor_profiles` / `parent_profiles` / `student_profiles` — zero hits), and the RLS policies on all three (`tutor_profiles_rw` / `parent_profiles_rw` / `student_profiles_rw`, `20260709020200_rls.sql:78-85`) already key off `user_id = auth.uid() or is_staff(organization_id)` — row-level, not PK-shape-dependent — so **no RLS change is needed.**
-2. **Fix the one real cross-org bug this migration would otherwise introduce:** `src/pages/People.tsx`'s `setVerified()` (around line 828) does `supabase.from("tutor_profiles").update({ is_verified }).eq("user_id", userId)` with **no organization_id filter**. Once a tutor can hold two rows, this update hits every org that tutor belongs to, not just the org whose People page the staff member is looking at — the same bug shape as the B-09 `tutor_id` cross-org leak MASTER_PLAN.md §3 already documents. Fix: add `.eq("organization_id", user.organizationId)`.
-3. **Update the two other call sites that assume one row per user_id:**
-   - `src/components/TutorProfileSettings.tsx`: the `select` at line ~39 (`.eq("user_id", user.id).maybeSingle()`) needs `.eq("organization_id", user.organizationId)` added, or a user with two tutor profiles will get whichever row Postgres returns first. The `upsert` at line ~90 needs `onConflict: "user_id,organization_id"` (currently `"user_id"`) — the payload already includes `organization_id` (line ~68), so this is a one-line change.
-   - `src/hooks/usePeople.ts`'s `useTutorsList()` (line ~244) already filters `.eq("organization_id", orgId)` — no change needed, confirmed by reading it. Listed here so the audit is complete, not because it's broken.
+**Tests required.**
+- Unit (`tests/unit/timezone.test.ts`, new): the construction helper across IST, UTC and a DST zone; midnight and 23:30 boundary cases; the date-key function across the UTC day boundary for an evening IST session. Run the suite under at least two `TZ` values (`TZ=UTC` and `TZ=Asia/Kolkata`) and assert identical results. That last assertion is the whole point of the step.
+- Contract (`tests/contract/scheduling.test.ts`, extended): materialize a template in an `Asia/Kolkata` org while the test process runs `TZ=UTC`, and assert the resulting `start_time` is the correct UTC instant.
+- RLS: only if the migration adds a policy. A plain column add on `organizations` does not, but re-run `npm run test:rls` regardless, per HANDOFF §5.10.
 
-**Definition of done:**
-- [x] Migration applied clean against `classstackr-staging` from its current (post-Step-14) state, then against production.
-- [x] `tests/integration/` RLS suite re-run green with no new failures. No fixture needed updating — the existing seed inserts already specify both `user_id` and `organization_id`, they just relied on `user_id` alone being unique before.
-- [x] A **permanent** integration test (kept in the suite, not deleted after — this is exactly the regression a future change could reintroduce): `tests/integration/rbac.test.ts`'s new C5 case inserts a second `tutor_profiles` row for the same `user_id` under `OTHER_ORG`, confirms both rows persist and the original org's row is untouched. Deviates from the plan's "throwaway, delete afterward" instruction deliberately — that convention is for cron routes excluded from the permanent suite; this is core RLS coverage that should stay.
-- [x] `People.tsx`'s verify-toggle fix and the two `TutorProfileSettings.tsx` line changes landed in the same pass as the migration.
-- [x] All seven gates green: tsc clean, 211 unit, **90 RLS** (89 + 1 new), 252 contract, build 184.4 KB, bundle 203.6 KB/260 KB, API bundle 16/16 mounts, `api/index.js` byte-identical.
+**Browser verification required.** Against staging first, then production. Create a recurring class at 6:30pm through the real Add Class wizard, materialize it, and confirm in the Schedule grid, on Today, and in the database that the session reads 18:30 IST and stores 13:00 UTC. Then repeat against a preview deployment (which runs on Vercel, in UTC) rather than local dev, because **local dev on an IST machine cannot reproduce the bug and will give a false pass.** That last point is the trap in this step.
 
-**Shipped 2026-09-12:** migration `20260912100000_multi_membership_profiles.sql` — `tutor_profiles`/`parent_profiles`/`student_profiles` re-keyed `primary key (user_id, organization_id)`, additive only (confirmed no FK anywhere references any of the three by `user_id`, and every existing row already had exactly one org). Rehearsed on `classstackr-staging` (`supabase db push --db-url ... --dry-run` showed only this one file pending, then applied clean; constraint shape and row counts re-checked directly via `psql` afterward), then the identical dry-run-then-push sequence against production, same re-check afterward — no data loss on either (production: 3 tutor_profiles rows survived untouched; parent_profiles/student_profiles were and remain empty — confirmed dead, no app code reads either table). `People.tsx`'s `setVerified` and both `TutorProfileSettings.tsx` call sites updated per the scope above.
+**Definition of done.**
+- [ ] `organizations.timezone` exists, rehearsed on staging, pushed to production with go-ahead.
+- [ ] No function in the scheduling path reads the ambient process timezone.
+- [ ] The unit suite passes identically under `TZ=UTC` and `TZ=Asia/Kolkata`.
+- [ ] A recurring class created through a Vercel preview deployment lands at the correct wall-clock time.
+- [ ] The production backfill has either been run with counts recorded, or been shown to be unnecessary with the query that proved it.
+- [ ] All seven gates green; HANDOFF.md §8 gains a trap entry for the local-dev false pass.
 
----
+**Expected outcome.** Recurring classes are correct everywhere, and the defect cannot silently return, because the tests fail if the ambient timezone ever matters again.
 
-## Step 16 — B-06b: server — multi-membership auth & org-context resolution
-
-**Goal:** let a user actually acquire a second membership (today's code refuses it outright), and give every authenticated request a real, validated way to say which of the user's orgs it's acting in — replacing "always the earliest-created membership."
-
-**Why:** MASTER_PLAN.md §3 R2, B-06's "one login, many memberships" half. Step 15 made the data model capable of holding two profiles; this step is what actually lets a second membership be created and used.
-
-**Scope:**
-1. **Relax the two outright blockers, without removing the same-org duplicate guard:**
-   - `server/routes/members.ts:34-51` (`POST /bootstrap`): leave this guard as-is. Bootstrap is about *creating* a new org, not joining an existing one — a tutor who already has an independent org-of-one and later wants to work at a centre does that through invite-redeem, not a second bootstrap. The real relaxation belongs entirely in the invite-redeem checks below. Step 18 adds an explicit test proving this leaves D-01's single-member-org shape untouched, precisely because this step touches the neighboring code (`setMembership()`) without touching bootstrap's own guard.
-   - `server/routes/members.ts:154-157` (staff invite redeem), `server/routes/parents.ts:98-101` (parent invite redeem), `server/routes/students.ts:113-116` (student invite redeem): all three currently read `req.user!.organizationId && req.user!.organizationId !== invite.organization_id → 409 org_conflict`. `req.user!.organizationId` is `loadMembership()`'s single earliest-org pick, so this literally means "you may only ever belong to the org you joined first." Change the check in all three to query `organization_members` directly for a row matching `(invite.organization_id, uid)` — 409 only if a membership *in that specific org* already exists (a real duplicate-redeem guard, which is still correct to keep), not merely because the user belongs to a different org already.
-2. **`loadMembership()` gains an org-preference parameter** (`server/middleware/auth.ts:104-124`): `loadMembership(userId, preferredOrgId?)`. When `preferredOrgId` is supplied, validate it's a real row in `organization_members` for that user (`where organization_id = $2 and user_id = $1`); if found, return that membership instead of the earliest-created one. If not supplied, or supplied but invalid (removed member, typo, someone else's org id), fall back to today's deterministic earliest-row behavior unchanged — this makes the change backward-compatible for every existing single-org caller with zero client changes required.
-3. **`authenticateToken` reads an `X-Organization-Id` header** (`server/middleware/auth.ts:161-192`) and passes it as `preferredOrgId` to `loadMembership()`. No header present → unchanged behavior.
-4. **`setMembership()` stops silently overwriting `profiles.organization_id` as a side effect of joining any org** (`server/routes/members.ts:16-29`). Split into two operations: `setMembership()` keeps writing `organization_members` only; a new explicit `PUT /api/v1/members/me/active-organization` route (body: `{ organizationId }`, validated against the caller's own `organization_members` rows, 403 if not a member of that org) does the `profiles.organization_id` write. Call the new route from bootstrap and from each invite-redeem's success path (so today's single-org UX — you join, you're "in" that org — keeps working unchanged), but a *second* join no longer silently reassigns an existing member's home org out from under them the way `setMembership()` does today.
-5. **New `GET /api/v1/members/me/organizations`** — returns every `(organization_id, organization name, role)` the caller belongs to, via a join on `organization_members`/`organizations`. Not consumed by any UI in this step (that's Step 17/B-07's job) but needed so a client can know a second membership exists at all, and so this step is independently testable.
-
-**Definition of done:**
-- [x] Contract tests: redeeming a second, different org's staff/parent/student invite while already a member of org A now succeeds (previously 409'd) and creates a second `organization_members` row without touching the first; redeeming an invite for an org the user is *already* a member of still 409s (`org_conflict` semantics preserved for the real duplicate case).
-- [x] Contract test: `authenticateToken` with a valid `X-Organization-Id` header for an org the caller belongs to resolves `req.user.organizationId` to that org, not the earliest one; with no header, or a header naming an org the caller doesn't belong to, behavior is unchanged from today.
-- [x] Contract test: `PUT /me/active-organization` 403s for an org the caller isn't a member of; 200s and updates `profiles.organization_id` for one they are.
-- [x] Contract test: `GET /me/organizations` returns all memberships for a multi-org user, ordered consistently.
-- [x] RLS suite re-run green (no policy changes in this step, but it's a privileged-route change — same rule HANDOFF.md §5 states).
-- [x] All seven gates green.
-
-**Shipped 2026-09-12:** all three invite-redeem routes (`members.ts`, `parents.ts`, `students.ts`) now guard on a direct `organization_members` lookup for the specific invite's org (`hasMembership()`, new shared helper) instead of comparing against `req.user!.organizationId` — a real duplicate-org redeem still 409s `org_conflict`, a different org's redeem now succeeds and adds a second membership row. `loadMembership()` takes an optional `preferredOrgId`, validated against a real membership row before use, with the cache bypassed on that path (org preference is per-request); `authenticateToken` reads it from a new `X-Organization-Id` header, guarded by a UUID-format regex so a malformed value degrades to "no header" instead of erroring. `setMembership()` no longer writes `profiles.organization_id` as a side effect — split into a new exported `setActiveOrganization()`, called explicitly from bootstrap and each invite-redeem's own success path only (deliberately **not** from `PUT /api/v1/members`'s role-change/direct-add path — confirmed via grep that no client code calls that route at all today; the product's only real onboarding path is invite-create-then-redeem, so this is a no-op in practice, not a regression). New routes `GET /api/v1/members/me/organizations` and `PUT /api/v1/members/me/active-organization` added, both via raw `pool` queries (the join + explicit ordering needed isn't expressible in the test harness's `supabaseAdmin` shim). One test-harness gap found and fixed along the way: `tests/contract/pgliteBackend.ts` never actually ran queries as the `service_role` Postgres role, so the pre-existing `profiles_org_immutable` trigger's `current_setting('role') = 'service_role'` bypass check was never really exercised by any contract test — surfaced by the new active-organization test, fixed by having `setBackend()` run `set role service_role` (the role `supabase/test/auth_shim.sql` already creates with `bypassrls` for the RLS suite), matching the file's own documented trust boundary. All seven gates green: 211 unit, 90 RLS (unchanged, no schema/policy change), **267 contract** (+15), build `dist/server.js` 186.8 KB, bundle 203.6 KB (unchanged, no client change yet), API bundle 16/16 mounts, `api/index.js` regenerated.
+**Follow-on steps.** Step 26 depends on this: wiring the scheduler before the fix would materialize wrong sessions automatically instead of only when someone clicks.
 
 ---
 
-## Step 17 — B-06c: client — thread active-org through AuthContext/api.ts
+## Step 26: C-02, wire the scheduler
 
-**Goal:** stop the client from silently picking `membership[0]` as gospel, without building the switcher UI itself (that's B-07) — this step must be a no-op for every user who still has exactly one org.
+**Objective.** Make the four built, tested, secret-gated cron routes actually run in production.
 
-**Why:** `src/context/AuthContext.tsx:159-194` mirrors the server's old "earliest membership wins" logic and has no concept of "which org is active" beyond that. Once Step 16 lets a person hold two memberships, the client needs to (a) know both exist and (b) send the active one on every request — even with no switcher UI yet, a multi-org user's session shouldn't silently and unpredictably flip which org they're acting in.
+**Why this step exists.** There is no scheduler anywhere in the repository: no `crons` block in `vercel.json`, no `schedule` trigger in `.github/workflows/ci.yml`, no other config. `/api/cron/materialize-sessions`, `/reporting-daily`, `/reconcile-wallets` and `/expire-credits` have never fired in production. Consequences today: recurring sessions appear only when a human clicks Materialize in Schedule; the wallet-versus-ledger reconciliation that exists specifically to catch money drift never checks; an org that configures credit expiry sees nothing expire; and `org_stats_daily` is empty, which is why B-18 has no data source.
 
-**Scope:**
-1. `AuthContext.tsx`'s `loadUser()`: replace the single `.limit(1).maybeSingle()` membership query (`:163-169`) with the new `GET /api/v1/members/me/organizations` from Step 16, store the full list on `User` as `organizations: { organizationId, organizationName, role }[]`.
-2. Persist the active choice the same way `currentRole` already is (`localStorage.getItem('currentRole')` pattern, `:71-83`): a new `activeOrganizationId` key. Resolution order: persisted choice if it's still in the fetched `organizations` list → else the earliest-created membership (today's behavior, so a single-org user sees zero change) → else the bootstrap flow if the list is empty (unchanged).
-3. `src/lib/api.ts`'s `api()` helper (the shared fetch wrapper, `:37-...`) sends the active org as an `X-Organization-Id` header on every call. The three other raw-`fetch` call sites in the same file (PDF download `:141`, document upload `:179`, and the two more at `:473`/`:513`) are lower-priority — they hit routes that are already scoped to whatever `req.user.organizationId` resolves to server-side, and no switcher exists yet for a user to have picked a *different* org than their default — flag them in the PR description as needing the same header once B-07 ships a real switcher, but don't block this step on updating all four.
+**Files and systems likely affected.** `vercel.json` (a `crons` array), `server/routes/cron.ts` (Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`, not the current `x-cron-secret` header, so the guard must accept both), `.env.example` and HANDOFF §4 for the operational note.
 
-**Definition of done:**
-- [x] A single-org user's session is unchanged: same active org resolved, same header sent (matches server default when header is absent/matches earliest row) — verified by browser walkthrough against the demo tutor account, single membership, confirmed no behavior change anywhere in the app.
-- [~] A throwaway multi-membership test account (create via Step 16's now-unblocked second invite-redeem) loads with both orgs in `user.organizations`, and the persisted `activeOrganizationId` survives a page reload. **Not live-walked** — switching the local dev server to `classstackr-staging` to do this was blocked by the session's own permission classifier (restarting the dev server against a different Supabase project got refused mid-session); reverted `.env` back to production immediately, no half-applied state left behind. The underlying logic is covered without the browser: `tests/unit/activeOrganization.test.ts` proves the resolution order directly (persisted-valid → earliest → empty, plus the "single-org user, anything persisted, still resolves to their one org" case), and `tests/contract/members.test.ts`'s new `GET /me/organizations` tests prove a multi-org user gets both memberships back, earliest-first. Founder/future-session note: re-run this specific walkthrough against staging once the dev-server-switch permission is available, before B-07's switcher UI ships on top of this.
+**Dependencies.** Step 25. Do not automate materialization until it materializes correctly.
 
-  **Resolved by Step 20 (2026-09-12):** the deferred walkthrough was run live against *production* instead of staging — no `.env` swap needed, since B-07's switcher UI now exists to drive it directly (a throwaway second membership, same production-walkthrough pattern Step 19 used). See Step 20's Shipped note for detail; this line stays as the historical record of why it wasn't done at the time.
-- [x] Unit test for the resolution order (persisted-valid → earliest → empty) in `tests/unit/` (a pure function extracted for this, not inlined in the component, per this repo's `shared/*.ts`-pure-logic convention) — `shared/activeOrganization.ts` + `tests/unit/activeOrganization.test.ts`.
-- [x] All seven gates green.
+**Implementation scope.**
+1. Add a `crons` array to `vercel.json`: `materialize-sessions` daily, `reconcile-wallets` daily, `expire-credits` daily, `reporting-daily` daily shortly after midnight in the org's zone (accepting that Vercel Cron schedules in UTC, so pick a UTC hour that is after midnight for IST and document why).
+2. Widen `cron.ts`'s secret guard to accept `Authorization: Bearer` as well as `x-cron-secret`, keeping the existing 404-on-missing-or-wrong behaviour (a 404 rather than a 401 is deliberate; do not change it).
+3. Failure visibility: each route already returns a structured result. Make a non-`ok` outcome write an `audit_events` row so a silent failure is discoverable without log archaeology. Vercel Cron's own failure notifications are the second line, not the first.
 
-**Shipped 2026-09-12:** `AuthContext.tsx`'s `loadUser()` now fetches the caller's full membership list via `GET /api/v1/members/me/organizations` (Step 16) instead of a single `.limit(1)` Supabase query, storing it on `User.organizations`. The active choice persists under a new `activeOrganizationId` localStorage key (same pattern as `currentRole`), resolved by a new pure `resolveActiveOrganizationId()` (`shared/activeOrganization.ts`, Zod-free per the client-bundle rule): persisted-and-still-valid → earliest membership → `null` if the list is empty (unchanged bootstrap fallback still fires off the empty-list case). `src/lib/api.ts`'s `api()` helper reads `activeOrganizationId` from localStorage directly (a plain function, not a React consumer — same reasoning `api()` already reads the Supabase session directly rather than through context) and sends it as `X-Organization-Id` on every call; absent for a signed-out/cleared-storage caller, which the server treats identically to today. The three lower-priority raw-`fetch` call sites (PDF download, document upload, the two `downloadBlob`/`multipartRequest` helpers) deliberately still don't send it, per this step's own scope — flagged here again for whoever picks up B-07's switcher. All seven gates green: **216 unit** (+5, the new resolution-order tests), 90 RLS, 267 contract (both unchanged — no server-side change this step), build `dist/server.js` 186.8 KB (unchanged, `api/index.js` byte-identical — confirmed no server code touched), bundle 203.7 KB (+0.1 KB from the new shared module and AuthContext changes, still well under the 260 KB budget), API bundle 16/16 mounts.
+**Tests required.** Contract (`tests/contract/` , new small file or an extension): both auth header shapes accepted, a wrong secret still 404s, and a failure path writes its audit row. The contract suite deliberately skips `cron.ts` today (service-token auth); this step adds the minimum to cover the auth change only.
 
----
+**Browser verification required.** Not a browser step. Verify by triggering each route manually against a preview deployment with the real secret, then confirming in the Vercel dashboard that the first real scheduled invocation fired and returned 200, and that `org_stats_daily` gained a row.
 
-## Step 18 — B-06d: D-01 verification — independent tutor stays a clean single-member org
+**Definition of done.**
+- [ ] Four cron entries live in `vercel.json`, deployed, and each has fired at least once on schedule.
+- [ ] `org_stats_daily` has real rows.
+- [ ] `/reconcile-wallets` has run against production with real wallet data and reported no mismatch. (It has never run against real drift; production had zero wallets at last check.)
+- [ ] A deliberately failed run writes a discoverable audit row.
+- [ ] All seven gates green.
 
-**Goal:** prove that relaxing the single-org guards in Step 16 didn't quietly change what an independent tutor's own org looks like — D-01 (MASTER_PLAN.md §5) decided this must stay "one shape, N memberships," never a schema fork, and this step is the regression test for that promise, not new engineering.
+**Expected outcome.** The product runs itself between sessions. B-18 gains a data source. Money drift becomes detectable rather than theoretical.
 
-**Why:** Step 16 touches the exact code path (`/bootstrap`, `setMembership()`) that D-01's decision constrains. Without an explicit test, a future change could silently reintroduce a fork (e.g. someone "fixing" bootstrap to allow multiple orgs-of-one per user in a way that stops looking like a normal single-member org).
-
-**Scope:** no new schema, no new route. One contract test suite:
-1. Bootstrap a fresh user → assert exactly one `organization_members` row (role `owner`), exactly one `organizations` row, and that row has no distinguishing "independent" flag or parallel table — it's the same `organizations`/`organization_members` shape a centre gets, just with one member.
-2. That same user then redeems a *second* org's staff invite (now possible per Step 16) → assert their original org-of-one is untouched (still exactly one member, still owner) while a second `organization_members` row now links them to the new org — proving Step 16's relaxation didn't retroactively change the first org's shape.
-
-**Definition of done:**
-- [x] Both assertions above land as contract tests (new file or appended to `tests/contract/members.test.ts`).
-- [x] All seven gates green.
-
-**Shipped 2026-09-12:** two new tests in `tests/contract/members.test.ts`'s new "D-01 regression" describe block. First: bootstrap a fresh user, assert exactly one `organization_members` row (role `owner`) and exactly one `organizations` row whose column shape (`Object.keys` diffed directly against the existing multi-member fixture org `ORG`, not a hardcoded list — avoids the test going stale as the schema gains columns) is identical to a centre's — no "independent"/"solo" flag, no parallel table. Second: that same user redeems a second org's staff invite (Step 16) and the original org-of-one is proven untouched (still exactly one member, still owner) while a second `organization_members` row now links them to the new org. No new schema, no new route — pure regression coverage per this step's own scope. All seven gates green: tsc clean, 216 unit (unchanged), 90 RLS (unchanged), **269 contract** (+2), build `dist/server.js` 186.8 KB (unchanged, no server code touched), bundle 203.7 KB (unchanged), API bundle 16/16 mounts, `api/index.js` byte-identical.
+**Follow-on steps.** Unblocks B-18 in R5. Step 27's delivery retries will want a scheduled sweep, so this lands first.
 
 ---
 
-## Step 19 — D-05: per-student parent-controlled payment-permissions model
+## Step 27: B-17, outbound comms router
 
-**Goal:** give each parent a per-student settings surface controlling whether that student can pay for themselves, a spending limit, and which payment methods are allowed — then enforce it on every self-serve student-initiated booking/payment path that exists today.
+**Objective.** Deliver the product's messages to parents where parents already are, without a human copying anything.
 
-**Why:** MASTER_PLAN.md §5, D-05, decided 2026-09-12 — explicitly "a real permissions model to design and build... not a single boolean," narrower than the original age-threshold recommendation. No platform-wide age cutoff; per-student, parent-set, defaults closed (no row = no self-pay, matching "no platform-wide default" the way D-07's credit-expiry opt-in works).
+**Why this step exists.** This is the missing third of the wedge. There is no mail, SMS or WhatsApp transport in the codebase at all. An invoice raised today notifies nobody; the share action opens a `wa.me` link for a human; bulk reminders produce a clipboard string ("Copied N reminder messages, paste into WhatsApp threads"); every invite is a link someone pastes. MASTER_PLAN.md §4's wedge is not deliverable until this exists, which is why it moved from last in R4 to first-after-correctness in R3.
 
-**Scope, checked against what self-serve student paths actually exist today** (there is exactly one — confirmed by grepping every route for a `student`-role-reachable write): `POST /api/v1/session-requests` (`server/routes/sessionRequests.ts:58`) has no `requireRole` gate at all today — any org member, including a `student`-role account, can create a booking request with no parent involved. There is **no** existing student-facing payment/top-up route to retrofit — `/wallets/topup-link` (`billing.ts:721`) is already parent-only (403s any non-parent). So this step's enforcement surface is the session-request path; a genuinely new student self-pay *payment* route isn't being built here because there's nothing for it to gate today — flagging that explicitly rather than inventing a payment surface speculatively.
+**Blocked on.** **D-10** (which provider, and whether WhatsApp-first with SMS fallback is right), plus WhatsApp Business API onboarding, template approval and SMS DLT registration. Start the procurement on day one of R3; it will take longer than the build.
 
-1. **Migration** `supabase/migrations/20260912110000_student_payment_permissions.sql` (rehearse on `classstackr-staging` first, same as Step 15):
-   ```sql
-   create table student_payment_permissions (
-     student_id uuid primary key references students(id) on delete cascade,
-     organization_id uuid not null references organizations(id) on delete cascade,
-     self_pay_allowed boolean not null default false,
-     spending_limit_paise integer,                    -- null = no limit
-     allowed_payment_methods text[] not null default '{}', -- subset of {'wallet','razorpay_link'}
-     updated_by uuid references auth.users(id) on delete set null,
-     updated_at timestamptz not null default now()
-   );
-   -- Select-only client policy, same "server writes, staff/parent/self read"
-   -- shape as consent_records (20260905130000) — no insert/update/delete
-   -- policy; every write goes through the route below on service_role, so a
-   -- spending limit can't be edited by anyone the route itself doesn't allow.
-   alter table student_payment_permissions enable row level security;
-   create policy student_payment_permissions_select on student_payment_permissions for select
-     using (is_staff(organization_id) or is_parent_of(student_id) or is_student_self(student_id));
-   ```
-   Add to the realtime publication only if a live settings UI needs it to update without a manual refetch (check during implementation; `organizations.settings`-style jsonb settings elsewhere in this codebase are not realtime, so default to not adding it unless the UI pattern chosen needs it).
-2. **`shared/schemas/students.ts`**: new `setPaymentPermissionsRequestSchema` (`selfPayAllowed: z.boolean()`, `spendingLimitPaise: z.number().int().positive().nullable()`, `allowedPaymentMethods: z.array(z.enum(["wallet","razorpay_link"]))`), mirroring the file's existing pattern (`eraseStudentRequestSchema` etc.).
-3. **`server/utils/paymentPermissions.ts`** (new, Zod-free pure resolve + DB read — same convention as `server/utils/cancellationPolicy.ts`/`creditExpiry.ts`): `DEFAULT_PAYMENT_PERMISSIONS` (`selfPayAllowed: false, spendingLimitPaise: null, allowedPaymentMethods: []`) and `getPaymentPermissions(studentId)`, returning the defaults when no row exists — the "closed by default" behavior D-05 requires.
-4. **New route** `PUT /api/v1/students/:studentId/payment-permissions` in `server/routes/students.ts`: staff (`owner`/`admin`) or a parent linked to that student — mirror `billing.ts:729-734`'s exact `parent_links` lookup pattern (`.from("parent_links").select("parent_user_id").eq("parent_user_id", req.user!.id).eq("student_id", ...).maybeSingle()`, 403 `Not linked to this student` if absent). Upserts the row, stamps `updated_by`/`updated_at`, writes an `audit_events` row (`student.payment_permissions.update`).
-5. **Enforcement on `POST /api/v1/session-requests`** (`server/routes/sessionRequests.ts:58-...`): when the requester's `organizationRole` is `student`, read `getPaymentPermissions(body.studentId)` before inserting. If `selfPayAllowed` is false (the default), the request is created but flagged `requires_parent_approval = true` (new column on `session_requests`, same migration as (1)) and cannot be accepted by staff (Step 19's `/accept` route gets a check) until a parent clears it. Add `POST /api/v1/session-requests/:id/parent-approve` (parent-of-the-student only, mirrors the `parent_links` check again) that flips `requires_parent_approval` to false. If `selfPayAllowed` is true, the existing flow is unchanged — no parent step, straight to staff review, same as today.
-6. **Settings UI**: a new `src/components/StudentPaymentPermissions.tsx`, surfaced from wherever a parent already manages a specific student today (check `ParentPortal.tsx` during implementation for the right per-student anchor point — likely alongside the existing per-child tabs/cards) — three controls: self-pay toggle, spending-limit number input (empty = no limit), payment-method checkboxes. Calls the new route via `src/lib/api.ts`.
+**Files and systems likely affected.**
+- `supabase/migrations/<ts>_messaging_outbox.sql` (new): an outbox table (org, recipient, channel, template key, payload, state, attempts, provider message id, timestamps), server-write-only with RLS enabled and no client policy, matching the `parent_invites` posture.
+- `server/utils/messaging/` (new): a provider interface, one concrete adapter, a template registry, and an enqueue helper.
+- `server/routes/cron.ts`: a delivery-sweep route for retries and a dead-letter transition.
+- `server/routes/webhooks.ts`: a provider delivery-status webhook, HMAC-verified, mounted with the existing raw-body pattern. **Do not reorder the raw-body mount** (HANDOFF §5.8).
+- Producers: `server/routes/billing.ts` (invoice raised, payment received), `server/routes/parents.ts` and `students.ts` and `members.ts` (invite links), `server/routes/scheduling.ts` (session reminder, cancellation), attendance (absence alert).
+- `src/pages/Money.tsx`: replace the clipboard bulk-reminder flow with a real send, showing delivered and read counts.
+- `src/pages/Preferences.tsx`: the notification-preference UI already exists and nothing reads it. Make it read this.
 
-**Definition of done:**
-- [x] Contract tests: a student-initiated session request with no permissions row set is created but `requires_parent_approval = true` and staff `/accept` 403s until a parent approves it; the same request with `selfPayAllowed: true` set skips the approval gate entirely, matching today's ungated behavior exactly.
-- [x] Contract tests for the permissions route: 403 for a parent not linked to the student, 403 for a non-owner/admin staff role, 200 for a linked parent and for owner/admin, response reflects `DEFAULT_PAYMENT_PERMISSIONS` when no row has ever been written.
-- [x] RLS test: a parent not linked to the student cannot select another family's `student_payment_permissions` row.
-- [x] Browser walkthrough — against production's real demo parent/student pair (`demo.parent@classstackr.dev` / `demo.student@classstackr.dev`, HANDOFF.md §9), not a throwaway: set a limit via the real Settings-tab UI, confirmed it round-trips across a fresh page load; submitted a student session-request with self-pay off (via the app's own authenticated `api()` client in the browser console — no create-request UI exists yet, same standing gap `listBookingRequests`'s own history notes), confirmed staff `/accept` 403s `parent_approval_required`; approved as the linked parent, confirmed staff could then accept (`200`, real enrollment created). Found and fixed a real bug live: the settings panel's description string rendered the literal `{{name}}` placeholder instead of the child's name (missing interpolation argument on the second `t()` call). All throwaway state (the enrollment, the session request, the payment-permissions row) was deleted afterward via direct `psql` against production — clean end state, no residue.
-- [x] All seven gates green.
+**Implementation scope.**
+1. **Build a transport abstraction, not a WhatsApp client.** The provider will change, template approval constrains wording, and delivery state must be queryable. Provider behind an interface; templates as data, not string literals; enqueue, sweep, retry with backoff, dead-letter.
+2. Deliver in this order of value: invoice raised with payment link, fee due reminder, payment received receipt, invite link, session reminder, absence alert.
+3. Every send is idempotency-keyed on `(org, recipient, template, source entity id)` so a retry or a double webhook cannot double-message a parent. This is the same discipline as the money paths and for the same reason.
+4. Respect per-user notification preferences, and record consent posture: a template sent to a parent about their own child under an existing relationship is transactional, not marketing, and the distinction belongs in the template registry.
 
-**Shipped 2026-09-12:** migration `20260912110000_student_payment_permissions.sql` — new `student_payment_permissions` table (one row per student, select-only RLS policy mirroring `consent_records`'s server-writes-only posture) and `session_requests.requires_parent_approval`, rehearsed on `classstackr-staging` then applied to production, both re-checked directly afterward (0 existing rows affected, no data loss). `shared/paymentPermissions.ts` (new, Zod-free pure resolve + defaults, same convention as `shared/cancellationPolicy.ts`) plus `server/utils/paymentPermissions.ts`'s DB-touching read. New routes in `server/routes/students.ts`: `GET`/`PUT /:studentId/payment-permissions`, gated by a shared `assertCanManagePaymentPermissions()` helper (owner/admin, or a parent linked to that specific student via the same `parent_links` lookup pattern as `billing.ts`'s wallet top-up route). Enforcement lives in `server/routes/sessionRequests.ts`: `POST /` reads the requester's payment permissions when their org role is `student` and stamps `requires_parent_approval` on the insert; `POST /:id/accept` 403s `parent_approval_required` while that flag is set; a new `POST /:id/parent-approve` (parent-of-the-student only) clears it. Client: a new `src/components/StudentPaymentPermissions.tsx` (self-pay toggle, spending-limit input, payment-method checkboxes) surfaced as a fourth "Settings" tab in `ParentPortal.tsx`, alongside the existing per-child selector; two new `src/lib/api.ts` functions. One test-harness gap found and fixed along the way: the contract-test `supabaseAdmin` shim's `toParam()` JSON-stringified every plain array (since a JS array is typeof "object"), producing invalid Postgres array-literal syntax for the new `allowed_payment_methods text[]` column — fixed by excluding arrays from that branch, letting PGlite encode them natively (the same thing the direct `pool`/`withTransaction` path — e.g. `class_sessions.student_ids` writes — already relied on). All seven gates green: 220 unit (+4), 93 RLS (+3), 280 contract (+11), build `dist/server.js` 191.8 KB (+5 KB, new routes/utils), bundle 204.0 KB/260 KB (+0.3 KB, new settings component), API bundle 16/16 mounts, `api/index.js` regenerated (190.9 KB).
+**Tests required.**
+- Unit: template rendering, the retry and backoff state machine, the idempotency key derivation.
+- Contract: enqueue-on-invoice-raised, the delivery-status webhook's HMAC verification and idempotent settlement (mirroring `webhooks.test.ts`'s existing signed-payload technique), a preference opt-out suppressing a send, and no double-send on a replayed event.
+- RLS: the outbox has no client read or write path for anyone, including the org's own owner.
 
----
+**Browser verification required.** Against staging with the provider in sandbox, then one real message to a real phone on production. Mark attendance for a real student, watch the invoice accrue, and watch the message arrive without touching WhatsApp. Then click the link and pay it (this converges with Step 29).
 
-## Step 20 — B-07: org switcher + cross-org conflict checking
+**Definition of done.**
+- [ ] A real invoice reaches a real parent's real phone, unassisted, and the link works.
+- [ ] Delivery and read state visible in Money's reminder surface.
+- [ ] A replayed provider webhook does not double-credit or double-message.
+- [ ] The clipboard-paste bulk reminder flow is deleted, not left alongside. (HANDOFF §6: no parallel implementations.)
+- [ ] Preferences actually suppress a send.
+- [ ] All seven gates green; API bundle mount count updated.
 
-**Goal:** give a multi-membership user (Step 16) a real, visible way to see every org they belong to and pick which one is active, without logging out — and make sure the same tutor can't be double-booked across two of their orgs at the same time. This is the remaining half of MASTER_PLAN.md §3's R2 gate; Steps 14-19 deliberately left it unscoped until B-06's plumbing (Steps 15-18) and its client threading (Step 17) had landed.
+**Expected outcome.** The wedge is true for the first time.
 
-**Why:** `AuthContext.tsx` and `src/lib/api.ts` (Step 17) already know how to resolve and send an active org, and `GET /api/v1/members/me/organizations` / `PUT /api/v1/members/me/active-organization` (Step 16) already exist — but nothing in the UI calls either. `src/components/Layout.tsx:134-140` even has a literal placeholder for this: a dashed `org ▾` box captioned "Org-switcher slot: reserved for R2 (B-06/B-07), visual placeholder only." Without a switcher, a second membership is invisible and inert — a person who joins a centre while already running their own solo org (Step 16 made this possible) has no way to act as the centre without clearing `localStorage` by hand.
-
-**Schema/logic reality check, done while scoping this:**
-1. **A real cross-org double-booking bug exists today**, confirmed by reading the code, not assumed from the gate wording. `class_sessions.tutor_id` references `auth.users(id)` directly (`supabase/migrations/20260709020100_schema.sql:151`) — the same value for a tutor regardless of which org's session it is. But every conflict check scopes its query by `organization_id` as well as `tutor_id`: `assertNoTutorConflict` (`server/routes/scheduling.ts:132-139`), the advisory lock key in `lockTutorSchedule` (`:108-109`, keyed `${orgId}:${tutorId}`), and `materializeTemplate`'s `busyRes` query (`:350-355`). A tutor who belongs to two orgs (possible since Step 16) can therefore be booked into Org A Tuesday 5-6pm and Org B Tuesday 5-6pm simultaneously — each org's booking path only ever checks its own rows. This is the literal "neither org can book over the other" gate failing today, not a hypothetical.
-2. **The fix is a real conflict check, not a bigger one.** Drop the `organization_id` filter from the conflict query and the lock key so both scope to `tutor_id` alone — a tutor's schedule is one calendar regardless of which org booked it. `assertNoTutorConflict` keeps `excludeSessionId` (session ids are globally unique, so excluding "itself" still works cross-org) and keeps `status = 'scheduled'`. This does *not* change same-org behavior at all — it only closes the cross-org gap.
-3. **Index impact:** the existing `idx_class_sessions_org_tutor_start (organization_id, tutor_id, start_time)` (`supabase/migrations/20260709020300_indexes.sql:3`) has `organization_id` as its leading column, so a `tutor_id`-only query can't use it efficiently. New migration adds `idx_class_sessions_tutor_status_start (tutor_id, status, start_time)` to keep the conflict check (now run on every session create/reschedule/materialize sweep) index-backed.
-4. **Three call sites touch this, all in `server/routes/scheduling.ts`:** `checkTutorConflictAndInsert`/`assertNoTutorConflict`/`lockTutorSchedule` (used by direct session creation `:182-191` and reschedule `:199-237`, and transitively by `sessionRequests.ts`'s booking-acceptance path via `createSessionTx`), and `materializeTemplate`'s own `busyRes` query (`:350-355`) for the recurring-template sweep. All four get the same `organization_id` filter dropped.
-5. **The four raw-`fetch` call sites in `src/lib/api.ts` that Step 17 explicitly left without `X-Organization-Id`** (`downloadInvoicePdf:147-173`, `uploadDocument:179-199`, `downloadBlob:494-518` — used by both org-export downloads, `multipartRequest:534-548` — used by both bulk-import calls) were low-priority *because no switcher existed yet for a user to have picked a non-default org*. Confirmed by reading the routes they hit (`billing.ts:747` invoice PDF, `documents.ts` upload, `orgExport.ts:18/32` json/xlsx, `students.ts:204/230` import inspect/commit): every one resolves `req.user!.organizationId!` from `authenticateToken`'s membership resolution (`server/middleware/auth.ts:104-160`), which falls back to the earliest-joined org whenever no header is sent. Once a switcher lets a multi-org user make a *different* org active, these four routes would silently act on the wrong org (a 404 on another org's invoice, an import landing in the wrong org, an export of the wrong org's data) — the switcher makes this a real, load-bearing bug, not a theoretical one. Fix: add the same `X-Organization-Id` header logic `api()` already has (`src/lib/api.ts:52,59`) to all four.
-6. **Anchor point for the switcher UI:** `Layout.tsx`'s existing placeholder (item 1 above) is the obvious and only sensible slot — it's already reserved, already positioned above the five-workspace rail, and visible on every page. `Settings.tsx` was considered and rejected: a switcher buried in Settings defeats "switches context without logging out" (that phrase implies a fast, always-visible action, the same reasoning the rail's role-switcher dropdown in the topbar already follows for `currentRole`).
-7. **No full-page reload needed to refresh org-scoped data.** Confirmed by reading `src/hooks/useRealtimeList.ts:95-156`: every realtime subscription re-subscribes on `[orgId, table]` changing, and `orgId` in every entity hook (`usePeople.ts`, `useSchedule.ts`, etc.) is derived reactively from `user?.organizationId` via `useAuth()`. So switching orgs only needs `AuthContext`'s `user` object to be replaced with a freshly-resolved one (calling `checkAuth()`, which re-runs `loadUser()` end to end) — every hook downstream re-subscribes on its own. A hard reload was considered and rejected: the reactive path already exists and is what the codebase's own three-layer pattern (MASTER_PLAN.md §3) relies on elsewhere.
-
-**Scope:**
-1. **Migration** `supabase/migrations/20260912120000_cross_org_tutor_conflict_index.sql` (rehearse on `classstackr-staging` first, same discipline as Steps 15/19):
-   ```sql
-   -- B-07: the tutor-conflict check (server/routes/scheduling.ts) now scopes
-   -- by tutor_id alone, not (organization_id, tutor_id) — a tutor's calendar
-   -- is one calendar across every org they belong to. The existing
-   -- idx_class_sessions_org_tutor_start has organization_id as its leading
-   -- column, so it can't serve a tutor_id-only lookup; this index can.
-   create index idx_class_sessions_tutor_status_start on class_sessions (tutor_id, status, start_time);
-   ```
-2. **`server/routes/scheduling.ts`:** drop the `organization_id` filter from `assertNoTutorConflict`'s query and from `lockTutorSchedule`'s advisory-lock key (lock on `tutorId` alone — `hashtextextended($1, 0)` keyed just `tutorId`, so concurrent booking attempts for the same tutor from two different orgs actually serialize against each other instead of taking two independent locks). Drop the same filter from `materializeTemplate`'s `busyRes` query. Signatures lose their now-unused `orgId` conflict-check parameter where it was only used for that filter (the insert itself still needs `orgId`, unchanged).
-3. **`src/lib/api.ts`:** add the `X-Organization-Id` header (read from `localStorage.getItem("activeOrganizationId")`, same one-liner `api()` uses) to `downloadInvoicePdf`, `uploadDocument`, `downloadBlob`, and `multipartRequest`.
-4. **New component `src/components/OrgSwitcher.tsx`:** reads `user.organizations` and `activeOrganizationId` from `useAuth()`. Renders nothing (today's exact UI, a no-op) when the caller has zero or one membership — matches Step 17's "must be a no-op for a single-org user" rule. For two or more: a button showing the active org's name with a chevron, opening a dropdown listing every org (name + role), same interaction pattern as `Layout.tsx`'s existing role-switcher dropdown (`:200-241`) — click-outside-to-close, highlighted current selection. Selecting a different org: calls a new `switchActiveOrganization(organizationId)` (`src/lib/api.ts`, wraps `PUT /api/v1/members/me/active-organization`), then `setActiveOrganizationId(organizationId)` (already exposed by `AuthContext`, Step 17), then `checkAuth()` to re-resolve `user` end to end (point 7 above), then navigates to `/app` (same reasoning as the existing role switch: don't strand the user on a page referencing an entity id from the org they just left).
-5. **Wire it into `Layout.tsx`:** replace the dashed placeholder (`:134-140`) with `<OrgSwitcher />`.
-6. **Contract test** in `tests/contract/scheduling.test.ts`: a new tutor uid seeded as a member of both `ORG` and `OTHER_ORG` (multi-org tutor); create a session for them in `ORG` at a given slot, then attempt an overlapping session for the *same tutor* in `OTHER_ORG` — assert `409 conflict`, proving the fix actually closes the cross-org gap (this test fails against the pre-fix code, confirming it's real coverage, not a tautology).
-7. **Browser walkthrough** (production, no `.env` swap — see point 7 above and the resolved Step 17 note): using the real demo tutor account, create a throwaway second `organization_members` row for it against a throwaway second org (or redeem a real staff invite into one, per Step 16/18's own pattern), confirm the switcher appears and lists both, switch to the second org, confirm the rail/People/Schedule/Money workspaces reload with that org's data (not a blank screen or the old org's data), reload the page and confirm `activeOrganizationId` and the active org survive, switch back. Also book a session for that tutor in one org at a time slot already taken in the other org via the app and confirm it now 409s. Delete every throwaway row afterward (the second membership, the second org if newly created, the test session) via direct `psql`, matching Steps 15/19's cleanup discipline.
-
-**Definition of done:**
-- [x] Migration applied clean against `classstackr-staging` then production, index confirmed present.
-- [x] `assertNoTutorConflict`/`lockTutorSchedule`/`materializeTemplate` no longer filter by `organization_id` — same-org conflict behavior unchanged (existing scheduling contract tests stay green), cross-org conflict now caught.
-- [x] New contract test proves the cross-org double-booking bug is fixed (and would fail pre-fix).
-- [x] `OrgSwitcher.tsx` built, wired into `Layout.tsx`'s reserved slot, no-op for single-org users.
-- [x] All four flagged raw-`fetch` call sites in `src/lib/api.ts` send `X-Organization-Id`.
-- [x] Live browser walkthrough against production per point 7 above, all throwaway state cleaned up afterward.
-- [x] EXECUTION_PLAN.md's Step 17 deferred-DoD line annotated as resolved (done above) and this step's own tracker row/backlog table updated.
-- [x] HANDOFF.md §2's gate line and "last verified" note updated in the same pass.
-- [x] All seven gates green.
-
-**Shipped 2026-09-12:** migration `20260912120000_cross_org_tutor_conflict_index.sql` (new index `idx_class_sessions_tutor_status_start (tutor_id, status, start_time)`, additive-only) rehearsed on `classstackr-staging` then applied to production, both confirmed present afterward with zero data loss (production: 203 pre-existing `class_sessions` rows untouched). `server/routes/scheduling.ts`'s `lockTutorSchedule`/`assertNoTutorConflict` (used by direct session creation, reschedule, and — transitively via `createSessionTx` — booking-request acceptance) and `materializeTemplate`'s `busyRes` query all dropped their `organization_id` filter in favor of `tutor_id` alone, closing a real, confirmed cross-org double-booking bug: `class_sessions.tutor_id` is the same `auth.users` id regardless of org, but every conflict check used to also filter by `organization_id`, so a multi-org tutor could be booked at the same time in two different orgs with neither booking path ever seeing the other's row. New contract test in `tests/contract/scheduling.test.ts` seeds a tutor as a member of both `ORG` and `OTHER_ORG`, books them in `ORG`, then proves an overlapping booking attempt in `OTHER_ORG` now 409s `conflict` (confirmed this fails against the pre-fix code). New `src/components/OrgSwitcher.tsx` — a no-op (renders nothing) for a caller with 0-1 memberships, otherwise a dropdown (same interaction pattern as `Layout.tsx`'s existing role-switcher) listing every org from `user.organizations`, calling the new `switchActiveOrganization()` (`src/lib/api.ts`, wraps Step 16's `PUT /me/active-organization`) on selection, then `setActiveOrganizationId()` + `checkAuth()` (no page reload — every org-scoped hook derives its query params reactively from `useAuth()`'s `user`, confirmed by reading `useRealtimeList.ts`'s `[orgId, table]` resubscribe effect) + a navigate to `/app`. Wired into `Layout.tsx`'s previously-dashed placeholder slot. `src/lib/api.ts`'s four flagged raw-`fetch` call sites (`downloadInvoicePdf`, `uploadDocument`, `downloadBlob`, `multipartRequest`) now send `X-Organization-Id`, since the switcher makes a non-default active org real for the first time. **Live browser walkthrough against production** (no `.env` swap — resolves Step 17's deferred DoD line, see its annotation above): a throwaway second `organizations`/`organization_members` row was inserted for the real demo tutor account (`demo.tutor@classstackr.dev`); the switcher correctly appeared and listed both orgs with roles; switching orgs reloaded People/Today to the throwaway org's (empty) data with no reload and no cross-org leakage; a page reload confirmed `activeOrganizationId` persisted; switching back restored the real demo data. The cross-org conflict fix was also verified live via the app's own authenticated session (browser console `fetch`, same technique Step 19 used): booking the demo tutor in their home org at a slot, then attempting an overlapping booking for the same tutor in the throwaway org, returned `200` then `409 conflict`. All throwaway rows (the session, the throwaway org's template, its `organization_members` row, the org itself) were deleted afterward via direct `psql` against production — confirmed the demo tutor account is back to exactly its original single membership. All seven gates green: 220 unit (unchanged), 93 RLS (unchanged), **281 contract** (+1), build `dist/server.js` 191.6 KB, bundle 204.5 KB/260 KB, API bundle 16/16 mounts, `api/index.js` regenerated (190.8 KB).
+**Follow-on steps.** Step 29's live rupee is much easier once links are delivered automatically. Step 32's funnel gains its most important event.
 
 ---
 
-## Step 21 — B-08: tutor payouts & earnings ledger
+## Step 28: C-03, platform billing switch-on
 
-**Goal:** give a centre a real payroll loop for its tutors — an org-set per-tutor hourly rate, an earnings ledger that accrues automatically off attendance (not off any per-student billing outcome), a payout run that aggregates a tutor's unpaid earnings for a period into a TDS-deducted net figure, and a downloadable statement — built once so R3's marketplace payouts (MASTER_PLAN.md §3, Stage 5 "Money") can reuse the same ledger/payout shape instead of a second implementation.
+**Objective.** Let a customer pay ClassStackr without a human switching their plan by hand.
 
-**Why:** MASTER_PLAN.md §3 R2's B-08 row ("hours or sessions taught, earnings ledger, payout run, statement, TDS. Built once, serves org payroll and marketplace payouts alike"), §4's ranked backlog (score 0.67, the highest-scoring unscoped item after Step 20 closed R2's gate), and §6's permission-model note ("own-earnings and payout visibility (B-08)" flagged as a capability nothing enforces yet). Depends on Step 15 (multi-membership profile schema, done) and partly D-02 (§5: the centre retains the customer/financial relationship whenever a centre is involved — the mirror-image statement for payouts is that the centre, not the tutor, owns the payout run and its ledger; an independent tutor's org-of-one has no separate payroll counterparty, so B-08's payout machinery is meaningful only where a centre employs the tutor, matching D-02's scope).
+**Why this step exists.** `server/routes/subscription.ts`'s `/checkout` returns `{ degraded: true, message: "Upgrading isn't self-serve yet. Email us and we'll switch your plan by hand." }` whenever `PLATFORM_RAZORPAY_KEY_ID` or `PLATFORM_RAZORPAY_PLAN_IDS` is unset. Both are unset, and neither appears in `.env.example`, so the path to switching revenue on is not even documented. The live code path is complete and needs no rewrite.
 
-**Schema reality check, done while scoping this (per this session's own instruction to confirm from the real schema, not the plan's one-line description):**
-1. **No usable per-tutor rate exists today.** `tutor_profiles.hourly_rate numeric(10,2)` (original schema, `supabase/migrations/20260709020100_schema.sql:47`) is dead — confirmed by grepping the whole tree for `hourly_rate`/`hourlyRate`: zero reads, zero writes, no route, no component. The columns that *are* live on `tutor_profiles` (`price_model`/`price_range_min`/`price_range_max`, added by `20260709020800_group_d_fields.sql`, edited via `TutorProfileSettings.tsx`'s "Tutor marketplace profile" form) are a self-reported public asking-price *range* for the future R3 marketplace listing, not an org-set payroll rate — reusing them for payroll would let a tutor set their own pay, which is exactly the class of bug `20260710140000_tutor_verify_fix.sql` already found and fixed once for `is_verified` (a self-write that should have been staff-only). This step therefore adds a **new**, dedicated table for the payroll rate rather than repurposing either existing field, with no self-write policy at all.
-2. **Attendance already marks the real outcome that should drive pay.** `POST /api/v1/billing/attendance` (`server/routes/billing.ts:115-282`) already transitions `class_sessions.status` to `'completed'` exactly once per session (the update at line 269-272 runs unconditionally on every call, but attendance rows are upserted, so re-marking the same session is idempotent from the session's point of view). **Decision: tutor earnings accrue once per session, the first time attendance is marked for it — independent of which individual students were billed.** A tutor is paid for delivering the session; a no-show student is the parent's billing problem (handled by the existing `BILLABLE`/invoice path), not a reason to withhold the tutor's pay. This deliberately decouples tutor compensation from `class_templates.pricing_model`/`BILLABLE` entirely, which is what lets the same accrual point serve a `MONTHLY`-billed batch class exactly as well as a `PER_SESSION` one-on-one — the generalization MASTER_PLAN.md §3 asked for.
-3. **Per-student attendance reversal (B-01) deliberately does not touch this.** `POST /billing/attendance/reverse` reverses one student's wallet/invoice outcome and never touches `class_sessions.status` (confirmed by reading `server/routes/billing.ts:295-433` — no `class_sessions` write in that handler). Tutor earnings, once accrued at the session level, are therefore unaffected by a later per-student reversal — the tutor already held the session; that fact doesn't change because one family's charge was undone. No new interaction with the reversal engine is needed.
-4. **`class_sessions` already carries everything needed to compute the fee** — `start_time`/`end_time` (schema.sql:161-162) give duration directly, with no dependency on `class_templates.duration_minutes` (which describes the *template*'s default slot, not the specific session actually run). Fee = `hourly_rate_paise × duration_minutes / 60`, rounded.
-5. **`is_staff(org_id)` (`20260709020200_rls.sql:22-25`) is too broad for financial visibility** — it includes `tutor`/`frontdesk`, i.e. every tutor in the org, not just the one whose row it is. New tables here use `has_role(org_id, array['owner','admin','accountant'])` for the finance-staff side of their select policy instead, plus `tutor_id = auth.uid()` for self-visibility. Rate-*setting* is narrower still — `is_org_admin` (owner/admin only), matching the tutor-verify-fix precedent of keeping any write that affects one tutor's numbers out of both self-service and peer-service (frontdesk/accountant) hands.
+**Blocked on.** D-03's actual tier numbers, and Razorpay KYC on the platform account.
 
-**Scope:**
+**Files and systems likely affected.** `shared/plans.ts` (the catalog numbers are placeholders and nothing else hardcodes them), `.env.example` and HANDOFF §4 (`PLATFORM_RAZORPAY_KEY_ID`, `PLATFORM_RAZORPAY_KEY_SECRET`, `PLATFORM_RAZORPAY_PLAN_IDS`, `PLATFORM_RAZORPAY_WEBHOOK_SECRET`), `server/routes/webhooks.ts`'s `/razorpay-platform` handler, `src/components/SubscriptionSettings.tsx`, `src/pages/public/Pricing.tsx`.
 
-1. **Migration** `supabase/migrations/20260912130000_tutor_earnings_payouts.sql` (rehearse on `classstackr-staging` first, same discipline as every prior R2 migration, then push to production with explicit approval):
-   ```sql
-   -- B-08: a dedicated, staff-only-writable payroll rate — deliberately NOT
-   -- tutor_profiles.hourly_rate (dead, see Step 21's scoping note) and NOT
-   -- tutor_profiles.price_range_min/max (self-editable marketplace fields;
-   -- reusing them here would let a tutor set their own pay, the exact bug
-   -- shape 20260710140000_tutor_verify_fix.sql already found once).
-   create table tutor_compensation_rates (
-     tutor_id uuid not null references auth.users(id) on delete cascade,
-     organization_id uuid not null references organizations(id) on delete cascade,
-     hourly_rate_paise integer not null default 0,
-     updated_by uuid references auth.users(id) on delete set null,
-     updated_at timestamptz not null default now(),
-     primary key (tutor_id, organization_id)
-   );
-   alter table tutor_compensation_rates enable row level security;
-   -- Viewing a rate (owner/admin/accountant, or the tutor themselves) is
-   -- wider than setting one (owner/admin only, enforced entirely in the
-   -- PUT route below — this table has no write policy at all): an
-   -- accountant needs to see a tutor's rate to make sense of a payout
-   -- without being able to change it.
-   create policy tutor_compensation_rates_select on tutor_compensation_rates for select
-     using (has_role(organization_id, array['owner','admin','accountant']) or tutor_id = auth.uid());
-   -- No insert/update/delete policy: every write goes through the route
-   -- below on service_role — same posture as consent_records /
-   -- student_payment_permissions.
+**Implementation scope.** Create the Razorpay plan objects matching the finalized tiers; set the four env vars in Vercel production; confirm `/razorpay-platform` settles subscription lifecycle events idempotently; walk an upgrade and a downgrade; confirm the DB-enforced student cap moves with the plan; make the public Pricing page match the catalog.
 
-   create table tutor_payouts (
-     id uuid primary key default gen_random_uuid(),
-     organization_id uuid not null references organizations(id) on delete cascade,
-     tutor_id uuid not null references auth.users(id) on delete cascade,
-     period_start date not null,
-     period_end date not null,
-     gross_paise integer not null,
-     tds_percent numeric(5,2) not null default 0,
-     tds_paise integer not null default 0,
-     net_paise integer not null,
-     status text not null default 'issued', -- issued | paid
-     run_by uuid references auth.users(id) on delete set null,
-     paid_at timestamptz,
-     created_at timestamptz not null default now()
-   );
-   alter table tutor_payouts enable row level security;
-   create policy tutor_payouts_select on tutor_payouts for select
-     using (has_role(organization_id, array['owner','admin','accountant']) or tutor_id = auth.uid());
+**Tests required.** Contract: the degraded branch still returns cleanly when env is unset (do not delete that path, staging will keep using it); the platform webhook verifies HMAC and settles idempotently; a plan change updates the cap. Unit: any catalog-derived math.
 
-   -- One row per session, ever (unique(session_id)) — accrued once, the
-   -- first time attendance is marked for that session, in the same
-   -- transaction as the attendance write (server/routes/billing.ts).
-   create table tutor_earnings_ledger (
-     id uuid primary key default gen_random_uuid(),
-     organization_id uuid not null references organizations(id) on delete cascade,
-     tutor_id uuid not null references auth.users(id) on delete cascade,
-     session_id uuid not null references class_sessions(id) on delete cascade,
-     session_start timestamptz not null,
-     duration_minutes integer not null,
-     rate_paise_per_hour integer not null,
-     amount_paise integer not null,
-     payout_id uuid references tutor_payouts(id) on delete set null,
-     created_at timestamptz not null default now(),
-     unique (session_id)
-   );
-   alter table tutor_earnings_ledger enable row level security;
-   create policy tutor_earnings_ledger_select on tutor_earnings_ledger for select
-     using (has_role(organization_id, array['owner','admin','accountant']) or tutor_id = auth.uid());
-   create index idx_tutor_earnings_ledger_unpaid on tutor_earnings_ledger (tutor_id, session_start) where payout_id is null;
-   ```
-   No realtime publication entry — a payout run is a deliberate staff action refetched on demand, not a live-updating surface (default per HANDOFF §6's "add only if the UI pattern needs it" rule; none of the R1/R2 money-config tables — `student_payment_permissions`, `consent_records` — are realtime either).
-2. **TDS rate stays per-org configurable, no platform default** — `organizations.settings.payouts.tdsPercent`, same posture as D-07's credit-expiry window (no founder-set statutory default hardcoded; an org that hasn't configured it runs payouts at 0% TDS, which is today's implicit behavior preserved rather than invented). New `shared/payoutSettings.ts` (Zod-free, mirrors `shared/cancellationPolicy.ts`): `DEFAULT_PAYOUT_SETTINGS = { tdsPercent: 0 }`, `resolvePayoutSettings(raw)`. `OrganizationSettings.tsx` gets one new field (`settings.payouts.tdsPercent`, 0-100, same `updateSetting()`/direct-`supabase.update` pattern the file already uses for `cancellation`/`creditExpiry` — no new route).
-3. **`shared/payouts.ts`** (Zod-free pure math, unit-tested): `computeSessionEarningsPaise(ratePaisePerHour, durationMinutes)` = `Math.round(ratePaisePerHour * durationMinutes / 60)`; `computeTdsPaise(grossPaise, tdsPercent)` = `Math.round(grossPaise * tdsPercent / 100)`.
-4. **`server/utils/payouts.ts`** (DB-touching reads, same split as `server/utils/cancellationPolicy.ts`): `getCompensationRatePaise(tutorId, orgId)` → `hourly_rate_paise` or `0` if no row; `getPayoutSettings(orgId)` → reads `organizations.settings.payouts` through `resolvePayoutSettings`.
-5. **`shared/schemas/payouts.ts`**: `setCompensationRateRequestSchema` (`hourlyRatePaise: z.number().int().nonnegative()`), `runPayoutRequestSchema` (`tutorId: z.string().uuid(), periodStart: z.string(), periodEnd: z.string()`), plus response types, mirroring `shared/schemas/students.ts`'s newest convention.
-6. **Earnings accrual wired into the existing attendance-mark transaction**, `server/routes/billing.ts`'s `POST /attendance` (`:115-282`) — not a new route:
-   - Add `s.end_time` to the session/template select at `:123-130`.
-   - Inside the same `withTransaction` block, after computing `billed`/`invoiced` and regardless of them, look up `tutor_compensation_rates` for `session.tutor_id` + `orgId`; if a rate row exists and `hourly_rate_paise > 0`, compute `duration_minutes` from `end_time - start_time` and `amount_paise` via `computeSessionEarningsPaise`, then `insert into tutor_earnings_ledger (...) values (...) on conflict (session_id) do nothing`. No `tutor_id` or no configured rate (or rate `0`) → no row is written; this is the "closed by default, never invent a number" convention every other per-org policy in this codebase already follows (D-07/D-08/D-05), not a bug — a centre that hasn't set a tutor's rate yet simply hasn't started paying them through the product, exactly like an org that never enabled credit expiry.
-   - This keeps the invariant "attendance is one real transaction" (HANDOFF §5.3) intact — the earnings write lands in the same commit as the attendance/wallet/invoice writes, not a side effect after the fact.
-7. **New route file `server/routes/payouts.ts`**, mounted at `/api/v1/payouts` in `server/app.ts` (18th route module):
-   - `const CAN_PAYOUT = ["owner", "admin", "accountant"] as const;` (frontdesk excluded — payroll, not day-to-day operations).
-   - `PUT /tutors/:tutorId/rate` — `requireRole("owner", "admin")` only (narrower than `CAN_PAYOUT`; matches `tutor_profiles`'s `is_org_admin`-only write precedent for anything one tutor could otherwise self-serve or have a peer set). Upserts `tutor_compensation_rates`, writes `audit_events` (`tutor.compensation_rate.update`).
-   - `GET /rates` — `requireRole(...CAN_PAYOUT)`. Returns every `tutor_compensation_rates` row for the org in one call, for `TeamSettings.tsx`'s member list.
-   - `GET /me/earnings` — any authenticated org member; 403 if the caller isn't a `tutor`. Returns the caller's own `tutor_earnings_ledger` rows (recent window) and their own `tutor_payouts` history.
-   - `GET /earnings` — `requireRole(...CAN_PAYOUT)`, query `tutorId` (required) + optional `from`/`to` — the staff-side view used to size a payout run before running it.
-   - `POST /payout-runs` — `requireRole(...CAN_PAYOUT)`. Body `{ tutorId, periodStart, periodEnd }`. In one `withTransaction`: `select ... for update` every `tutor_earnings_ledger` row for that tutor with `payout_id is null` and `session_start` in `[periodStart, periodEnd)`; 422 `nothing_to_pay` if none; sum → `gross_paise`; read the org's `tdsPercent` via `getPayoutSettings`; `tds_paise = computeTdsPaise(...)`; `net_paise = gross - tds`; insert one `tutor_payouts` row (`status: 'issued'`); `update tutor_earnings_ledger set payout_id = $1 where id = any($2::uuid[])` on the selected rows. Writes `audit_events` (`payout.run`).
-   - `GET /payout-runs` — `requireRole(...CAN_PAYOUT)` (any tutor in the org, via `?tutorId=`) or a tutor listing their own (no query param needed, scoped to self).
-   - `POST /payout-runs/:id/mark-paid` — `requireRole(...CAN_PAYOUT)`. Sets `status: 'paid'`, `paid_at: now()` — records that the actual bank transfer happened outside the product. **No Razorpay payout API integration** — per HANDOFF §7's founder deferral of all external integrations, this mirrors B-05's "record a payment that happened outside the app" posture rather than attempting a live payout API; the degradation path is simply "the money moves by bank transfer, the app keeps the ledger/statement of record."
-   - `GET /payout-runs/:id/statement` — `requireRole(...CAN_PAYOUT)` or the tutor whose payout it is. Streams a PDF via a new `server/utils/payoutStatementPdf.ts` (mirrors `server/utils/invoicePdf.ts`'s `jsPDF`/`jspdf-autotable` pattern exactly): org header, tutor name, period, a line per `tutor_earnings_ledger` row in that payout (date, duration, rate, amount), then gross/TDS%/TDS/net.
-8. **Client:**
-   - `src/lib/api.ts`: `getTutorRates()`, `setTutorRate(tutorId, hourlyRatePaise)`, `getMyEarnings()`, `getEarningsForTutor(tutorId, from?, to?)`, `runPayout(tutorId, periodStart, periodEnd)`, `listPayoutRuns(tutorId?)`, `markPayoutPaid(payoutId)`, `downloadPayoutStatement(payoutId)` (same Blob/anchor-click pattern as `downloadInvoicePdf`, including the `X-Organization-Id` header per Step 20's rule for every raw-`fetch` helper).
-   - `TeamSettings.tsx`: for each listed member with `role === "tutor"`, an inline "Pay rate (₹/hr)" field, owner/admin only (reuses the file's existing `isOwner`/`canInvite` gate), backed by `GET /rates` (loaded once with the member list) and `PUT /tutors/:tutorId/rate` on save — the anchor point this step's brief pointed at, since it's already the staff-only member-management surface.
-   - New `src/components/PayoutRuns.tsx`: a period picker + tutor picker (drawn from `TeamSettings`' own member-loading query, filtered to `role === "tutor"`), shows the unpaid-earnings total for the selected tutor/period (`GET /earnings`), a "Run payout" button (`POST /payout-runs`), and a history list per tutor with "Mark paid" / "Download statement" actions. Wired into `Settings.tsx` as a new `payouts` tab, gated `owner`/`admin`/`accountant` (mirrors the existing `organization`/`billing` tab gate, extended to include `accountant`).
-   - New `src/components/TutorEarnings.tsx`: the tutor's own view — current rate (read-only, set by the org), a list of recent earnings-ledger rows, and past payout statements with a download link. Wired into `Settings.tsx` as a new `earnings` tab, gated **`tutor` only** (not `owner`/`admin`) — deliberately narrower than the `availability`/`profile` tabs' `owner`/`admin`/`tutor` gate, because an independent tutor (bootstrapped as `owner` of their own org-of-one, D-01) has no separate payroll counterparty to be paid by; B-08's payout loop is meaningful only for a tutor employed by a centre, i.e. someone whose `organizationRole` is actually `tutor`.
+**Browser verification required.** On production, with a real card: a real org upgrades from Free to Growth, is charged, sees its student cap rise, then downgrades. Refund the test charge afterwards and record it.
 
-**Definition of done:**
-- [x] Migration applied clean against `classstackr-staging` (dry-run confirmed only this file pending, then applied; all three tables + RLS policies + the index confirmed present via `psql`, 2 pre-existing `class_sessions` / 1 org untouched) then production (same dry-run-then-push sequence; 203 pre-existing `class_sessions` rows and 9 organizations confirmed untouched afterward, all three new tables start empty).
-- [x] Unit tests (`tests/unit/payouts.test.ts`): `computeSessionEarningsPaise`/`computeTdsPaise` pure-math cases (including rounding), `resolvePayoutSettings`'s default-to-0%-when-unconfigured behavior.
-- [x] Contract tests (`tests/contract/payouts.test.ts`): marking attendance for a tutor with a configured rate accrues exactly one `tutor_earnings_ledger` row sized off the session's real duration, regardless of the marked student's status; marking attendance twice for the same session does not double-accrue (`on conflict (session_id) do nothing` proven directly); a tutor with no configured rate accrues nothing; a per-student `/attendance/reverse` call does not remove or alter the session's earnings row; `PUT /tutors/:tutorId/rate` 403s for a non-owner/admin role (including `accountant` and the tutor themselves) and 200s for owner/admin; `POST /payout-runs` sums only unpaid rows in the requested period, computes TDS correctly, marks the aggregated rows with the new `payout_id`, and 422s `nothing_to_pay` on an empty range or a re-run over an already-paid-out period; a tutor can `GET /me/earnings` for themselves and cannot read another tutor's via the staff-only `GET /earnings`; `mark-paid` rejects a second call on an already-paid payout; the statement PDF 404s for a different org.
-- [x] RLS tests (`tests/integration/rbac.test.ts`): a tutor can select their own `tutor_compensation_rates`/`tutor_payouts`/`tutor_earnings_ledger` rows but not another tutor's; `frontdesk` cannot select any tutor's rate/payout/earnings rows (narrower than `is_staff`, proven directly — deliberately re-broken to `is_staff()` during development to confirm this exact test fails, per HANDOFF §5.10); `owner`/`admin`/`accountant` can select any tutor's earnings/payout rows in their own org, and rate rows too (rate *viewing* is wider than rate *setting*, which stays owner/admin-only, enforced entirely in the route); no role can write any of the three tables directly.
-- [x] Browser walkthrough against production, using a throwaway staff-tutor account rather than the demo tutor themselves — the demo tutor's own `organizationRole` is `owner` (D-01's org-of-one), so a second, genuinely `tutor`-role account was needed to exercise the `tutor`-only `TutorEarnings` gate for real: `throwaway.payout.tutor@classstackr.dev` created via the Supabase Admin API and added to the demo org (`organization_members`, role `tutor`), plus a throwaway session (tutor_id = that account, 60 minutes, already elapsed). Logged in as the demo owner: set the throwaway tutor's rate to ₹500/hr via the real `TeamSettings.tsx` UI. Attendance was marked via the app's own authenticated session (browser console `fetch` to `POST /api/v1/billing/attendance`, same technique Steps 19/20 used) rather than the Today-page roster popover — `Today.tsx`'s session query filters `tutor_id = user.id` whenever the viewer's *person-type* role is tutor, which the demo owner's `profiles.role_type` also is, so the owner's own Today view can't see a session belonging to a *different* tutor; a real but out-of-scope quirk at the time, **fixed and re-verified live the same day** — see HANDOFF.md §8's new entry and the note at the end of this Shipped paragraph. Confirmed live: exactly one `tutor_earnings_ledger` row (60 min, ₹500/hr, ₹500) landed in the same transaction; logging in as the throwaway tutor, `TutorEarnings.tsx` showed "12 Sept 2026 — 60 min, ₹500, Unpaid" and the unpaid total; logging back in as the owner, `PayoutRuns.tsx` pre-selected the tutor and period, showed ₹500 unpaid, ran the payout (Gross ₹500 · TDS 0% · Net ₹500 · Issued), the unpaid total dropped to ₹0, the statement PDF downloaded (`200`), and Mark Paid flipped the status to Paid; the throwaway tutor's own `TutorEarnings.tsx` then showed the same payout as Paid. All throwaway state — the earnings row, the payout row, the compensation-rate row, the session, the `organization_members`/`profiles` rows, and the auth user itself — was deleted afterward via direct `psql` + the Supabase Admin API; the demo org's membership (`owner`/`parent`/`student`, exactly 3 rows) and all three new tables (0 rows) were confirmed back to their pre-walkthrough state.
-- [x] `EXECUTION_PLAN.md`'s tracker row and MASTER_PLAN.md §3/§4/§6's B-08 references updated in the same pass; HANDOFF.md §2's gate line and "last verified" note updated.
-- [x] All seven gates green off the local working tree: tsc clean; **228 unit** (+8); **100 RLS** (+7); **298 contract** (+17); build `dist/server.js` 209.7 KB; bundle 204.7 KB/260 KB (+0.2 KB); API bundle **17/17 mounts** (`/api/v1/payouts` added), `api/index.js` regenerated (208.9 KB).
+**Definition of done.**
+- [ ] A real org has paid ClassStackr real money through the app.
+- [ ] Downgrade works and the cap moves both ways.
+- [ ] All four env vars documented in `.env.example` with where each comes from.
+- [ ] Pricing page and `shared/plans.ts` agree.
+- [ ] All seven gates green.
 
-**Shipped 2026-09-12:** migration `20260912130000_tutor_earnings_payouts.sql` (`tutor_compensation_rates`, `tutor_payouts`, `tutor_earnings_ledger` — additive-only) rehearsed on `classstackr-staging` then applied to production, both re-checked directly afterward (zero data loss). `server/routes/billing.ts`'s `POST /attendance` now accrues one `tutor_earnings_ledger` row per session the first time attendance is marked for it, sized off the session's real `start_time`/`end_time` against the tutor's `tutor_compensation_rates` row (skipped entirely when no rate is configured, matching D-07/D-08/D-05's closed-by-default convention) — independent of any student's billing outcome, so a later per-student `/attendance/reverse` never touches it. New route module `server/routes/payouts.ts` (`/api/v1/payouts`, the 17th mount): rate get/set, a tutor's own earnings/payout history, a staff-side unpaid-earnings query, a payout run (TDS-deducted per a new `organizations.settings.payouts.tdsPercent`, 0% until an org configures it), mark-paid (no Razorpay payout API — HANDOFF §7's deferral, money moves by bank transfer outside the product), and a PDF statement (`server/utils/payoutStatementPdf.ts`, mirrors `invoicePdf.ts`). Client: `TeamSettings.tsx` gained an inline per-tutor pay-rate field (owner/admin only); new `src/components/TutorEarnings.tsx` (tutor-only Settings tab) and `src/components/PayoutRuns.tsx` (owner/admin/accountant Settings tab). RLS: all three tables select-only, `has_role(org, ['owner','admin','accountant'])` plus self — narrower than `is_staff()` (which also covers tutor/frontdesk), deliberately re-broken to `is_staff()` during development and confirmed the frontdesk-visibility test fails before reverting, per HANDOFF §5.10. Live browser walkthrough against production (detail above): a throwaway staff-tutor account exercised the full loop — rate set, attendance accrual, own-earnings view, payout run, statement download, mark-paid, paid status reflected back to the tutor — all throwaway state cleaned up afterward via `psql` + the Supabase Admin API, demo org confirmed back to its original 3-member shape. All seven gates green: 228 unit (+8), 100 RLS (+7), 298 contract (+17), build `dist/server.js` 209.7 KB, bundle 204.7 KB/260 KB, API bundle 17/17 mounts, `api/index.js` regenerated (208.9 KB). **Same-day follow-up:** `Today.tsx`'s `isTutor` (used to scope the sessions/students/invoices queries and skip leads) read `(currentRole || user.role) === "tutor"` — a person-type check, not `organizationRole` — so an owner who is also personally a tutor couldn't see other tutors' sessions. Fixed to `user.organizationRole === "tutor"` (matching the file's own `isAdminTier` line right below it), reproduced against the live pre-fix code on production first, then re-verified live post-deploy, all gates re-run green (unchanged numbers, client-only change). Full detail in HANDOFF.md §8.
+**Expected outcome.** ClassStackr has a revenue mechanism. This is a prerequisite for calling anything a pilot rather than a giveaway.
 
 ---
 
-## Step 22 — B-12: monthly progress-report PDF
+## Step 29: C-04, Razorpay live rehearsal on one real org
 
-**Goal:** give a student's parent, the student themselves, or staff a downloadable PDF summarizing attendance and academic performance for a chosen month, generated on demand — no new table, no persisted history, matching this being a read-only report over data that already exists.
+**Objective.** Prove the per-org collection path works with real money, in both directions, once.
 
-**Why:** MASTER_PLAN.md §4's ranked backlog, highest-scoring unscoped item after R2's gate closed (score 0.80, no dependency). B-12 was explicitly flagged as needing scoping decisions before starting: what data it pulls, who can generate/download it, and whether it reuses the `jsPDF`/`jspdf-autotable` composer pattern.
+**Why this step exists.** No Razorpay flow has ever run for real. Per-org collection is bring-your-own-account: keys are AES-GCM encrypted per org in `payment_gateways`, so fees land in the centre's own bank and ClassStackr never becomes a payment aggregator. That architecture is right, and it is entirely unexercised. Every degradation path (`gateway_not_connected`) is tested; the live path is not.
 
-**Schema reality check, done while scoping this:**
-1. **No migration needed.** Everything the report needs already exists and is already RLS-readable by the audience this report is for: `attendance_records` (per-student, per-session, `status` ∈ `present|absent|late|excused` — `shared/schemas/billing.ts:36` — and a `session_start` column that makes period-filtering a plain range query, no join to `class_sessions` needed) and `assessments` (`supabase/migrations/20260709020600_group_b_fields.sql` / `20260709020800_group_d_fields.sql` added `title`/`type`/`date`/`score`/`total_score`/`feedback`). Both tables' existing RLS policies (`attendance_records_select`/`assessments_select`, `supabase/migrations/20260709020200_rls.sql:144-154`) already gate on exactly the audience this report should have: `is_staff(organization_id) or is_student_self(student_id) or is_parent_of(student_id)`. The route re-implements that same three-way check server-side (it must — the PDF is rendered server-side via `service_role`, so RLS itself never runs), rather than inventing a narrower rule.
-2. **A real, confirmed gap: there is currently no way to populate a graded assessment's score.** Grepped every write site for the `assessments` table (`src/pages/StudentStory.tsx:211`, the only insert in the whole tree): it only ever inserts `type: "assignment"` (homework) rows with no `score`. This matches MASTER_PLAN.md §3's own "also in R2" note — "the assignment marking loop into the gradebook: upload works, marking doesn't" — a separate, unscoped backlog item, not this one. Consequence: the report's "Academic performance" table will legitimately render an empty-state line ("No graded assessments recorded for this period") for every real student today, since no grading UI exists yet to produce the data. This is the correct, closed-by-default behavior (same posture as B-08's ₹0 payouts before a rate is configured) — not a bug in this step, and not something to fake with placeholder data. The attendance half of the report is fully real and populated today, since attendance marking has worked since R1.
-3. **Money is out of scope.** Unlike `invoicePdf.ts`/`payoutStatementPdf.ts`, this composer touches no `*_paise` column and imports nothing from `shared/money.ts`.
+**Blocked on.** Razorpay live KYC for the pilot org.
 
-**Scope:**
-1. **`shared/progressReport.ts`** (new, Zod-free pure logic, same convention as `shared/payoutSettings.ts`/`shared/cancellationPolicy.ts`): `resolveMonthRange(month: string)` parses a `"YYYY-MM"` string into a `{ start, end }` `[inclusive, exclusive)` date pair, returning `null` on anything malformed (wrong shape, month outside 1-12) so the route 422s instead of guessing; `computeAttendanceSummary(records)` aggregates a period's `attendance_records` rows into `{ present, absent, late, excused, countedTotal, attendanceRatePct }` — late counts as attended, excused is dropped from the denominator entirely (not held against the student), and the rate defaults to 100% when there is no data yet, the same convention `src/lib/studentStory.ts`'s `computeHeaderStats` already uses for the identical reason.
-2. **`server/utils/progressReportPdf.ts`** (new): `renderProgressReportPdf()`, a pure `jsPDF`/`jspdf-autotable` composer mirroring `invoicePdf.ts`'s structure (org header, student block, one page, black-on-white) — an attendance-summary table that always renders, and an assessments table that renders the "No graded assessments…" empty-state line when the period has none (expected today, per the scoping note above).
-3. **New route** `GET /api/v1/students/:studentId/progress-report?month=YYYY-MM` in `server/routes/students.ts`. A new `assertCanReadProgressReport()` helper (mirrors `assertCanManagePaymentPermissions()`'s shape, `students.ts:399-418`, but a wider audience matching `is_staff`'s own role set rather than owner/admin-only): any org-staff role (`owner`/`admin`/`tutor`/`frontdesk`/`accountant`), the student's linked parent (`parent_links` lookup, same pattern as `billing.ts:729-734`), or the student themselves (`students.student_user_id === req.user!.id`) — 404 if the student isn't in the caller's org, 403 otherwise. `month` is required and validated via `resolveMonthRange`; missing or malformed → 422. Reads `attendance_records`/`assessments` directly via `pool.query` (not `supabaseAdmin`, since date-range + `coalesce(date, created_at::date)` filtering on `assessments` is awkward through the query builder — same reasoning `payouts.ts`'s `/earnings` route already uses raw SQL for period filtering), graded assessments only (`type is distinct from 'assignment'`, the same distinction `src/lib/studentStory.ts`'s `buildTimeline` already draws for the homework/graded split). Streams the PDF (`Content-Disposition: attachment`, no audit-log write — matching `invoicePdf.ts`'s own PDF-download route, which doesn't write one either, since this is a read, not a mutation).
-4. **Client:** `downloadProgressReport(studentId, month)` in `src/lib/api.ts`, same Blob/anchor-click pattern as `downloadInvoicePdf` including its `X-Organization-Id` header (a raw `fetch`, not the `api()` helper). New `src/components/ProgressReportDownload.tsx` (a month `<input type="month">` + download button, one component reused from both callers rather than duplicating the month-state logic). Wired into `src/pages/StudentStory.tsx` (visible to both staff and a student's own self-view at `/app/my-story` — deliberately **not** gated on the page's existing `isStaff` flag, unlike the note/homework/payment composer just below it, since a student may download their own report) and `src/pages/ParentPortal.tsx`'s existing "Settings" tab, alongside `StudentPaymentPermissions.tsx`.
+**Files and systems likely affected.** None, if it works. `server/utils/razorpay.ts`, `server/routes/webhooks.ts` and `server/routes/billing.ts`'s link-creation and reconciliation paths are the code under test.
 
-**Definition of done:**
-- [x] Unit tests (`tests/unit/progressReport.test.ts`): `resolveMonthRange` (valid month, December→January rollover, leap-year February, malformed/out-of-range input all `null`); `computeAttendanceSummary` (mixed statuses, zero-data defaults to 100%, all-excused defaults to 100%, all-unexcused-absence is 0%).
-- [x] Contract tests (`tests/contract/progressReport.test.ts`, using fixtures.ts's `ids.stu1` — already linked to `uids.parent` and `uids.student`): 422 on missing/malformed `month`; 200 + `application/pdf` for every staff role (`owner`/`admin`/`tutor`/`frontdesk`/`accountant`); 200 for the linked parent; 200 for the student themselves; 403 for a parent not linked to the requested student; 404 for a different org's staff. Attendance/assessment fixture rows include one row outside the requested month, to prove period-filtering actually excludes it, and one homework (`type: 'assignment'`) row, to prove it's excluded from the graded table.
-- [x] Live browser walkthrough against production, all three access paths, using real existing demo data (no throwaway rows needed or created — this is a read-only report over data that was already there): logged in as `demo.tutor@classstackr.dev` (owner), opened Aarav Mehta's Student Story, confirmed the new "Progress report" card renders defaulting to the current month, downloaded — `200`, `content-type: application/pdf`, `content-disposition: attachment; filename="progress-report-aarav-mehta-2026-09.pdf"`, verified via a direct in-page `fetch` that the response's first bytes are the real `%PDF-1.3` magic number (not an error page mislabeled with a PDF content-type). Logged in as `demo.parent@classstackr.dev`, confirmed the same card renders in ParentPortal's Settings tab above `StudentPaymentPermissions`, downloaded — `200`. Logged in as `demo.student@classstackr.dev`, navigated to `/app/my-story` (the self-view route `StudentStory.tsx` already shares with the staff view), confirmed the composer buttons are correctly hidden but the progress-report card is not, downloaded — `200`. No new console errors introduced (the only console errors present — an invalid Sentry DSN and one unrelated 400 — are pre-existing and unrelated, confirmed by checking the network log). No throwaway state to clean up.
-- [x] All seven gates green: tsc clean, **236 unit** (+8), **100 RLS** (unchanged — no schema/policy change), **309 contract** (+11), build `dist/server.js` 218.7 KB (+8.9 KB, the new route + PDF composer), bundle 204.9 KB/260 KB (+0.2 KB, the new component), API bundle **17/17 mounts** (unchanged — no new route module, `progress-report` is mounted under the existing `/api/v1/students`), `api/index.js` regenerated (217.8 KB).
-- [x] `EXECUTION_PLAN.md`'s tracker row and backlog table updated (this section); HANDOFF.md §2's gate line and "last verified" note updated in the same pass.
+**Implementation scope.** Connect a real org's keys through Settings; register `payment_link.paid` and `payment.captured`; raise a real invoice through attendance; collect one real rupee; confirm the webhook reconciles it; rehearse a refund; run the missed-webhook reconciliation poll deliberately by suppressing a webhook; have a CA review the GST invoice format.
 
-**Shipped 2026-09-12:** `shared/progressReport.ts` (`resolveMonthRange`, `computeAttendanceSummary`), `server/utils/progressReportPdf.ts` (`renderProgressReportPdf`, mirrors `invoicePdf.ts`), and a new `GET /:studentId/progress-report` route in `server/routes/students.ts` (no new route module — mounted under the existing `/api/v1/students`, so the API-bundle mount count is unchanged at 17). Access mirrors `attendance_records`/`assessments`' own RLS policies exactly (staff/self/parent), re-implemented server-side since RLS itself is bypassed by the `service_role` PDF-rendering path. Client: `downloadProgressReport()` in `src/lib/api.ts`, a new `src/components/ProgressReportDownload.tsx` wired into both `StudentStory.tsx` (staff and self-view) and `ParentPortal.tsx`'s Settings tab. Confirmed live against production on all three access paths (staff/parent/self) using the real demo tutor/parent/student accounts and real existing data — no throwaway rows needed, since this is read-only. The one real finding from scoping this (not a blocker, a documented consequence): there is currently no UI anywhere in the app that can write a graded assessment's score — only ungraded homework assignments — so the report's academic-performance section will correctly show its empty state for every real student until the separate, already-backlogged "assignment marking loop into the gradebook" item ships. All seven gates green: 236 unit (+8), 100 RLS (unchanged), 309 contract (+11), build `dist/server.js` 218.7 KB, bundle 204.9 KB/260 KB, API bundle 17/17 mounts, `api/index.js` regenerated (217.8 KB).
+**Tests required.** No new automated tests are expected. If a defect is found, it lands with a contract test in the same change.
 
----
+**Browser verification required.** This step is entirely browser and real-money verification. Record every step with amounts and IDs in HANDOFF §9.
 
-## Step 23 — B-13: substitute and leave management
+**Definition of done.**
+- [ ] One real rupee collected, reconciled, and visible in Money.
+- [ ] One real refund issued and reflected.
+- [ ] The missed-webhook reconciliation poll recovered a deliberately dropped webhook.
+- [ ] A CA has signed off on the GST invoice format.
+- [ ] The parent self-serve top-up path (`/wallets/topup-link`), currently contract-tested only because no live gateway existed, is walked for real.
 
-**Goal:** let a tutor log a leave date range, owner/admin approve or reject it, and staff then find the sessions that leave affects and reassign one substitute tutor to them.
-
-**Why:** MASTER_PLAN.md §4's ranked backlog, highest-scoring unscoped item once B-12 (Step 22) closed (score 0.53, ed 4, unblocked since Step 15). Flagged as needing scoping: what "substitute" actually touches in the schema, and whether B-07's tutor-scoped (not org-scoped) conflict check needs to account for a substitute's own calendar too.
-
-**Schema reality check, done while scoping this:**
-1. **Substitution needs no new column on `class_sessions`.** `tutor_id` already means "who is actually delivering this session" — reassigning it directly, under the exact same advisory-lock + range-overlap conflict check B-07 (Step 20) already scopes by `tutor_id` alone across a multi-org tutor's calendar, is both correct and reuses proven code. A substitute who is already booked elsewhere at that time is rejected the same way any double-booking is, including cross-org. `tutor_earnings_ledger` (B-08) also keys off the session's `tutor_id` at the moment attendance is marked, so a reassigned session automatically credits the substitute's earnings, not the original tutor's, with no extra plumbing.
-2. **One new table, `tutor_leave_requests`**, not a repurposing of `tutor_availability` (which models a recurring weekly pattern, not a dated absence — the two are orthogonal, confirmed by reading `20260709020100_schema.sql`'s definition before assuming otherwise). Select-only RLS (`is_staff(organization_id)`, which already includes the tutor role — a shared team leave calendar, same visibility posture as `tutor_availability`) — every write (request/approve/reject/cancel) goes through `server/routes/leave.ts` on `service_role`, same posture as `tutor_earnings_ledger`/`student_payment_permissions`, so the `decided_by`/`decided_at` bookkeeping and the audit-log write can never be bypassed by a direct client write.
-3. **`tutorId` is deliberately not restricted to `organizationRole === 'tutor'`.** An independent tutor's own org-of-one membership is `'owner'` (D-01), and they still deliver sessions as `class_sessions.tutor_id` themselves — restricting leave requests to the `tutor` role would have broken exactly the account type most of this repo's own live-verification walkthroughs use.
-
-**Scope:**
-1. **Migration** `20260912140000_tutor_leave_management.sql`: `tutor_leave_requests` (`organization_id`, `tutor_id`, `start_date`, `end_date`, `reason`, `status` pending/approved/rejected/cancelled, `requested_by`, `decided_by`, `decided_at`, `check (end_date >= start_date)`), one composite index backing both the leave-list and affected-sessions queries.
-2. **`shared/leave.ts`** (pure, unit-tested): `isValidLeaveRange` (end >= start, defense in depth alongside the DB check constraint) and `leaveDateRangeToTimestampBounds` ([inclusive, exclusive) UTC bounds spanning both full calendar days — what the affected-sessions query filters `class_sessions` against).
-3. **`server/routes/scheduling.ts`**: new exported `reassignSessionTutorTx(client, orgId, sessionId, newTutorId)` — the same advisory-lock-then-range-overlap-check shape as `createSessionTx`/the reschedule route, `409 not_reassignable` on anything but a `scheduled` session. New standalone route `PATCH /sessions/:id/tutor` (`CAN_SCHEDULE`) exposes it directly for a one-off substitute swap with no leave request filed at all — deliberately not gated on an approved leave existing.
-4. **New route module `server/routes/leave.ts`** (mounted `/api/v1/leave`, the 18th route group): `POST /` (create, self or owner/admin-on-behalf), `GET /` (self-only for a `tutor`-role caller, org-wide for every other `CAN_SCHEDULE` role, optional `?status=` filter), `PATCH /:id` (`action: approve|reject|cancel` — approve/reject owner/admin-only on a `pending` row, cancel by the requesting tutor or owner/admin), `GET /:id/affected-sessions` (scheduled sessions in the leave's date range), `POST /:id/reassign` (bulk-assigns one substitute to the leave's affected sessions, or a caller-chosen subset — requires `status === 'approved'`, rejects `substituteTutorId === tutor_id`). Each session in a bulk reassign runs in its **own** transaction via `reassignSessionTutorTx`, so one session's conflict fails only that row rather than rolling back the whole batch — same "return conflicts to the caller, never swallow them" posture `materializeTemplate` already uses. One `session.reassign_tutor` audit row per successfully reassigned session plus a summary `leave.substitute_assigned` row on the leave request.
-5. **Client:** `requestLeave`/`listLeaveRequests`/`decideLeaveRequest`/`getAffectedSessions`/`assignSubstitute` in `src/lib/api.ts`. New `src/components/LeaveManagement.tsx` — one component, sections conditionally rendered by role rather than split into separate tabs (an approving owner/admin also wants their own request/cancel section): "Request leave" + "My leave requests" (everyone in `CAN_SCHEDULE`), "Pending approvals" (owner/admin), "Approved leave — assign a substitute" (owner/admin/frontdesk, with a per-tutor-org select populated the same two-query-plus-merge way `TeamSettings.tsx`/`PayoutRuns.tsx` already do, since there's no FK from `organization_members` to `profiles` for PostgREST to embed on). New "Leave" tab in `Settings.tsx`, visible to owner/admin/tutor/frontdesk.
-
-**Definition of done:**
-- [x] Unit tests (`tests/unit/leave.test.ts`): `isValidLeaveRange` (same-day, multi-day, end-before-start, a month/year rollover, malformed input); `leaveDateRangeToTimestampBounds` (single-day and multi-day bound shape, a month-boundary rollover).
-- [x] Contract tests (`tests/contract/leave.test.ts`, 22 cases): create (self-default, 403 logging leave on someone else's behalf as a non-admin, 422 on an invalid range, 404 for a non-member `tutorId`), list (self-only for a tutor, org-wide for owner, status filter), decide (403 a tutor approving their own, 200 approve with `decided_by`/`decided_at` stamped, 409 re-deciding, self-cancel, 403 a different tutor cancelling someone else's, 404 across orgs), affected-sessions (finds the fixture session, empty range), reassign (409 before approval, 422 same-tutor, a real reassignment with an audit-row assertion, and — the one that actually exercises the "own transaction per session" design — a batch with one conflicting session and one free one, proving the conflict doesn't roll back the successful reassignment). Plus 4 new cases in `tests/contract/scheduling.test.ts` for the standalone `PATCH /sessions/:id/tutor` route (404, 403, success, conflict, reassigning a completed session).
-- [x] RLS tests (`tests/integration/rbac.test.ts`, 4 new cases): every `is_staff` role (owner/admin/tutor/frontdesk/accountant) can read `tutor_leave_requests`; a parent/student cannot; an outsider org cannot; no role can write it directly.
-- [x] Live browser walkthrough against production (`npm run dev:preview`, demo owner `demo.tutor@classstackr.dev`): requested and approved three real leave requests (one per date tested), confirmed each transitions Pending → Approved correctly in both "My leave requests" and "Pending approvals," confirmed a `status=pending` filter and re-request-after-reject-style transitions via the DB directly. The affected-sessions query was proven against three different real production `class_sessions` rows discovered along the way: correctly returned nothing for a `cancelled` session (2026-09-09) that a naive "any session that day" query would have wrongly included, then correctly found a real `scheduled` session (2026-09-04, 13:00–14:00 UTC, rendered as "4 Sept, 6:30 pm – 7:30 pm" IST) once the leave window actually covered a `scheduled` row. The substitute dropdown correctly rendered empty ("Choose a substitute…" with no options) since the demo org has no second tutor-role member today — a genuine, correct closed-by-default state, not a bug, same posture as B-12's empty graded-assessments table. **Not live-clicked: the actual "Assign to all" mutation and its conflict-handling path**, since exercising it meaningfully needs a second real tutor account in the org and this session's account-provisioning tools (Supabase Admin API, and a direct `auth.users` insert) were both refused by this session's own permission classifier on every phrasing tried — unlike Step 20/21's sessions, which hit the same wall only on the DB-push step and found a workaround. The reassignment mutation itself, its conflict rejection, its per-session-transaction isolation, and its audit-row write are all covered by the contract-test suite above against the same `reassignSessionTutorTx` code path production runs — not a substitute for a live click, but the closest available proof given the constraint. All three throwaway leave-request rows were deleted afterward via a direct, narrowly-scoped `psql` delete by id; no `class_sessions` row was touched (nothing was ever reassigned), so no session-side cleanup was needed. The `leave.request`/`leave.approve` audit rows from the walkthrough were left in place — append-only, same convention as every prior step's audit residue.
-- [x] All seven gates green: tsc clean, **244 unit** (+8), **104 RLS** (+4), **336 contract** (+27), build `dist/server.js` 230.7 KB (+12 KB, the new route module + scheduling additions), bundle 205.0 KB/260 KB (+0.1 KB), API bundle **18/18 mounts** (`/api/v1/leave` added), `api/index.js` regenerated (229.9 KB).
-- [x] `EXECUTION_PLAN.md`'s tracker row and backlog table updated (this section); HANDOFF.md §2's gate line and "last verified" note updated in the same pass; MASTER_PLAN.md §3/§4's B-13 rows struck through.
-
-**Shipped 2026-09-12:** migration `20260912140000_tutor_leave_management.sql` (`tutor_leave_requests`, additive-only, rehearsed on `classstackr-staging` then applied to production, both re-checked directly afterward — zero data loss, table starts empty on both). `shared/leave.ts` (`isValidLeaveRange`, `leaveDateRangeToTimestampBounds`). `server/routes/scheduling.ts` gained an exported `reassignSessionTutorTx` and a standalone `PATCH /sessions/:id/tutor` route. New route module `server/routes/leave.ts` (`/api/v1/leave`, the 18th mount): create/list/decide/affected-sessions/bulk-reassign, each reassignment its own transaction so one conflict never rolls back a successful sibling. Client: five new `src/lib/api.ts` functions, new `src/components/LeaveManagement.tsx`, new "Leave" tab in `Settings.tsx` (owner/admin/tutor/frontdesk). RLS: `tutor_leave_requests` is select-only via `is_staff()`, every write goes through the route on `service_role`. Live-verified against production: request/approve/list/status-filter all confirmed working with real data across three separate leave-date scenarios, and the affected-sessions query proven correct against real `cancelled` and `scheduled` production sessions (correctly excluding the former, correctly finding the latter). The actual substitute-reassignment click was not exercised live — it needs a second real tutor account in the demo org, and this session's account-provisioning path was blocked by the permission classifier on every attempt — so that specific mutation rests on the contract-test suite's coverage (which does exercise it, including its conflict-handling and audit-write behavior) rather than a live click. All seven gates green: 244 unit (+8), 104 RLS (+4), 336 contract (+27), build `dist/server.js` 230.7 KB, bundle 205.0 KB/260 KB, API bundle 18/18 mounts, `api/index.js` regenerated (229.9 KB).
+**Expected outcome.** R3's launch gate is met. The wedge is proven with money, not with tests.
 
 ---
 
-## R2 backlog — not yet scoped
+## Step 30: C-05, parent-visible tutor-student threads
 
-**R1 and R2 are both fully closed** (all gate criteria met, Steps 1-23; B-13 was R2's last scored backlog item). What's below is the "also in R2" IA-tab work that was flagged during the spec merge but never scored — genuinely unscoped, not just unscheduled.
+**Objective.** Implement D-06: every message between a tutor and a student is visible to that student's parent, unconditionally.
 
-| ID | Item | Notes |
-|---|---|---|
-| — | Assignment-marking loop into the gradebook | "Upload works, marking doesn't, on both the staff and student side" per MASTER_PLAN.md §3's R2 IA-tabs note. Not yet investigated against the real schema — confirm what "upload" currently touches before assuming the fix is symmetrical. |
-| — | Guardian records: student-owned → parent-owned | A data-model/ownership change (`students` table currently owns parent_name/parent_phone/parent_email as free-text fields — check whether this means moving them onto `parent_links`/`parent_profiles` instead, or something narrower). Not yet scoped. |
-| — | Cross-org family view for parents | Depends on B-07 (done) — a parent with children at two different centres should see one home screen instead of switching orgs manually. Not yet scoped; likely the biggest lift of the three since it may need a genuinely cross-org query path, unlike everything built so far which is single-active-org-scoped by design. |
+**Why this step exists.** D-06 was decided on 2026-09-12 and was not built. `conversations.participant_ids` holds exactly two ids for a DM and `conversations_select` is participant-scoped, so a parent is structurally unable to see a tutor-student thread. `useMessageableContacts()` already lets staff start a DM with any student in the org, in production, today. This is a present-tense adult-to-minor messaging surface with no guardian visibility, not a future marketplace concern. It is also the single item most likely to be raised by an institutional buyer or a regulator.
 
-**For pure-engineering work beyond R2**, MASTER_PLAN.md §4's ranked backlog now has B-17 (WhatsApp comms router, 0.70, but needs external provider onboarding first — not a pure-engineering pick), B-19 (Referral loop, 0.60, R4, no known blocker), and B-18 (Leading indicators, 0.53, R4) ahead of R3's B-14/B-15/B-16 by score. None of these are scoped as executable steps yet.
+**Files and systems likely affected.** `supabase/migrations/<ts>_guardian_thread_visibility.sql` (new), `src/hooks/useInbox.ts` (`useConversationsList`'s participant filter, `findOrCreateDirectConversation`), `src/pages/Inbox.tsx` (the disclosure), `tests/integration/rbac.test.ts`.
 
----
+**Dependencies.** None technically. Sequenced after R3 only because R3 buys a customer and this buys the right to keep one.
 
-## R3 — The marketplace (30 ed, not started)
+**Implementation scope.**
+1. **Choose the mechanism deliberately.** Two viable shapes: add the guardian to `participant_ids` (simple, but makes the parent look like a sender-capable participant, and breaks the two-element DM assumption in `findOrCreateDirectConversation`'s `contains` lookup), or widen `conversations_select` and `messages_select` with an `is_parent_of(anchor student)` clause (cleaner separation of read from write, requires the thread to be reliably anchored to a student). **Prefer the policy widening**, and make the student anchor mandatory for any DM where one participant is a student.
+2. Enforce in both places, per MASTER_PLAN §10's rule that RLS and the route layer must agree.
+3. Disclose it in the UI to both sides. A safety property nobody can see is not a safety property.
+4. Decide whether a parent can reply in the thread or only read it, and write the decision down.
 
-**Not yet scoped as executable steps.** MASTER_PLAN.md §3's R3 section is the source — six stages, each depending on the one before (Supply → Discovery → Conversion → Trust → Money → Compliance). All of R3's founder-decision blockers are now resolved (D-01/D-02/D-03/D-06, MASTER_PLAN.md §5), so nothing outside engineering blocks starting it, but it is a much bigger lift than anything scoped above — budget real planning time before writing Step-level detail, the same way Steps 15-21 each opened with a "schema reality check... confirmed by reading the code," not just this plan's one-line description.
+**Tests required.**
+- RLS (`tests/integration/rbac.test.ts`): a parent can select a tutor-student conversation and its messages for their own child; a parent cannot select one for a child who is not theirs; an unrelated org member still cannot.
+- Contract: a DM created with a student participant and no student anchor is rejected.
+- Unit: the anchor-resolution helper, if one is extracted.
 
-| Stage | Contents | ed | Status |
-|---|---|---|---|
-| 1. Supply | Public tutor profile, verification tiers (email/phone → govt ID → quals → background check), org storefront | 8 (B-14) | Not started. `tutor_profiles.price_model`/`price_range_min`/`price_range_max` (added `20260709020800_group_d_fields.sql`, confirmed live-but-unused by B-08's scoping this session) are presumably the seed of the public-profile fields — check what else `TutorProfileSettings.tsx` already collects before assuming new columns are needed. |
-| 2. Discovery | Search/filter (subject, board, grade, mode, price, rating, distance, availability), fit-ranked matching | part of B-15 | Not started. Get the board/grade taxonomy right once — flagged in MASTER_PLAN as risky to retrofit. |
-| 3. Conversion | Structured enquiry with SLA clock, in-app trial booking, enrolment handoff funding a wallet + raising an invoice | 12 (B-15 total) | Not started. The enrolment handoff should reuse the existing enrollment/session-creation helpers noted in EXECUTION_PLAN_R1_ARCHIVE.md's booking-request work, not reinvent them. |
-| 4. Trust | Reviews gated on verified attendance, tutor-reply-once, moderation queue; dispute resolution with evidence + wallet remedy | part of B-16 | Not started. Dispute resolution depends on B-01's reversal engine (done) — re-read `server/routes/billing.ts`'s `/attendance/reverse` before scoping the remedy path. |
-| 5. Money | Escrow held until attendance-marked, then released | 10 (B-16, with Trust) | **Needs re-scoping before starting** — D-03 (§5) ruled out the take-rate/commission model this stage was originally designed around, in favour of tiered subscriptions for both centres and solo tutors. Escrow itself (hold until attendance) is unaffected; the pricing/fee-extraction mechanism is not what MASTER_PLAN's stage description still literally says. |
-| 6. Compliance | Minor-safety policy (adult-minor 1:1 chat, session recording, parental thread visibility — D-06 decided, always parent-visible), DPDP consent extended to marketplace | — | Not started. Builds on R1's consent centre (done); the DPDP parental-consent *document* itself is still only a draft version string (`CONSENT_VERSION` = `"dpdp-2026-09.draft"`, MASTER_PLAN §8) — legal work, not engineering, and should land before this stage matters. |
+**Browser verification required.** Three accounts: `demo.tutor`, `demo.student`, `demo.parent` (all seeded, credentials in HANDOFF §9). Tutor DMs the student; confirm the thread appears in the parent's Inbox with the disclosure visible, and that a second unrelated parent account cannot see it.
 
-**R3 gate (unchanged, MASTER_PLAN §3):** a parent who has never heard of a specific tutor finds one, books a trial, has a good first hour, enrols, funds a wallet, and the platform takes its cut, all without leaving the product.
+**Definition of done.**
+- [ ] A tutor cannot message a student without that student's guardian being able to read it.
+- [ ] Enforced at the RLS layer, with tests that fail if the policy is reverted.
+- [ ] Both sides see a disclosure.
+- [ ] The reply-or-read-only decision is recorded in this step and in MASTER_PLAN §13.
+- [ ] All seven gates green.
 
----
-
-## R4 and the GTM checklist — further out, not scoped here
-
-**R4 (12 ed):** B-17 WhatsApp comms router (blocked on provider onboarding, multi-week lead time — start DLT registration/template approval early if pursuing this), B-18 leading-indicator dashboard (first real consumer of `org_stats_daily`), B-19 referral loop. See MASTER_PLAN.md §3 R4 for full detail. None are scoped as steps; none block R3.
-
-**The go-to-market checklist (MASTER_PLAN.md §8) is a parallel, non-engineering track** — it does not block any step above and several of its items have multi-week lead times, so it's worth starting regardless of which engineering item is picked up next: external pentest, Razorpay live KYC, WhatsApp Business API template approval, SMS DLT registration, Google OAuth consent-screen verification, the DPDP parental-consent document (still a draft version string — see the R3 Stage 6 row above), and enabling Supabase's leaked-password protection (a one-switch item that rides the Auth section of §8).
+**Expected outcome.** A decided safety policy becomes a real one, and R6's compliance stage inherits it instead of starting from zero.
 
 ---
 
-## For the next session — start here
+## Step 31: C-06, Playwright on the golden journeys
 
-**This section must be updated by every session before it ends** — flip the "current pick" line below to whatever was actually worked on, and update the one-paragraph status summary. This is the same discipline this file already applies to its per-step tracker rows and Shipped notes; this section is just the top-level version of it, so a fresh session never has to re-derive "what's next" from scratch.
+**Objective.** Automate the only test layer this codebase does not have, covering the only bug class it keeps shipping.
 
-**Status as of 2026-09-12:** R1 and R2 are both complete and merged to `main`. The most recent work is **B-13 (Step 23, substitute and leave management)** — done, all seven gates green: 244 unit / 104 RLS / 336 contract / build / bundle 205.0 KB / API bundle 18/18, live-verified against production for request/approve/list/status-filter and the affected-sessions query (proven correct against real `cancelled` and `scheduled` production sessions). **One thing not live-verified: the actual substitute-reassignment click** — it needs a second real tutor account in the demo org, and this session's account-provisioning tools (Supabase Admin API, direct `auth.users` insert) were both refused by the permission classifier on every phrasing tried; the mutation itself is covered by the contract-test suite instead (see Step 23's own DoD note for detail). A fresh session with a live tutor-invite-redeem walkthrough available (the app's own Team-tab invite link, redeemed as a real signup rather than a backend script) could close that gap cleanly. R2 is now fully done except three genuinely unscored "also in R2" IA items (gradebook marking, guardian records, cross-org family view — see "R2 backlog" above); nothing is in progress or broken. This step's changes are committed and pushed to `main`.
+**Why this step exists.** Four real bugs have been caught solely by a human clicking: the role-versus-organizationRole conflation (four separate sites), `Documents.tsx`'s wrong column name 400ing the list, an invisible Inbox hover state, and a disabled booking button. Every one was invisible to 249 unit, 106 RLS and 353 contract tests. Hand-walking found them, and hand-walking does not survive a session ending. Staging exists now, which is what makes this affordable.
 
-**Prompt for a new session — paste this in:**
+**Files and systems likely affected.** `tests/e2e/` (new), `playwright.config.ts` (new), `.github/workflows/ci.yml` (an eighth gate, against staging), `scripts/seed.ts` (deterministic e2e fixtures, including the multi-role account that `RoleSelection.tsx` has never been rendered with).
 
-> Read HANDOFF.md's intro and its most recent dated entry (top of the file, right after the "What this is" line) for the current verified state, then read EXECUTION_PLAN.md's "R2 backlog" section for what's next. R2's three scored backlog items (B-08, B-12, B-13) are all done; what remains there is unscored IA-tab work (gradebook marking, guardian records, cross-org family view) or, for pure engineering beyond R2, MASTER_PLAN.md §4's ranked list (B-19 Referral loop is the highest-scoring item with no external blocker; B-17 WhatsApp needs provider onboarding first). Check "For the next session" at the very end of EXECUTION_PLAN.md first in case a newer session or founder decision has changed the pick. Scope whatever's chosen as a new numbered step following this file's own convention (Goal/Why/Scope/DoD, exact file/line references, confirmed against the real schema by reading the code — not just a one-line backlog description), then execute it end to end: migration if needed (rehearse on `classstackr-staging` first, get explicit approval before any staging/production push), routes, client surface, RLS + contract tests, all seven gates from HANDOFF.md §2, then a live browser walkthrough against production per MASTER_PLAN.md §7's rule that money/interactive flows need one. Confirm before committing or pushing to `main` (auto-deploys via Vercel). Update this file's tracker, HANDOFF.md's gate line, and this "For the next session" section in the same pass before finishing.
+**Dependencies.** Staging (done). Step 25 and Step 30, so the journeys assert corrected behaviour rather than encoding the defects.
+
+**Implementation scope.** Five journeys, in this order:
+1. Signup to first class: onboarding's three beats, solo and centre paths, through to a real class and student.
+2. Book to attendance to invoice: create a recurring class, materialize, mark attendance, confirm the invoice accrues and Outstanding moves.
+3. Reverse: un-mark that attendance, confirm the wallet, invoice and ledger all agree afterwards, and that a second reverse 409s.
+4. Parent journey: invite redeem, consent, portal, see the invoice.
+5. Substitute reassignment, which closes Step 23's carried gap and needs a second tutor account created through the app's own Team invite link.
+
+Journeys touching a live Razorpay or phone OTP stay out of CI and are exercised by Steps 28 and 29 instead.
+
+**Tests required.** This step is the tests. Also automate axe here: it ran once on 2026-07-25, fixed five WCAG AA violations, and has not run since.
+
+**Browser verification required.** By construction.
+
+**Definition of done.**
+- [ ] Five journeys green in CI against staging, on every PR.
+- [ ] Axe automated on the main surfaces.
+- [ ] Deliberately break one assertion and confirm CI fails, so the gate is known to be real. (HANDOFF §5.10's discipline, applied to a new layer.)
+- [ ] Step 23's substitute-reassignment gap closed.
+- [ ] All eight gates green; README and HANDOFF updated to say eight.
+
+**Expected outcome.** The bug class that has cost the most time stops recurring silently.
+
+---
+
+## Step 32: C-07, activation analytics
+
+**Objective.** Be able to answer "is anyone actually using this, and are they getting to money" without asking them.
+
+**Why this step exists.** There is no product analytics of any kind. `@vercel/analytics` gives anonymous pageviews; there is no event instrumentation, no signup attribution, no funnel, no cohort. The next twelve months are a search for product-market fit and the search is currently unobservable.
+
+**Blocked on.** **D-11** (build or buy). DPDP posture with minors' data is the deciding factor, not cost.
+
+**Files and systems likely affected.** Depends entirely on D-11. If self-hosted on the existing Postgres: a `product_events` table with an org-scoped, server-written append-only shape, plus an aggregation job riding Step 26's scheduler. If SaaS: a client SDK and a server-side event helper, plus a DPDP review of what leaves the country.
+
+**Implementation scope.** Instrument in the order MASTER_PLAN §11 gives: the signup-to-activation funnel with per-beat drop-off; the weekly per-org loop (sessions, attendance, invoices, messages delivered, rupees collected); retention cohorts by signup week measured on the loop rather than on login; parent-side engagement; feature usage last. **Activation is defined as: 10 or more sessions with attendance marked, and at least one rupee collected through ClassStackr, within 14 days of signup.** Instrument to that definition rather than inventing a new one.
+
+**Tests required.** Unit on the funnel and cohort computation. Contract on the event-write endpoint's auth and org scoping, if one exists. RLS if the events table is client-readable at all, which it should not be.
+
+**Browser verification required.** Walk a full signup to activation on staging and confirm every event lands with the right org attribution.
+
+**Definition of done.**
+- [ ] The funnel reports a real number for at least one real org.
+- [ ] Rupees collected per org per month is visible without a manual query.
+- [ ] No minor's personal data leaves the DPDP boundary the D-11 decision set.
+- [ ] All gates green.
+
+**Expected outcome.** Pilot results become evidence rather than anecdote.
+
+---
+
+## Step 33: C-08, operational floor
+
+**Objective.** Be able to survive and recover from the failures a paying customer will eventually cause.
+
+**Why this step exists.** Sentry is wired on both sides and both DSNs are unset. There is no uptime probe and no 5xx alerting. `scripts/backup.sh` exists, was rehearsed once, and nothing runs it; there is no offsite sync, no storage-bucket backup, and no rehearsed procedure for rolling back a bad migration, which matters because R3 through R5 all ship migrations.
+
+**Files and systems likely affected.** Vercel and Supabase env (`SENTRY_DSN`, `VITE_SENTRY_DSN`), `scripts/backup.sh`, a scheduled backup runner, HANDOFF §4's runbook.
+
+**Dependencies.** Step 26 if the backup runs on the same scheduler.
+
+**Implementation scope.** Sentry live both sides with release tagging. An uptime probe on `/api/health` plus 5xx alerting, noting HANDOFF §8's trap that a 200 from `/api/health` proves nothing about the database, so probe something that touches Postgres. Automated offsite backups including the Storage bucket. **Then actually restore one**, and actually roll back a deliberately bad migration on staging, and write both procedures down.
+
+**Tests required.** None automated. The rehearsals are the evidence.
+
+**Browser verification required.** Not applicable.
+
+**Definition of done.**
+- [ ] Sentry receiving real errors from both sides.
+- [ ] An alert fired at a human during a deliberate 5xx.
+- [ ] A restore from backup performed, with the timestamp and duration recorded.
+- [ ] A bad-migration rollback rehearsed on staging, with the procedure written into HANDOFF §4.
+
+**Expected outcome.** The first production incident is survivable.
+
+---
+
+## Step 34: C-09, onboarding friction pass
+
+**Objective.** Shorten the distance between signup and the first collected rupee.
+
+**Why this step exists.** Two concrete blockers. **First:** `Login.tsx` defaults to the phone-OTP tab (`useState<'email' | 'phone'>('phone')`) and no SMS provider is configured, so a parent following an invite link lands on a login screen whose default method cannot work. **Second:** bring-your-own-Razorpay means a customer cannot collect anything until they have completed Razorpay KYC and pasted a key id, a key secret and a webhook secret into a Settings field. That is the single largest gap between "signed up" and "activated", and it is currently presented as a form field rather than a guided step.
+
+**Dependencies.** Step 27 (if SMS becomes available through the same provider, the OTP default becomes viable rather than needing to be hidden) and Step 32 (so the improvement is measurable rather than asserted).
+
+**Implementation scope.** Make the login default match what actually works. Turn Razorpay connection into a guided onboarding beat with its own progress state and a clear "you cannot collect money until this is done" signal on Today. Review the three-beat onboarding against the real activation funnel once Step 32 reports one, and cut whatever the data says is dead weight rather than whatever seems redundant.
+
+**Tests required.** Unit on any new onboarding-state logic (`src/lib/onboarding.ts` is already the tested pure core; extend it there). Contract on gateway-connection state exposure.
+
+**Browser verification required.** A full stranger-signup walkthrough, ideally with an actual stranger, timed from signup to first invoice sent.
+
+**Definition of done.**
+- [ ] The default login method works.
+- [ ] Razorpay connection is a guided step with visible state, not a Settings field.
+- [ ] Median signup-to-activation time measured before and after.
+
+---
+
+## Step 35: TD-3, paise-native migration
+
+**Objective.** Execute D-04: drop `invoices.total_amount` and `invoices.subtotal`, make `wallets.balance_currency` a paise-native integer.
+
+**Why this step exists.** The last open item in the frozen Tech Debt backlog. Conversion is already centralized in `shared/money.ts`'s `rupeesToPaise`/`paiseToRupees`, so this is a migration plus a read-path cleanup, not a refactor. It is sequenced last in R4 because it is a real migration against live financial data and it should happen after Step 33's restore rehearsal, not before.
+
+**Files and systems likely affected.** A new migration, `server/routes/billing.ts`'s read paths, `src/pages/ParentPortal.tsx` (which still reads `total_amount` as a fallback: `i.totalPaise ?? rupeesToPaise(i.totalAmount || 0)`), `src/hooks/useMoney.ts`, `server/utils/invoicePdf.ts`, `server/utils/orgExport.ts`.
+
+**Implementation scope.** First confirm two things against production data before writing a DROP: whether any historical invoice predates the paise columns, and whether anything external (an export a customer has, a CA's reconciliation sheet) reads the rupee mirrors. Then rehearse on staging, then production with go-ahead and a fresh backup.
+
+**Tests required.** Existing money unit and contract suites must stay green unchanged; that is the point of having centralized the conversion. Add a contract case asserting an invoice read returns correct amounts with the legacy columns gone.
+
+**Browser verification required.** Money's Outstanding, an invoice PDF, the parent portal's invoice list, and an org export, all against real data, before and after.
+
+**Definition of done.**
+- [ ] Legacy columns dropped in production, rehearsed on staging first.
+- [ ] No read path references them.
+- [ ] Tech Debt backlog empty; MASTER_PLAN §6.7's row removed.
+
+---
+
+## R5 and beyond, not yet scoped as steps
+
+MASTER_PLAN.md §7's R5 holds C-10 (parent attendance and payment history, which is UI-only since RLS already permits both and the blocking code comment in `ParentPortal.tsx:206` is simply stale), C-11 (the gradebook marking loop, which is what makes the progress-report PDF's academic section non-empty for the first time), C-12 (cross-org family view), B-18 (leading indicators, which needs Step 26's cron to have filled `org_stats_daily`), and C-13 (guardian records moving from student-owned free-text to parent-owned).
+
+**Scope these into steps only when R4's gate is met.** Each should open the way Steps 15 to 24 did, with a schema reality check confirmed by reading the code rather than trusting this file's one-line description. Three of the four times that discipline was applied, the plan's premise turned out to be wrong.
+
+**R6, the marketplace (B-14, B-15, B-16),** stays unscoped behind MASTER_PLAN §7's commercial gate: 10 or more paying orgs, week-4 retention above 80%, ₹10L or more per month collected. Do not write steps for it before the gate opens; D-03 already invalidated its original pricing mechanism once, and scoping it early would only invalidate more.
+
+---
+
+## Completed work
+
+**Steps 1 to 13, R1, money is correct** (complete 2026-09-05). Attendance reversal with wallet credit-back, per-user rate limiting, the wallet-ledger reconciliation job, per-org credit expiry with FIFO lot walking, self-serve parent top-up, bulk CSV/XLSX import with a dedup-resolution wizard, DPDP consent records and per-student erasure, the booking-request approval UI, the parent-facing cancellation disclosure, and a README rewritten for the actual stack. Full per-step detail: [docs/EXECUTION_PLAN_R1_ARCHIVE.md](docs/EXECUTION_PLAN_R1_ARCHIVE.md).
+
+**Steps 14 to 23, R2, one person many orgs** (complete 2026-09-12). Staging on both Supabase and Vercel; profiles re-keyed to `(user_id, organization_id)` so one login can hold several memberships; active-org threading through `AuthContext` and `api.ts`; D-05's per-student parent-controlled payment permissions; the org switcher, which surfaced and fixed a real cross-org tutor double-booking bug; B-08 tutor payouts and the earnings ledger with TDS and statement PDFs; B-12 the monthly progress-report PDF; B-13 substitute and leave management. Full detail in git history at commit `86ca0e4`.
+
+**Step 24, B-19 referral loop: parked, not shipped.** Coded, all code-level gates green, committed as `1eedd13`. Moved onto branch `parked/b-19-referral` at the start of the Step 25 session; `main` was rebuilt at `86ca0e4` plus this session's docs commit so a future push cannot deploy code that expects tables that don't exist. Migration `20260912150000_referral_loop.sql` never applied anywhere, no live walkthrough. Parked by MASTER_PLAN.md §8 because it pays out wallet credit that requires a live Razorpay no org has connected, to users who do not exist yet. Revisit in R5, after Steps 27 to 29 make both true.
