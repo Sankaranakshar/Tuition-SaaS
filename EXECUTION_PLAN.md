@@ -50,7 +50,8 @@
 | 33 | C-08 operational floor | R4 | Not started |
 | 34 | C-09 onboarding friction pass | R4 | Not started |
 | 35 | TD-3 paise-native migration | R4 | Not started |
-| 36+ | R5 (C-10, C-11, C-12, B-18, C-13) | R5 | Not scoped as steps yet |
+| 36 | B-20 payout manual-settlement details | Unscheduled, founder request | Not started |
+| 37+ | R5 (C-10, C-11, C-12, B-18, C-13) | R5 | Not scoped as steps yet |
 
 **Carried gap from Step 23:** the "Assign to all" substitute-reassignment mutation has never been clicked live. It needs a second real tutor account in the demo org, created through the app's own Team-tab invite link rather than a backend script. Fold this into Step 31's Playwright coverage rather than doing it by hand.
 
@@ -391,6 +392,47 @@ Journeys touching a live Razorpay or phone OTP stay out of CI and are exercised 
 - [ ] Legacy columns dropped in production, rehearsed on staging first.
 - [ ] No read path references them.
 - [ ] Tech Debt backlog empty; MASTER_PLAN §6.7's row removed.
+
+---
+
+## Step 36: B-20, payout manual-settlement details
+
+**Objective.** Let an owner/admin/accountant record how and when a tutor payout was actually settled — payment method, a reference number, and an optional note — when marking it paid, instead of a bare status flip with no detail.
+
+**Why this step exists.** This step corrects a wrong premise in the request that prompted it, so the correction is recorded here rather than only in a commit message. The ask was for a manual-override path for when "a Razorpay payout to a tutor fails, or Razorpay isn't connected." **There is no Razorpay payout API integration anywhere in this codebase**, and per HANDOFF.md §7 / MASTER_PLAN.md's standing founder decision, all external integrations — Razorpay payout automation included — stay deferred until every build stage is complete. That is a decided scope boundary, not an oversight, so building an automated payout path (for this to be a fallback from) is out of scope, full stop. `POST /api/v1/payouts/payout-runs/:id/mark-paid` (`server/routes/payouts.ts:230`) is already the *entire* settlement mechanism: every tutor payout, always, moves by bank transfer outside the product and is marked paid by hand — the route's own comment says as much ("no Razorpay payout API — the founder's external-integrations deferral, §7 — money moves by bank transfer outside the product"), matching B-05's manual invoice-payment posture (`POST /api/v1/billing/payments/manual`). The real, narrower gap: mark-paid captures nothing about the transfer beyond a timestamp — no method, no reference number, no note, and not even who clicked it (`run_by` exists on the payout row; nothing analogous exists for the mark-paid action). An owner today cannot answer "how was tutor X paid for August" without leaving the app and checking a bank statement by hand. B-05 already solved this exact problem on the money side (`payments.method`, `payments.note`, `payments.recorded_by`); payouts got a bare status flip instead. This step brings mark-paid to that same standard. **It does not add a `paid_manually` status, a Razorpay-failure branch, or any distinction between "automated" and "manual" payment**, because no automated path exists for manual to be an alternative to — introducing that distinction now would be speculative scope against a path that may never be built (HANDOFF §7's deferral has no end date).
+
+**Files and systems likely affected.**
+- `supabase/migrations/<ts>_payout_manual_settlement.sql` (new): `tutor_payouts` gains `payment_method text` (nullable — existing `paid` rows predate this and their real method is unknown, so null is correct, not a default), `reference_number text` (nullable), `note text` (nullable), `paid_by uuid references auth.users(id) on delete set null`. Additive only, same posture as `20260912130000_tutor_earnings_payouts.sql`.
+- `shared/schemas/payouts.ts`: a `markPayoutPaidRequestSchema` for the route body; `PayoutRun` gains `paymentMethod`, `referenceNumber`, `note`, `paidBy`.
+- `server/routes/payouts.ts:230`: `mark-paid` parses the new body, writes the four new columns, and the `writeAudit` call (currently `{}`) carries `method`/`referenceNumber`.
+- `src/lib/api.ts:697`: `markPayoutPaid(payoutId)` needs a body parameter for the new fields.
+- `src/components/PayoutRuns.tsx`: the "Mark paid" button (currently a bare click, line 210) needs a small form capturing method, reference number, and note before submitting; the payout-history list should display them once paid.
+- `server/utils/payoutStatementPdf.ts`: decide whether the settlement detail belongs on the statement PDF too, or stays app-only.
+- `tests/contract/payouts.test.ts:292-310`: extend the existing mark-paid test; add validation and round-trip cases for the new fields.
+
+**Dependencies.** None. Independent of Steps 25-35; can be picked up in any order.
+
+**Implementation scope.**
+1. Re-grep for every reader of `tutor_payouts.status`/`paid_at` (the statement PDF renderer, `TutorEarnings.tsx`'s own payout list) before writing the migration, to confirm nothing else needs to change beyond an additive read — the same "schema reality check" discipline this file's R5 section calls out, since three of the four times it was skipped the plan's premise turned out wrong, and this step is itself an instance of that.
+2. Decide deliberately whether to reuse `shared/schemas/billing.ts`'s `paymentMethodSchema` (`cash | upi | bank_transfer | cheque | other`) verbatim or define a payout-specific enum, since "cash" is a strange way to describe paying a tutor payroll. Record whichever choice is made and why, rather than silently diverging from the money-side enum.
+3. Write the migration additively; no backfill of the new columns for existing `paid` rows, since their actual settlement method isn't known and shouldn't be guessed.
+4. Extend the Zod schema, the route (body validation, column writes, audit payload), the API client, then the UI, in that order.
+5. Do not add a new status value. `issued` → `paid` remains the only transition; the new columns describe how a payout was paid, not a second path to paid.
+
+**Tests required.**
+- Contract: mark-paid with `method`/`referenceNumber`/`note` round-trips into the response and into `GET .../payout-runs`; an invalid `method` 422s; the existing already-paid 422 branch still fires unchanged; the audit row carries the new fields.
+- RLS: none expected — `tutor_payouts` still has no client write policy, so this is entirely a `service_role` route change. Re-run `npm run test:rls` anyway per HANDOFF §5.10's rule that any migration re-runs it.
+- Unit: none expected; no new pure logic is introduced.
+
+**Browser verification required.** Run a real payout for a throwaway tutor account (mirroring Step 21's own throwaway-account rehearsal), mark it paid through the real `PayoutRuns.tsx` form with a realistic method and reference number, confirm both appear correctly in payout history, and confirm the tutor's own `TutorEarnings.tsx` view reflects the same detail if it surfaces payout status at all. Clean up all throwaway state afterward, same as Step 21.
+
+**Definition of done.**
+- [ ] Migration additive, rehearsed on staging, applied to production with founder go-ahead.
+- [ ] `mark-paid` captures payment method, a reference number, and an optional note, and records who marked it paid.
+- [ ] `PayoutRuns.tsx`'s mark-paid flow collects these before submitting; payout history displays them once paid.
+- [ ] All seven gates green.
+
+**Expected outcome.** An owner can answer "how and when was this payout actually settled" from inside the app alone, without a Razorpay-failure fallback that has nothing to fall back from.
 
 ---
 
