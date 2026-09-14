@@ -22,7 +22,7 @@
 
 One sentence, and it is a promise about money moving, not about feature coverage. Every item in this plan either makes that loop work, makes it trustworthy, or gets a customer onto it.
 
-The previous plan's one-line definition ("a platform connecting parents, students and tutors, where a tutor may be independent or part of an organisation") described an ambition, not a product. It is retired as the headline. The multi-org identity work it justified is built and valuable; the marketplace it pointed at is deferred behind a hard commercial gate (§7, R6).
+The previous plan's one-line definition ("a platform connecting parents, students and tutors, where a tutor may be independent or part of an organisation") described an ambition, not a product. It is retired as the headline. The multi-org identity work it justified is built and valuable; the marketplace it pointed at was deferred behind a hard commercial gate (§7, R6) — **D-09 reversed this 2026-09-14 (§13): the gate is lifted, but §7/§8's marketplace sections below are not yet re-scoped against that decision.**
 
 ## 2. Target customers
 
@@ -215,11 +215,13 @@ The organizing judgement: **the product is feature-rich and customer-poor.** It 
 
 ---
 
-### R6: The marketplace, behind a commercial gate
+### R6: The marketplace — gate lifted 2026-09-14, section below not yet re-scoped
 
-**Thesis.** Turn a management tool into a two-sided platform. This is the right long-term expansion and the wrong immediate focus.
+**⚠ STALE, pending a re-scoping pass.** D-09 (§13) reversed this section's own recommendation: the founder wants tutor discovery/search built now, not gated on the traction thresholds below. The scope, ed estimates, and sequencing that follow were written *for a gated, later R6* — they haven't been re-examined for "build now, in parallel with or ahead of R3-R5." Real open questions before writing real steps: does B-15's enquiry-SLA-clock need B-17's comms router (Step 27) done first? Does verification/minor-safety need to land before or alongside discovery, given adults are being introduced to minors from day one instead of after the product has 10+ proven paying customers? Do not schedule EXECUTION_PLAN.md steps against this section until that pass happens.
 
-**Entry gate, non-negotiable.** Do not start R6 until: **10 or more paying orgs**, **week-4 retention above 80%**, and **₹10L or more per month collected through the platform**. If those are not true, the answer is more of R3 to R5, not a marketplace. Building supply and demand simultaneously with no distribution and no validated demand is how this product dies with an impressive codebase.
+**Thesis (as originally written, now superseded on timing).** Turn a management tool into a two-sided platform. This was framed as the right long-term expansion and the wrong immediate focus — the founder has now chosen to make it an immediate focus.
+
+**Entry gate — no longer binding (D-09, 2026-09-14).** The plan originally said: do not start until **10 or more paying orgs**, **week-4 retention above 80%**, and **₹10L or more per month collected through the platform**, on the reasoning that building supply and demand simultaneously with no distribution and no validated demand is how this product dies with an impressive codebase. That reasoning is preserved here for the record, not because it still governs — the founder decided to accept that risk.
 
 **Scope, when the gate opens.** B-14 public tutor profiles plus verification tiers and an org storefront (8 ed). B-15 discovery, structured enquiry with an SLA clock, in-app trial, and enrolment handing off to the management product (12 ed). B-16 escrow released on marked attendance, reviews gated on verified attendance, moderation and dispute resolution built on R1's reversal engine (10 ed). Minor-safety compliance extends C-05 rather than starting fresh.
 
@@ -332,17 +334,17 @@ Only where they change what gets built.
 
 **Still binding, decided, no action needed.** D-01 (independent tutor is a single-member org), D-02 (the centre keeps the customer relationship, and discovery must be parent-initiated, never pushed), D-04 (drop the legacy rupee columns), D-05 (per-student parent-controlled payment permissions, no age threshold), D-06 (tutor-student messages always parent-visible), D-07 (credit expiry per-org, from each top-up date, no platform default or bounds), D-08 (cancellation and no-show percentages per-org configurable). Full rationale for each is in git history at commit `86ca0e4`'s version of this file, §5.
 
-**D-03 needs narrowing.** "Subscription-only, tiered, both sides" is decided. The actual numbers and tier boundaries are not, and C-03 makes them real money. Decide before R3 ships.
+**D-03 decided 2026-09-14 (narrower than a full decision — a deliberate placeholder, not a final number).** Founder chose to keep the current placeholder tiers (`shared/plans.ts`: free to 15 students, ₹1,499/mo to 60, ₹3,999/mo unlimited) rather than set real numbers now. **These become the live, real-money prices the moment Step 28 (C-03) switches billing on** — this was decided knowing that, not a deferral. Revisit before Step 28 ships if that's not still the intent.
 
-**Genuinely open, and blocking:**
+**D-09 decided 2026-09-14 — reversed from this plan's recommendation.** The marketplace does **not** stay behind the §7 commercial gate. Founder wants tutor discovery/search built now, not after 10+ paying orgs/80% retention/₹10L collected. Stated product direction: discovery (browsing/searching for a tutor) should be free to any visitor; a future monetization idea floated is a small pay-per-contact fee (e.g. ~₹10) to reveal a tutor's contact details, rather than (or alongside) the subscription/take-rate model D-03 already ruled out for the *management* product. **This is the "largest strategic reversal" this plan's own §13 flagged — R3 to R6 need re-cutting to fit ~30 ed of marketplace work (B-14/15/16, §7/§8) into the sequence, which has NOT been done yet.** Treat §7's R6 section and §8's backlog rows for B-14/15/16 as stale until that re-scoping pass happens; do not silently reorder EXECUTION_PLAN.md steps to include marketplace work without that pass first, since real dependencies (D-02's "centre keeps the customer relationship," B-15's enquiry-SLA needing B-17's comms router, minor-safety verification) haven't been re-examined against the new timing.
 
-| ID | Decision | Blocks | Why it is yours |
-|---|---|---|---|
-| **D-09** | **Does the marketplace stay behind the §7 commercial gate?** This plan says yes and defers roughly 30 ed on that basis. | R6, and the honesty of the public marketing site | It is the largest strategic reversal in this rewrite. If you disagree, R3 to R5 get re-cut. |
-| **D-10** | **Which messaging provider, and is WhatsApp-first with SMS fallback right?** Meta direct, or an aggregator (Gupshup, Interakt, AiSensy, Twilio). | B-17, all of R3 | Cost per conversation, onboarding lead time and template-approval friction differ sharply, and the decision is commercial more than technical. |
-| **D-11** | **Analytics: build or buy?** A self-hosted PostHog, a SaaS tier, or a hand-rolled events table on the existing Postgres. | C-07 | DPDP posture with minors' data in the same database is the deciding factor, and that is a risk call. |
-| **D-12** | **Pilot shape.** How many design partners, paid or free, and what are you willing to promise them? | R3's sequencing and R4's gate | Three paying pilots and a free beta imply different products. |
-| **D-13** | **Do the 17 dependency advisories get the breaking upgrade now or after the pilot?** | Nothing today; it becomes a pentest finding in R4 | It is a risk-versus-churn tradeoff during the only window where churn is cheap. |
+**D-10 decided 2026-09-14.** WhatsApp-first with SMS fallback, confirmed. Provider: an aggregator (Gupshup/Interakt/AiSensy/Twilio), not Meta direct — bundled template management, SMS fallback and India-specific support are worth more than direct-integration control at this team's size. The specific vendor is still open; Step 27's own design builds a provider-agnostic transport abstraction first (provider behind an interface), so the vendor pick doesn't block starting that work — it only gates the concrete adapter and the WhatsApp Business API onboarding/template-approval procurement.
+
+**D-11 decided 2026-09-14.** A hand-rolled events table on the existing Postgres — not self-hosted PostHog, not a paid SaaS tier. Reasoning: pre-pilot scale (9 real orgs) doesn't yet justify a dedicated analytics platform, and DPDP posture (minors' data) makes shipping behavioral data to a third-party vendor before any legal review a real, avoidable risk for no near-term benefit. Revisit once there's real pilot volume and a legal/DPDP review has happened.
+
+**D-12 decided 2026-09-14.** Free pilot, not paid design partners.
+
+**D-13 decided 2026-09-14.** Patch the safe advisories now (20 of 21 fix with `npm audit fix`, zero breaking changes), hold the one breaking upgrade (`uuid`→`exceljs` major bump, risks the org-export feature) until closer to the pilot or the external pentest, so it gets deliberate testing rather than a rushed side effect.
 
 ---
 
