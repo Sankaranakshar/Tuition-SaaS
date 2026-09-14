@@ -4,6 +4,16 @@ import crypto from "node:crypto";
 import type { PGlite } from "@electric-sql/pglite";
 import { createTestApp, authHeader } from "./testApp.ts";
 import { ORG, OTHER_ORG, uids, ids } from "../integration/fixtures.ts";
+import { zonedTimeToUtc, localDateKeyInZone, hourInZone } from "../../shared/timezone.ts";
+
+// ORG (fixtures.ts) is created with no explicit timezone, so it carries the
+// migration's column default (C-01, EXECUTION_PLAN.md Step 25). Every
+// materialization assertion below is built from this zone via
+// shared/timezone.ts's own helpers, never from ambient Date methods — the
+// point of Step 25's contract test is to prove the route is correct
+// regardless of what timezone the test process itself runs under (verified
+// by actually running `TZ=UTC npm run test:contract` alongside the default).
+const ORG_TZ = "Asia/Kolkata";
 
 let app: any;
 let db: PGlite;
@@ -394,24 +404,32 @@ describe("POST /api/v1/scheduling/materialize", () => {
   let matParentUserId: string;
   let matTemplateId: string;
 
-  /** Local-time YYYY-MM-DD, matching the route's own key format. Using
-   *  toISOString() here would drift a day for evening slots in IST. */
+  /** ORG's own zone's YYYY-MM-DD for a UTC instant, matching the route's own
+   *  key format (C-01: the route resolves ORG_TZ from `organizations`, not
+   *  from the test process's ambient zone). */
   function localKey(d: Date): string {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return localDateKeyInZone(d, ORG_TZ);
   }
 
-  /** Mirrors the route's slot arithmetic, so this asserts the real rolling
-   *  window rather than a hardcoded count that would rot on a given weekday. */
+  /** A UTC-midnight sentinel for "today" in ORG_TZ — see
+   *  shared/timezone.ts's civilDateSentinelInZone, reimplemented inline here
+   *  via localDateKeyInZone so this file doesn't need that extra import. */
+  function todaySentinelInOrgTz(now: Date): Date {
+    const [y, m, d] = localDateKeyInZone(now, ORG_TZ).split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d));
+  }
+
+  /** Mirrors the route's slot arithmetic (now zone-aware), so this asserts
+   *  the real rolling window rather than a hardcoded count that would rot
+   *  on a given weekday. */
   function expectedDateKeys(): string[] {
     const now = new Date();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = todaySentinelInOrgTz(now);
     const horizon = new Date(today.getTime() + WEEKS_AHEAD * 7 * 24 * 3600 * 1000);
     const keys: string[] = [];
-    for (const d = new Date(today); d <= horizon; d.setDate(d.getDate() + 1)) {
-      if (d.getDay() !== DOW) continue;
-      const start = new Date(d);
-      start.setHours(START_HOUR, 0, 0, 0);
+    for (const d = new Date(today); d <= horizon; d.setUTCDate(d.getUTCDate() + 1)) {
+      if (d.getUTCDay() !== DOW) continue;
+      const start = zonedTimeToUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), START_HOUR, 0, ORG_TZ);
       if (start < now) continue;
       keys.push(localKey(start));
     }
@@ -478,15 +496,26 @@ describe("POST /api/v1/scheduling/materialize", () => {
     expect(await materializedDates(matTemplateId)).toEqual(expected);
   });
 
-  it("stamps each session at the template's local start hour", async () => {
+  it("stamps each session at the correct UTC instant for the org's timezone (C-01)", async () => {
     const { rows } = await db.query(
       `select start_time, end_time from class_sessions where template_id = $1 order by start_time limit 1`,
       [matTemplateId]
     );
     const start = new Date((rows[0] as any).start_time);
     const end = new Date((rows[0] as any).end_time);
-    expect(start.getDay()).toBe(DOW);
-    expect(start.getHours()).toBe(START_HOUR);
+
+    // Independently reconstruct the expected UTC instant from the org's own
+    // zone rather than reading it back through ambient Date methods — this
+    // is the assertion that fails if materializeTemplate ever regresses to
+    // reading the server process's timezone instead of ORG_TZ.
+    const [y, m, d] = localDateKeyInZone(start, ORG_TZ).split("-").map(Number);
+    const expectedStart = zonedTimeToUtc(y, m, d, START_HOUR, 0, ORG_TZ);
+    expect(start.getTime()).toBe(expectedStart.getTime());
+
+    // Asia/Kolkata is UTC+5:30 with no DST: a 14:00 IST slot is always
+    // 08:30 UTC, regardless of what TZ this test process itself runs under.
+    expect(start.getUTCHours()).toBe(8);
+    expect(start.getUTCMinutes()).toBe(30);
     expect(end.getTime() - start.getTime()).toBe(60 * 60 * 1000);
   });
 
@@ -517,10 +546,12 @@ describe("POST /api/v1/scheduling/materialize", () => {
     // template doesn't use, then block that exact slot by hand first.
     const dow = (DOW + 1) % 7;
     const now = new Date();
-    const blocked = new Date();
-    blocked.setHours(0, 0, 0, 0);
-    while (blocked.getDay() !== dow || blocked <= now) blocked.setDate(blocked.getDate() + 1);
-    blocked.setHours(START_HOUR, 0, 0, 0);
+    let cursor = todaySentinelInOrgTz(now);
+    let blocked = zonedTimeToUtc(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, cursor.getUTCDate(), START_HOUR, 0, ORG_TZ);
+    while (cursor.getUTCDay() !== dow || blocked <= now) {
+      cursor = new Date(cursor.getTime() + 24 * 3600 * 1000);
+      blocked = zonedTimeToUtc(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, cursor.getUTCDate(), START_HOUR, 0, ORG_TZ);
+    }
     const blockedEnd = new Date(blocked.getTime() + 60 * 60 * 1000);
 
     await db.query(
@@ -591,5 +622,115 @@ describe("GET /api/v1/scheduling/gaps", () => {
       .set(...authHeader(uids.owner));
     expectStatus(res, 200);
     expect(res.body.slots).toEqual([]);
+  });
+});
+
+// C-01 (EXECUTION_PLAN.md Step 25): proves materializeTemplate reads each
+// template's *own* org's timezone off the TEMPLATE_SELECT join, rather than
+// a single value hardcoded anywhere in the sweep — the actual regression a
+// platform-wide cron (server/routes/cron.ts's /materialize-sessions, which
+// sweeps every org in one query) would hit if this were wrong.
+describe("materializeTemplate resolves each org's own timezone, not a global one (C-01)", () => {
+  it("a template in an America/New_York org materializes at the correct DST-aware UTC instant", async () => {
+    const nyOrgId = crypto.randomUUID();
+    await db.query(`insert into organizations (id, name, timezone) values ($1, 'NY Org', 'America/New_York')`, [nyOrgId]);
+    const nyTutorId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [nyTutorId]);
+    await db.query(
+      `insert into organization_members (organization_id, user_id, role) values ($1, $2, 'tutor')`,
+      [nyOrgId, nyTutorId]
+    );
+
+    const nyTemplateId = crypto.randomUUID();
+    await db.query(
+      `insert into class_templates
+         (id, organization_id, name, type, capacity, tutor_id, days_of_week, start_hour, start_minute, duration_minutes)
+       values ($1, $2, 'NY Batch', 'BATCH', 10, $3, '{0,1,2,3,4,5,6}', 9, 0, 60)`,
+      [nyTemplateId, nyOrgId, nyTutorId]
+    );
+
+    const { materializeTemplate, TEMPLATE_SELECT } = await import("../../server/routes/scheduling.ts");
+    const { rows } = await db.query(`${TEMPLATE_SELECT} where ct.id = $1`, [nyTemplateId]);
+    expect((rows[0] as any).organization_timezone).toBe("America/New_York");
+
+    await materializeTemplate(rows[0] as any);
+
+    const sessRes = await db.query(
+      `select start_time from class_sessions where template_id = $1 order by start_time limit 1`,
+      [nyTemplateId]
+    );
+    expect(sessRes.rows.length).toBeGreaterThan(0);
+    const start = new Date((sessRes.rows[0] as any).start_time);
+
+    const [y, m, d] = localDateKeyInZone(start, "America/New_York").split("-").map(Number);
+    const expectedStart = zonedTimeToUtc(y, m, d, 9, 0, "America/New_York");
+    expect(start.getTime()).toBe(expectedStart.getTime());
+    // 9am wall-clock in New York, whatever the UTC offset turns out to be
+    // depending on whether the materialized date lands in EDT or EST.
+    expect(hourInZone(start, "America/New_York")).toBe(9);
+  });
+});
+
+describe("PATCH /api/v1/scheduling/organization-timezone (C-01)", () => {
+  it("401s with no token", async () => {
+    const res = await request(app).patch("/api/v1/scheduling/organization-timezone").send({ timezone: "UTC" });
+    expectStatus(res, 401);
+  });
+
+  it("403s for a role outside owner/admin (tutor)", async () => {
+    const res = await request(app)
+      .patch("/api/v1/scheduling/organization-timezone")
+      .set(...authHeader(uids.tutor))
+      .send({ timezone: "UTC" });
+    expectStatus(res, 403);
+  });
+
+  it("422s an unrecognized IANA zone name", async () => {
+    const res = await request(app)
+      .patch("/api/v1/scheduling/organization-timezone")
+      .set(...authHeader(uids.owner))
+      .send({ timezone: "Not/AZone" });
+    expectStatus(res, 422);
+  });
+
+  it("200s, updates the column, and rematerializes future sessions under the new zone", async () => {
+    const tzTemplateId = crypto.randomUUID();
+    await db.query(
+      `insert into class_templates
+         (id, organization_id, name, type, capacity, tutor_id, days_of_week, start_hour, start_minute, duration_minutes)
+       values ($1, $2, 'TZ Change Batch', 'BATCH', 10, $3, '{0,1,2,3,4,5,6}', 10, 0, 60)`,
+      [tzTemplateId, ORG, bodyTutorId2]
+    );
+    await request(app).post("/api/v1/scheduling/materialize").set(...authHeader(uids.admin));
+    const before = await db.query(
+      `select start_time from class_sessions where template_id = $1 order by start_time limit 1`,
+      [tzTemplateId]
+    );
+    expect(before.rows.length).toBeGreaterThan(0);
+    expect(hourInZone(new Date((before.rows[0] as any).start_time), "Asia/Kolkata")).toBe(10);
+
+    const res = await request(app)
+      .patch("/api/v1/scheduling/organization-timezone")
+      .set(...authHeader(uids.owner))
+      .send({ timezone: "UTC" });
+    expectStatus(res, 200);
+    expect(res.body.timezone).toBe("UTC");
+
+    const orgRow = await db.query(`select timezone from organizations where id = $1`, [ORG]);
+    expect((orgRow.rows[0] as any).timezone).toBe("UTC");
+
+    const after = await db.query(
+      `select start_time from class_sessions where template_id = $1 order by start_time limit 1`,
+      [tzTemplateId]
+    );
+    expect(after.rows.length).toBeGreaterThan(0);
+    // Same template, same start_hour (10), but now correctly 10:00 UTC
+    // rather than 10:00 IST — proof the rematerialization actually ran
+    // under the new zone rather than leaving the old instants in place.
+    expect(hourInZone(new Date((after.rows[0] as any).start_time), "UTC")).toBe(10);
+
+    // Reset ORG back to its default so later runs of this file (and any
+    // test order change) can't inherit a mutated shared fixture.
+    await db.query(`update organizations set timezone = $1 where id = $2`, ["Asia/Kolkata", ORG]);
   });
 });

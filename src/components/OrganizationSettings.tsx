@@ -1,8 +1,23 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabase";
-import { Save, AlertCircle, CheckCircle } from "lucide-react";
+import { Save, AlertCircle, CheckCircle, Clock } from "lucide-react";
 import { Button } from "./kit";
+import { updateOrganizationTimezone } from "../lib/api";
+
+// A curated, India-first list rather than the full ~400-zone IANA database
+// (Intl.supportedValuesOf("timeZone") when available) — the entire current
+// customer base is India (MASTER_PLAN.md §2), and a long unfiltered list
+// makes the common case harder to find. "Other" reveals a free-text IANA
+// name for the rare non-India org; the server validates it via Intl either way.
+const COMMON_TIMEZONES = [
+  { value: "Asia/Kolkata", label: "India (Asia/Kolkata, UTC+5:30)" },
+  { value: "Asia/Dubai", label: "Gulf (Asia/Dubai, UTC+4:00)" },
+  { value: "Asia/Singapore", label: "Singapore (Asia/Singapore, UTC+8:00)" },
+  { value: "Europe/London", label: "UK (Europe/London)" },
+  { value: "America/New_York", label: "US Eastern (America/New_York)" },
+  { value: "UTC", label: "UTC" },
+];
 
 // Matches kit Input's skin for the native <input>/<select> elements this
 // settings form doesn't route through the kit wrapper for (same recipe as
@@ -28,15 +43,32 @@ export default function OrganizationSettings() {
     payouts: { tdsPercent: 0 }
   });
 
+  // C-01 (EXECUTION_PLAN.md Step 25): a real `organizations.timezone`
+  // column, not part of the `settings` jsonb blob above, so it's fetched
+  // and saved separately — saving it also rematerializes future sessions
+  // server-side (see handleTimezoneSave), which the generic "Save changes"
+  // button for the rest of this page deliberately doesn't do for anything else.
+  const [timezone, setTimezone] = useState("Asia/Kolkata");
+  const [timezoneInput, setTimezoneInput] = useState("Asia/Kolkata");
+  const [timezoneCustom, setTimezoneCustom] = useState(false);
+  const [timezoneSaving, setTimezoneSaving] = useState(false);
+  const [timezoneError, setTimezoneError] = useState("");
+  const [timezoneSuccess, setTimezoneSuccess] = useState("");
+
   useEffect(() => {
     if (!user?.organizationId) return;
-    
+
     const fetchSettings = async () => {
       try {
-        const { data, error } = await supabase.from("organizations").select("settings").eq("id", user.organizationId!).maybeSingle();
+        const { data, error } = await supabase.from("organizations").select("settings, timezone").eq("id", user.organizationId!).maybeSingle();
         if (error) throw error;
         if (data?.settings) {
           setSettings({ ...settings, ...data.settings });
+        }
+        if (data?.timezone) {
+          setTimezone(data.timezone);
+          setTimezoneInput(data.timezone);
+          setTimezoneCustom(!COMMON_TIMEZONES.some((tz) => tz.value === data.timezone));
         }
       } catch (err) {
         console.error("Error fetching organization settings:", err);
@@ -44,6 +76,24 @@ export default function OrganizationSettings() {
     };
     fetchSettings();
   }, [user?.organizationId]);
+
+  const handleTimezoneSave = async () => {
+    setTimezoneSaving(true);
+    setTimezoneError("");
+    setTimezoneSuccess("");
+    try {
+      const result = await updateOrganizationTimezone({ timezone: timezoneInput });
+      setTimezone(result.timezone);
+      setTimezoneSuccess(
+        `Timezone changed to ${result.timezone}. ${result.created.length} future session${result.created.length === 1 ? "" : "s"} rematerialized` +
+          (result.conflicts.length > 0 ? `, ${result.conflicts.length} could not be (already booked at the new time — check Schedule).` : ".")
+      );
+    } catch (err: any) {
+      setTimezoneError(err.message || "Failed to change timezone.");
+    } finally {
+      setTimezoneSaving(false);
+    }
+  };
 
   const handleSave = async () => {
     if (!user?.organizationId) return;
@@ -361,6 +411,56 @@ export default function OrganizationSettings() {
                   onChange={(e) => updateSetting('payouts', 'tdsPercent', clampPercent(parseInt(e.target.value) || 0))}
                   className={FIELD_CLASS}
                 />
+              </div>
+            </div>
+          </section>
+
+          {/* Timezone (C-01) */}
+          <section>
+            <h3 className="mb-4 border-b border-[var(--cs-border)] pb-2 text-sm font-semibold text-[var(--cs-text)]">10. Timezone</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Center's timezone</label>
+                <p className="text-xs text-[var(--cs-text-muted)] mb-1">
+                  The wall-clock time your recurring classes are scheduled at. Changing this rematerializes every
+                  future recurring session at the new zone — sessions already marked or completed are untouched.
+                </p>
+                {timezoneCustom ? (
+                  <input
+                    type="text"
+                    value={timezoneInput}
+                    onChange={(e) => setTimezoneInput(e.target.value)}
+                    placeholder="e.g. Asia/Kolkata"
+                    className={FIELD_CLASS}
+                  />
+                ) : (
+                  <select value={timezoneInput} onChange={(e) => setTimezoneInput(e.target.value)} className={FIELD_CLASS}>
+                    {COMMON_TIMEZONES.map((tz) => (
+                      <option key={tz.value} value={tz.value}>{tz.label}</option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTimezoneCustom((prev) => !prev);
+                    setTimezoneInput(timezoneCustom ? "Asia/Kolkata" : timezoneInput);
+                  }}
+                  className="mt-1 text-xs text-[var(--cs-accent)] hover:underline"
+                >
+                  {timezoneCustom ? "Choose from common list instead" : "Use a different IANA timezone…"}
+                </button>
+              </div>
+              <div className="flex flex-col justify-end">
+                <Button
+                  onClick={handleTimezoneSave}
+                  disabled={timezoneSaving || timezoneInput === timezone}
+                  icon={Clock}
+                >
+                  {timezoneSaving ? "Changing…" : "Change timezone"}
+                </Button>
+                {timezoneError && <p className="mt-2 text-xs text-[var(--cs-danger)]">{timezoneError}</p>}
+                {timezoneSuccess && <p className="mt-2 text-xs text-[var(--cs-accent)]">{timezoneSuccess}</p>}
               </div>
             </div>
           </section>

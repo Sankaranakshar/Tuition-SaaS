@@ -9,8 +9,10 @@ import {
   rescheduleSessionRequestSchema as rescheduleSchema,
   reassignSessionTutorRequestSchema as reassignTutorSchema,
   updateTemplateScopeSchema as templateScopeSchema,
+  updateOrganizationTimezoneRequestSchema as orgTimezoneSchema,
   findGapsQuerySchema as gapsQuerySchema,
 } from "../../shared/schemas/scheduling.ts";
+import { zonedTimeToUtc, civilDateSentinelInZone, civilDateKey } from "../../shared/timezone.ts";
 
 // Capacity and double-booking checks used to run client-side (read-then-write
 // from the browser SDK), which is a race: two parallel enrollments/bookings
@@ -320,14 +322,21 @@ router.patch("/sessions/:id/tutor", requireRole(...CAN_SCHEDULE), async (req: Au
 // never swallowed into a console.warn.
 const WEEKS_AHEAD = 8;
 
-/** Column list materializeTemplate needs, shared by the three call sites. */
-const TEMPLATE_SELECT = `select id, organization_id, type, tutor_id, student_ids, days_of_week,
-    start_hour, start_minute, duration_minutes, is_online, room_number
-  from class_templates`;
+/** Column list materializeTemplate needs, shared by the three call sites.
+ *  Joins organizations for the org's timezone (C-01, EXECUTION_PLAN.md Step
+ *  25) — materialization must resolve each template's own org's zone, never
+ *  the ambient process one. `ct.id` is aliased so callers that filter on
+ *  `id` (there is exactly one) stay unambiguous against `organizations.id`. */
+const TEMPLATE_SELECT = `select ct.id, ct.organization_id, ct.type, ct.tutor_id, ct.student_ids, ct.days_of_week,
+    ct.start_hour, ct.start_minute, ct.duration_minutes, ct.is_online, ct.room_number,
+    o.timezone as organization_timezone
+  from class_templates ct
+  join organizations o on o.id = ct.organization_id`;
 
 /** The same guard materializeTemplate applies on entry, pushed into SQL so
  *  the sweep doesn't ship rows it will immediately discard — on the platform
- *  cron that is every one-to-one template in every org. */
+ *  cron that is every one-to-one template in every org. Columns here exist
+ *  only on class_templates, so they stay unambiguous against the join above. */
 const MATERIALIZABLE = `type = 'BATCH' and tutor_id is not null and start_hour is not null
   and coalesce(array_length(days_of_week, 1), 0) > 0`;
 
@@ -343,18 +352,12 @@ interface Template {
   duration_minutes: number;
   is_online: boolean;
   room_number: string | null;
+  organization_timezone: string;
 }
 
 interface MaterializeResult {
   created: string[];
   conflicts: { templateId: string; date: string }[];
-}
-
-/** `YYYY-MM-DD` in local time. Deliberately not toISOString().split("T")[0],
- *  which shifts the date across the UTC boundary for evening sessions in
- *  positive-offset zones (IST, this app's primary market). */
-function localDateKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 /**
@@ -382,20 +385,24 @@ async function materializeTemplate(template: Template): Promise<MaterializeResul
   if (template.type !== "BATCH" || daysOfWeek.length === 0 || template.start_hour == null || !template.tutor_id) return result;
 
   const durationMinutes = template.duration_minutes ?? 60;
+  const zone = template.organization_timezone;
   const now = new Date();
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // A UTC-midnight sentinel standing in for "today's civil date in the org's
+  // zone" (shared/timezone.ts) — walking it one calendar day at a time via
+  // setUTCDate is timezone-safe by construction, unlike the old
+  // `new Date(); setDate(...)` walk, which advanced calendar days in the
+  // *server process's* zone.
+  const today = civilDateSentinelInZone(zone, now);
   const horizon = new Date(today.getTime() + WEEKS_AHEAD * 7 * 24 * 3600 * 1000);
 
   const candidates: { dateKey: string; start: Date; end: Date }[] = [];
-  for (let d = new Date(today); d <= horizon; d.setDate(d.getDate() + 1)) {
-    if (!daysOfWeek.includes(d.getDay())) continue;
+  for (let d = new Date(today); d <= horizon; d.setUTCDate(d.getUTCDate() + 1)) {
+    if (!daysOfWeek.includes(d.getUTCDay())) continue;
 
-    const start = new Date(d);
-    start.setHours(template.start_hour, template.start_minute ?? 0, 0, 0);
+    const start = zonedTimeToUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), template.start_hour, template.start_minute ?? 0, zone);
     if (start < now) continue; // don't materialize into the past
     candidates.push({
-      dateKey: localDateKey(start),
+      dateKey: civilDateKey(d),
       start,
       end: new Date(start.getTime() + durationMinutes * 60 * 1000),
     });
@@ -499,6 +506,53 @@ router.post("/materialize", requireRole(...CAN_SCHEDULE), async (req: AuthReques
   } catch (err) { next(err); }
 });
 
+// C-01 (EXECUTION_PLAN.md Step 25): the org's timezone is editable, not
+// locked after first set — every org already has one via the column
+// default, so "read-only after set" would mean never editable at all. The
+// fork the step calls out is instead handled here: changing it must not
+// leave any already-materialized future session sitting at the *old*
+// zone's wall-clock time next to sessions materialized under the new one,
+// so every BATCH template's future, still-scheduled sessions are dropped
+// and rematerialized against the new zone in the same request — the same
+// "drop future, rematerialize" rule PATCH /templates/:id already applies to
+// a single template's own schedule edits, just applied org-wide.
+router.patch("/organization-timezone", requireRole("owner", "admin"), async (req: AuthRequest, res, next) => {
+  try {
+    const body = orgTimezoneSchema.parse(req.body);
+    const orgId = req.user!.organizationId!;
+
+    const updateRes = await pool.query(
+      `update organizations set timezone = $1 where id = $2 returning timezone`,
+      [body.timezone, orgId]
+    );
+    if (updateRes.rowCount === 0) {
+      throw Object.assign(new Error("Organization not found"), { status: 404, code: "not_found" });
+    }
+    const zone = updateRes.rows[0].timezone as string;
+    const today = civilDateSentinelInZone(zone);
+
+    await pool.query(
+      `delete from class_sessions
+       where organization_id = $1 and status = 'scheduled' and materialized_date >= $2`,
+      [orgId, civilDateKey(today)]
+    );
+
+    const templatesRes = await pool.query(
+      `${TEMPLATE_SELECT} where organization_id = $1 and ${MATERIALIZABLE}`,
+      [orgId]
+    );
+    const aggregate: MaterializeResult = { created: [], conflicts: [] };
+    for (const row of templatesRes.rows as Template[]) {
+      const r = await materializeTemplate(row);
+      aggregate.created.push(...r.created);
+      aggregate.conflicts.push(...r.conflicts);
+    }
+
+    await writeAudit(orgId, req.user!.id, "organization.timezone_change", "organizations", orgId, { timezone: zone, ...aggregate });
+    res.json({ ok: true, timezone: zone, ...aggregate });
+  } catch (err) { next(err); }
+});
+
 // Recurring-edit scope: "this and future" and "all" both resolve to the same
 // operation — update the template, then drop every not-yet-completed,
 // not-cancelled materialized session and rematerialize through the same
@@ -511,7 +565,7 @@ router.patch("/templates/:id", requireRole("owner", "admin"), async (req: AuthRe
     const orgId = req.user!.organizationId!;
     const templateId = req.params.id;
 
-    const templateRes = await pool.query(`${TEMPLATE_SELECT} where id = $1`, [templateId]);
+    const templateRes = await pool.query(`${TEMPLATE_SELECT} where ct.id = $1`, [templateId]);
     if (templateRes.rowCount === 0) {
       throw Object.assign(new Error("Class template not found"), { status: 404, code: "not_found" });
     }
@@ -530,18 +584,21 @@ router.patch("/templates/:id", requireRole("owner", "admin"), async (req: AuthRe
        returning id, organization_id, type, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes, is_online, room_number`,
       [body.daysOfWeek ?? null, body.startHour ?? null, body.startMinute ?? null, body.durationMinutes ?? null, templateId]
     );
-    const updated = updateRes.rows[0] as Template;
+    // organization_timezone isn't a class_templates column, so it doesn't
+    // come back from the UPDATE ... RETURNING above — carry over the value
+    // already resolved for this org by the join in TEMPLATE_SELECT.
+    const updated = { ...updateRes.rows[0], organization_timezone: existing.organization_timezone } as Template;
 
     // Drop future, still-scheduled sessions for this template so
     // materializeTemplate can lay down fresh, conflict-checked ones at the
     // new days/time — a plain UPDATE of start_time/end_time in place would
-    // skip the conflict check entirely.
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // skip the conflict check entirely. "Future" is the org's own today, not
+    // the server process's (C-01, EXECUTION_PLAN.md Step 25).
+    const today = civilDateSentinelInZone(existing.organization_timezone);
     await pool.query(
       `delete from class_sessions
        where template_id = $1 and status = 'scheduled' and materialized_date >= $2`,
-      [templateId, localDateKey(today)]
+      [templateId, civilDateKey(today)]
     );
 
     const result = await materializeTemplate(updated);
@@ -569,8 +626,12 @@ router.get("/gaps", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, 
       return res.json({ ok: true, slots: [] });
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // C-01 (EXECUTION_PLAN.md Step 25): "today" and each day's availability
+    // window are in the org's own zone, not the server process's.
+    const orgRes = await pool.query(`select timezone from organizations where id = $1`, [orgId]);
+    const zone = orgRes.rows[0].timezone as string;
+
+    const today = civilDateSentinelInZone(zone);
     const horizon = new Date(today.getTime() + LOOKAHEAD_DAYS * 24 * 3600 * 1000);
 
     const sessionsRes = await pool.query(
@@ -585,16 +646,14 @@ router.get("/gaps", requireRole(...CAN_SCHEDULE), async (req: AuthRequest, res, 
     const slots: { start: string; end: string }[] = [];
     const now = Date.now();
 
-    for (let d = new Date(today); d <= horizon && slots.length < MAX_SLOTS; d.setDate(d.getDate() + 1)) {
-      const dayAvailability = availabilityRes.rows.filter((a) => a.day_of_week === d.getDay());
+    for (let d = new Date(today); d <= horizon && slots.length < MAX_SLOTS; d.setUTCDate(d.getUTCDate() + 1)) {
+      const dayAvailability = availabilityRes.rows.filter((a) => a.day_of_week === d.getUTCDay());
       for (const window of dayAvailability) {
         if (slots.length >= MAX_SLOTS) break;
         const [startH, startM] = String(window.start_time).split(":").map(Number);
         const [endH, endM] = String(window.end_time).split(":").map(Number);
-        const windowStart = new Date(d);
-        windowStart.setHours(startH, startM, 0, 0);
-        const windowEnd = new Date(d);
-        windowEnd.setHours(endH, endM, 0, 0);
+        const windowStart = zonedTimeToUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), startH, startM, zone);
+        const windowEnd = zonedTimeToUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), endH, endM, zone);
 
         // 15-minute step across the availability window looking for a gap
         // of at least durationMinutes that doesn't overlap any busy session.

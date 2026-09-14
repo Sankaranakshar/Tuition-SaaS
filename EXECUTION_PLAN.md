@@ -17,11 +17,13 @@
 
 ## Start here
 
-**Current pick: Step 25 (C-01, the timezone model).**
+**Current pick: Step 25 (C-01, the timezone model) — code-complete, all seven gates green, NOT yet pushed anywhere.**
 
 **Why that and not Step 24.** Step 24 (B-19, the referral loop) is fully coded. It was committed to local `main` as `1eedd13` during the 2026-09-12 planning session, but was **parked before this session started work on Step 25**: the commit now lives on branch `parked/b-19-referral`, and `main` was rebuilt at `86ca0e4` (plus this session's docs commit). Its migration `20260912150000_referral_loop.sql` has never been applied to staging or production and it has never been walked live. MASTER_PLAN.md §8 parks it: it pays out wallet credit, wallet credit needs a live Razorpay that no org has connected, and there are no users to refer anyone. **Do not push `parked/b-19-referral` and do not apply its migration.** Revisit in R5, after Steps 27 to 29.
 
 **Why Step 25 is first.** It is a live correctness defect in the feature everything else hangs off, it needs nothing external, and every later step that touches scheduling inherits it if it is not fixed now.
+
+**Step 25's remaining work, in order:** (1) run `scripts/backfillSessionTimezones.sql`'s diagnostic `SELECT` against production — read-only, safe, tells you the actual blast radius; (2) rehearse the migration (and the corrective `UPDATE`, if the diagnostic found mismatches) on `classstackr-staging`; (3) a live browser walkthrough creating a real recurring class through a **Vercel preview deployment** specifically, not local dev (HANDOFF.md §8's new trap entry explains why local dev can't reproduce this bug); (4) push the migration to production with founder go-ahead; (5) check off Step 25's DoD below and move its tracker row to done. See HANDOFF.md §9's 2026-09-14 entry for exactly what's verified so far and what isn't.
 
 **Run in parallel with Step 25, starting today, because they are procurement and not engineering** (MASTER_PLAN.md §12): WhatsApp Business API onboarding and template approval, SMS DLT registration, Razorpay live KYC for both the platform account and the pilot org, and booking an external pentest vendor. These have multi-week lead times and they gate Steps 27, 28 and 34.
 
@@ -39,7 +41,7 @@
 | 22 | B-12 monthly progress-report PDF | R2 | ✅ Complete 2026-09-12 |
 | 23 | B-13 substitute and leave management | R2 | ✅ Complete 2026-09-12, one gap (see below) |
 | 24 | B-19 referral loop | — | ⏸ **Parked.** Moved to branch `parked/b-19-referral` (commit `1eedd13`), `main` rebuilt at `86ca0e4`. Migration unpushed, never deployed or walked live. Do not push. |
-| **25** | **C-01 timezone model** | **R3** | **← next** |
+| **25** | **C-01 timezone model** | **R3** | **Code complete, gates green — pending staging rehearsal, Vercel preview walkthrough, and production go-ahead (see "Start here")** |
 | 26 | C-02 wire the scheduler | R3 | Not started |
 | 27 | B-17 outbound comms router | R3 | Blocked on D-10 + provider onboarding |
 | 28 | C-03 platform billing switch-on | R3 | Blocked on D-03 numbers + platform KYC |
@@ -87,14 +89,16 @@
 **Browser verification required.** Against staging first, then production. Create a recurring class at 6:30pm through the real Add Class wizard, materialize it, and confirm in the Schedule grid, on Today, and in the database that the session reads 18:30 IST and stores 13:00 UTC. Then repeat against a preview deployment (which runs on Vercel, in UTC) rather than local dev, because **local dev on an IST machine cannot reproduce the bug and will give a false pass.** That last point is the trap in this step.
 
 **Definition of done.**
-- [ ] `organizations.timezone` exists, rehearsed on staging, pushed to production with go-ahead.
-- [ ] No function in the scheduling path reads the ambient process timezone.
-- [ ] The unit suite passes identically under `TZ=UTC` and `TZ=Asia/Kolkata`.
-- [ ] A recurring class created through a Vercel preview deployment lands at the correct wall-clock time.
-- [ ] The production backfill has either been run with counts recorded, or been shown to be unnecessary with the query that proved it.
-- [ ] All seven gates green; HANDOFF.md §8 gains a trap entry for the local-dev false pass.
+- [ ] `organizations.timezone` exists, rehearsed on staging, pushed to production with go-ahead. *(Migration written — `20260914120000_org_timezone.sql` — not yet rehearsed or pushed anywhere; needs go-ahead.)*
+- [x] No function in the scheduling path reads the ambient process timezone. *(`shared/timezone.ts`; `materializeTemplate()`, `/gaps`, `PATCH /templates/:id`'s rematerialization cutoff, and the new `PATCH /organization-timezone` all take the zone as an explicit argument.)*
+- [x] The unit suite passes identically under `TZ=UTC` and `TZ=Asia/Kolkata`. *(Also checked under `TZ=America/New_York` — a DST zone — for good measure. `tests/unit/timezone.test.ts`, 12 tests.)*
+- [ ] A recurring class created through a Vercel preview deployment lands at the correct wall-clock time. *(Not yet done — needs a preview deployment, which needs a push; see "Start here.")*
+- [ ] The production backfill has either been run with counts recorded, or been shown to be unnecessary with the query that proved it. *(Query written and verified correct against a real Postgres engine (PGlite) — `scripts/backfillSessionTimezones.sql` — but not yet run against production; its own diagnostic `SELECT` is read-only and safe to run first.)*
+- [x] All seven gates green; HANDOFF.md §8 gains a trap entry for the local-dev false pass. *(256 unit, 104 RLS, 341 contract, build, bundle 205.0 KB/260 KB, API 18/18 — see HANDOFF.md §9's 2026-09-14 entry for the exact deltas.)*
 
 **Expected outcome.** Recurring classes are correct everywhere, and the defect cannot silently return, because the tests fail if the ambient timezone ever matters again.
+
+**Status as of 2026-09-14: code-complete and gate-verified, held at the two items above that need a push or a founder go-ahead — see "Start here" for the exact next actions.**
 
 **Follow-on steps.** Step 26 depends on this: wiring the scheduler before the fix would materialize wrong sessions automatically instead of only when someone clicks.
 

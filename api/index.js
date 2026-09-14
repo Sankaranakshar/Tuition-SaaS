@@ -3105,6 +3105,25 @@ var updateTemplateScopeResponseSchema = z6.object({
   created: z6.array(z6.string()),
   conflicts: z6.array(z6.object({ templateId: z6.string().uuid(), date: z6.string() }))
 });
+var updateOrganizationTimezoneRequestSchema = z6.object({
+  timezone: z6.string().min(1).refine(
+    (tz) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: tz });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "Unrecognized IANA timezone" }
+  )
+});
+var updateOrganizationTimezoneResponseSchema = z6.object({
+  ok: z6.literal(true),
+  timezone: z6.string(),
+  created: z6.array(z6.string()),
+  conflicts: z6.array(z6.object({ templateId: z6.string().uuid(), date: z6.string() }))
+});
 var findGapsQuerySchema = z6.object({
   tutorId: z6.string().uuid(),
   durationMinutes: z6.coerce.number().int().positive(),
@@ -3114,6 +3133,40 @@ var findGapsResponseSchema = z6.object({
   ok: z6.literal(true),
   slots: z6.array(z6.object({ start: z6.string(), end: z6.string() }))
 });
+
+// shared/timezone.ts
+function offsetMinutesAt(zone, atUtc) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).formatToParts(atUtc);
+  const get = (type) => Number(parts.find((p) => p.type === type)?.value);
+  const asIfUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+  return Math.round((asIfUtc - atUtc.getTime()) / 6e4);
+}
+function zonedTimeToUtc(year, month, day, hour, minute, zone) {
+  const naiveUtc = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  const firstPass = naiveUtc - offsetMinutesAt(zone, new Date(naiveUtc)) * 6e4;
+  const secondOffset = offsetMinutesAt(zone, new Date(firstPass));
+  return new Date(naiveUtc - secondOffset * 6e4);
+}
+function localDateKeyInZone(instant, zone) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).format(instant);
+}
+function civilDateSentinelInZone(zone, now = /* @__PURE__ */ new Date()) {
+  const key = localDateKeyInZone(now, zone);
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+function civilDateKey(sentinel) {
+  return `${sentinel.getUTCFullYear()}-${String(sentinel.getUTCMonth() + 1).padStart(2, "0")}-${String(sentinel.getUTCDate()).padStart(2, "0")}`;
+}
 
 // server/routes/scheduling.ts
 var router8 = express8.Router();
@@ -3306,31 +3359,29 @@ router8.patch("/sessions/:id/tutor", requireRole(...CAN_SCHEDULE), async (req, r
   }
 });
 var WEEKS_AHEAD = 8;
-var TEMPLATE_SELECT = `select id, organization_id, type, tutor_id, student_ids, days_of_week,
-    start_hour, start_minute, duration_minutes, is_online, room_number
-  from class_templates`;
+var TEMPLATE_SELECT = `select ct.id, ct.organization_id, ct.type, ct.tutor_id, ct.student_ids, ct.days_of_week,
+    ct.start_hour, ct.start_minute, ct.duration_minutes, ct.is_online, ct.room_number,
+    o.timezone as organization_timezone
+  from class_templates ct
+  join organizations o on o.id = ct.organization_id`;
 var MATERIALIZABLE = `type = 'BATCH' and tutor_id is not null and start_hour is not null
   and coalesce(array_length(days_of_week, 1), 0) > 0`;
-function localDateKey(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
 async function materializeTemplate(template) {
   const result = { created: [], conflicts: [] };
   const daysOfWeek = template.days_of_week || [];
   if (template.type !== "BATCH" || daysOfWeek.length === 0 || template.start_hour == null || !template.tutor_id) return result;
   const durationMinutes = template.duration_minutes ?? 60;
+  const zone = template.organization_timezone;
   const now = /* @__PURE__ */ new Date();
-  const today = /* @__PURE__ */ new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = civilDateSentinelInZone(zone, now);
   const horizon = new Date(today.getTime() + WEEKS_AHEAD * 7 * 24 * 3600 * 1e3);
   const candidates = [];
-  for (let d = new Date(today); d <= horizon; d.setDate(d.getDate() + 1)) {
-    if (!daysOfWeek.includes(d.getDay())) continue;
-    const start = new Date(d);
-    start.setHours(template.start_hour, template.start_minute ?? 0, 0, 0);
+  for (let d = new Date(today); d <= horizon; d.setUTCDate(d.getUTCDate() + 1)) {
+    if (!daysOfWeek.includes(d.getUTCDay())) continue;
+    const start = zonedTimeToUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), template.start_hour, template.start_minute ?? 0, zone);
     if (start < now) continue;
     candidates.push({
-      dateKey: localDateKey(start),
+      dateKey: civilDateKey(d),
       start,
       end: new Date(start.getTime() + durationMinutes * 60 * 1e3)
     });
@@ -3420,12 +3471,46 @@ router8.post("/materialize", requireRole(...CAN_SCHEDULE), async (req, res, next
     next(err);
   }
 });
+router8.patch("/organization-timezone", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const body = updateOrganizationTimezoneRequestSchema.parse(req.body);
+    const orgId = req.user.organizationId;
+    const updateRes = await pool.query(
+      `update organizations set timezone = $1 where id = $2 returning timezone`,
+      [body.timezone, orgId]
+    );
+    if (updateRes.rowCount === 0) {
+      throw Object.assign(new Error("Organization not found"), { status: 404, code: "not_found" });
+    }
+    const zone = updateRes.rows[0].timezone;
+    const today = civilDateSentinelInZone(zone);
+    await pool.query(
+      `delete from class_sessions
+       where organization_id = $1 and status = 'scheduled' and materialized_date >= $2`,
+      [orgId, civilDateKey(today)]
+    );
+    const templatesRes = await pool.query(
+      `${TEMPLATE_SELECT} where organization_id = $1 and ${MATERIALIZABLE}`,
+      [orgId]
+    );
+    const aggregate = { created: [], conflicts: [] };
+    for (const row of templatesRes.rows) {
+      const r = await materializeTemplate(row);
+      aggregate.created.push(...r.created);
+      aggregate.conflicts.push(...r.conflicts);
+    }
+    await writeAudit(orgId, req.user.id, "organization.timezone_change", "organizations", orgId, { timezone: zone, ...aggregate });
+    res.json({ ok: true, timezone: zone, ...aggregate });
+  } catch (err) {
+    next(err);
+  }
+});
 router8.patch("/templates/:id", requireRole("owner", "admin"), async (req, res, next) => {
   try {
     const body = updateTemplateScopeSchema.parse(req.body);
     const orgId = req.user.organizationId;
     const templateId = req.params.id;
-    const templateRes = await pool.query(`${TEMPLATE_SELECT} where id = $1`, [templateId]);
+    const templateRes = await pool.query(`${TEMPLATE_SELECT} where ct.id = $1`, [templateId]);
     if (templateRes.rowCount === 0) {
       throw Object.assign(new Error("Class template not found"), { status: 404, code: "not_found" });
     }
@@ -3443,13 +3528,12 @@ router8.patch("/templates/:id", requireRole("owner", "admin"), async (req, res, 
        returning id, organization_id, type, tutor_id, student_ids, days_of_week, start_hour, start_minute, duration_minutes, is_online, room_number`,
       [body.daysOfWeek ?? null, body.startHour ?? null, body.startMinute ?? null, body.durationMinutes ?? null, templateId]
     );
-    const updated = updateRes.rows[0];
-    const today = /* @__PURE__ */ new Date();
-    today.setHours(0, 0, 0, 0);
+    const updated = { ...updateRes.rows[0], organization_timezone: existing.organization_timezone };
+    const today = civilDateSentinelInZone(existing.organization_timezone);
     await pool.query(
       `delete from class_sessions
        where template_id = $1 and status = 'scheduled' and materialized_date >= $2`,
-      [templateId, localDateKey(today)]
+      [templateId, civilDateKey(today)]
     );
     const result = await materializeTemplate(updated);
     await writeAudit(orgId, req.user.id, "template.update_scope", "class_templates", templateId, { scope: body.scope, ...result });
@@ -3472,8 +3556,9 @@ router8.get("/gaps", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
     if (availabilityRes.rowCount === 0) {
       return res.json({ ok: true, slots: [] });
     }
-    const today = /* @__PURE__ */ new Date();
-    today.setHours(0, 0, 0, 0);
+    const orgRes = await pool.query(`select timezone from organizations where id = $1`, [orgId]);
+    const zone = orgRes.rows[0].timezone;
+    const today = civilDateSentinelInZone(zone);
     const horizon = new Date(today.getTime() + LOOKAHEAD_DAYS * 24 * 3600 * 1e3);
     const sessionsRes = await pool.query(
       `select start_time, end_time from class_sessions
@@ -3485,16 +3570,14 @@ router8.get("/gaps", requireRole(...CAN_SCHEDULE), async (req, res, next) => {
     const durationMs = query.durationMinutes * 60 * 1e3;
     const slots = [];
     const now = Date.now();
-    for (let d = new Date(today); d <= horizon && slots.length < MAX_SLOTS; d.setDate(d.getDate() + 1)) {
-      const dayAvailability = availabilityRes.rows.filter((a) => a.day_of_week === d.getDay());
+    for (let d = new Date(today); d <= horizon && slots.length < MAX_SLOTS; d.setUTCDate(d.getUTCDate() + 1)) {
+      const dayAvailability = availabilityRes.rows.filter((a) => a.day_of_week === d.getUTCDay());
       for (const window of dayAvailability) {
         if (slots.length >= MAX_SLOTS) break;
         const [startH, startM] = String(window.start_time).split(":").map(Number);
         const [endH, endM] = String(window.end_time).split(":").map(Number);
-        const windowStart = new Date(d);
-        windowStart.setHours(startH, startM, 0, 0);
-        const windowEnd = new Date(d);
-        windowEnd.setHours(endH, endM, 0, 0);
+        const windowStart = zonedTimeToUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), startH, startM, zone);
+        const windowEnd = zonedTimeToUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), endH, endM, zone);
         for (let cursor = windowStart.getTime(); cursor + durationMs <= windowEnd.getTime(); cursor += 15 * 60 * 1e3) {
           if (cursor < now) continue;
           const slotEnd = cursor + durationMs;

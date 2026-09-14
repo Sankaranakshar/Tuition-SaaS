@@ -22,6 +22,8 @@ import type {
   UpdateTemplateScopeRequest,
   UpdateTemplateScopeResponse,
   FindGapsResponse,
+  UpdateOrganizationTimezoneRequest,
+  UpdateOrganizationTimezoneResponse,
 } from "../../shared/schemas/scheduling";
 import type { SubscriptionResponse, CheckoutResponse } from "../../shared/schemas/subscription";
 import type { PlanId } from "../../shared/plans";
@@ -107,6 +109,18 @@ export function findScheduleGaps(tutorId: string, durationMinutes: number, templ
   const params = new URLSearchParams({ tutorId, durationMinutes: String(durationMinutes) });
   if (templateId) params.set("templateId", templateId);
   return api<FindGapsResponse>(`/scheduling/gaps?${params.toString()}`);
+}
+
+/** C-01 (EXECUTION_PLAN.md Step 25): changes the org's timezone and
+ *  rematerializes every BATCH template's future sessions against it in the
+ *  same request — a plain `organizations` table write (like the rest of
+ *  Settings) would silently leave already-materialized sessions at the old
+ *  zone's wall-clock time. */
+export function updateOrganizationTimezone(input: UpdateOrganizationTimezoneRequest) {
+  return api<UpdateOrganizationTimezoneResponse>("/scheduling/organization-timezone", {
+    method: "PATCH",
+    body: input,
+  });
 }
 
 export function recordManualPayment(input: Omit<RecordManualPaymentRequest, "idempotencyKey">) {

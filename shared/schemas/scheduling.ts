@@ -66,6 +66,32 @@ export const updateTemplateScopeResponseSchema = z.object({
 });
 export type UpdateTemplateScopeResponse = z.infer<typeof updateTemplateScopeResponseSchema>;
 
+// C-01 (EXECUTION_PLAN.md Step 25): changing the org's timezone
+// rematerializes every BATCH template's future scheduled sessions against
+// the new zone (see the route), so the response reports what that
+// rematerialization did, same shape as /materialize's own response.
+export const updateOrganizationTimezoneRequestSchema = z.object({
+  timezone: z.string().min(1).refine(
+    (tz) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: tz });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "Unrecognized IANA timezone" }
+  ),
+});
+export type UpdateOrganizationTimezoneRequest = z.infer<typeof updateOrganizationTimezoneRequestSchema>;
+export const updateOrganizationTimezoneResponseSchema = z.object({
+  ok: z.literal(true),
+  timezone: z.string(),
+  created: z.array(z.string()),
+  conflicts: z.array(z.object({ templateId: z.string().uuid(), date: z.string() })),
+});
+export type UpdateOrganizationTimezoneResponse = z.infer<typeof updateOrganizationTimezoneResponseSchema>;
+
 export const findGapsQuerySchema = z.object({
   tutorId: z.string().uuid(),
   durationMinutes: z.coerce.number().int().positive(),
