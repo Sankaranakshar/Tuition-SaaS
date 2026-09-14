@@ -11,17 +11,19 @@
 
 **The seven gates.** `npm run lint` · `npm test` · `npm run test:rls` · `npm run test:contract` · `npm run build` · `npm run check:bundle-size` · `npm run build:api && npm run check:api-bundle`. All seven run in CI; none need Docker, Java or a live database.
 
-**Baseline as of 2026-09-14, after Step 25:** typecheck clean, 256 unit, 104 RLS, 341 contract, build, bundle 205.0 KB against a 260 KB budget, 18 of 18 API route mounts. (The 2026-09-12 baseline of 249/106/353 included the since-parked B-19 referral loop's tests; those numbers are stale — this line reflects `main` as it actually stands.)
+**Baseline as of 2026-09-14, after Step 26:** typecheck clean, 256 unit, 104 RLS, 347 contract, build (`dist/server.js` 236.7 KB), bundle 205.0 KB against a 260 KB budget, 18 of 18 API route mounts, `api/index.js` regenerated (235.8 KB). (The 2026-09-12 baseline of 249/106/353 included the since-parked B-19 referral loop's tests; those numbers are stale — this line reflects `main` as it actually stands.)
 
 ---
 
 ## Start here
 
-**Current pick: Step 26 (C-02, wire the scheduler). Step 25 (C-01, the timezone model) is ✅ complete as of 2026-09-14** — code, staging rehearsal, live Vercel-preview verification, production migration, and the production backfill are all done. See HANDOFF.md §9's 2026-09-14 entry for the full detail.
+**Step 26 (C-02, wire the scheduler) is ✅ code-complete and live in production as of 2026-09-14** — `vercel.json`'s `crons` array, the widened auth guard, per-org failure isolation + audit trail, tests, and manual production verification (all four routes 200'd against real production, `org_stats_daily` gained 9 real rows) are all done and merged to `main` (commit `440c396`). One item is still outstanding: the first *unattended* scheduled firing (tonight, 20:00-20:15 UTC / 01:30-01:45 IST) hasn't happened yet — check Vercel's Cron Jobs dashboard after that window and tick the last box in Step 26's Definition of done.
+
+**Next pick once that's confirmed: Step 27 (B-17, outbound comms router) — but it's blocked.** Step 27 needs founder decision **D-10** (which provider, WhatsApp-first-with-SMS-fallback or not) plus WhatsApp Business API onboarding, template approval, and SMS DLT registration, all multi-week-lead-time procurement (MASTER_PLAN.md §12, §13). Start that procurement now if it hasn't started; there's no engineering work to pick up on Step 27 until D-10 lands.
 
 **Why that and not Step 24.** Step 24 (B-19, the referral loop) is fully coded. It was committed to local `main` as `1eedd13` during the 2026-09-12 planning session, but was **parked before Step 25's session started**: the commit now lives on branch `parked/b-19-referral`, off `main`'s history since the rebuild. Its migration `20260912150000_referral_loop.sql` has never been applied to staging or production and it has never been walked live. MASTER_PLAN.md §8 parks it: it pays out wallet credit, wallet credit needs a live Razorpay that no org has connected, and there are no users to refer anyone. **Do not push `parked/b-19-referral` and do not apply its migration.** Revisit in R5, after Steps 27 to 29.
 
-**Why Step 26 is next.** Step 25 fixed *how* materialization computes a session's wall-clock time; Step 26 makes materialization (and the other three cron routes) actually run on a schedule instead of only when a human clicks. Doing this before Step 25 would have automated shipping wrong sessions faster.
+**Why Step 26 was next after Step 25.** Step 25 fixed *how* materialization computes a session's wall-clock time; Step 26 makes materialization (and the other three cron routes) actually run on a schedule instead of only when a human clicks. Doing this before Step 25 would have automated shipping wrong sessions faster.
 
 **Run in parallel with Step 26, because they are procurement and not engineering** (MASTER_PLAN.md §12): WhatsApp Business API onboarding and template approval, SMS DLT registration, Razorpay live KYC for both the platform account and the pilot org, and booking an external pentest vendor. These have multi-week lead times and they gate Steps 27, 28 and 34.
 
@@ -123,13 +125,16 @@
 **Browser verification required.** Not a browser step. Verify by triggering each route manually against a preview deployment with the real secret, then confirming in the Vercel dashboard that the first real scheduled invocation fired and returned 200, and that `org_stats_daily` gained a row.
 
 **Definition of done.**
-- [ ] Four cron entries live in `vercel.json`, deployed, and each has fired at least once on schedule.
-- [ ] `org_stats_daily` has real rows.
-- [ ] `/reconcile-wallets` has run against production with real wallet data and reported no mismatch. (It has never run against real drift; production had zero wallets at last check.)
-- [ ] A deliberately failed run writes a discoverable audit row.
-- [ ] All seven gates green.
+- [x] Four cron entries live in `vercel.json`, deployed to production (commit `440c396`, `main`).
+- [x] `org_stats_daily` has real rows. *(9 rows written for 2026-09-13, one per active org, confirmed by direct query against production.)*
+- [x] `/reconcile-wallets` has run against production with real wallet data and reported no mismatch. *(`walletsChecked: 0, mismatches: 0` — production genuinely has zero wallets, same as at last check; the route ran cleanly against the real, empty table.)*
+- [x] A deliberately failed run writes a discoverable audit row. *(Proven via `tests/contract/cron.test.ts`'s fault-injected `pool.query` spy — a real per-org failure was force-injected against reporting-daily, writing a `cron.reporting_daily_failed` audit_events row; not forced against production directly, since these routes touch real wallet money and there's no safe way to inject a failure there without risking a real write.)*
+- [x] All seven gates green. *(256 unit, 104 RLS, 347 contract [+6], build, bundle 205.0 KB/260 KB, API 18/18, `api/index.js` regenerated.)*
+- [ ] **Outstanding:** the first *actually-scheduled* (not manually curled) Vercel Cron firing. Schedule is 20:00-20:15 UTC; production was deployed at 09:54 UTC 2026-09-14, hours before the first window. All four routes were manually curled against production immediately after deploy and returned 200 with correct results (see HANDOFF.md §9), which proves the code path end-to-end, but the actual unattended cron trigger hasn't fired yet. Check the Vercel dashboard's Cron Jobs tab after ~20:15 UTC / 01:45 IST tonight for the first real invocation, then check this box off.
 
 **Expected outcome.** The product runs itself between sessions. B-18 gains a data source. Money drift becomes detectable rather than theoretical.
+
+**Status: code, tests, and manual production verification complete as of 2026-09-14 (commit `440c396`, deployed and merged to `main`).** Only the unattended first scheduled firing (tonight, 20:00-20:15 UTC) remains to confirm. Full detail in HANDOFF.md §9's 2026-09-14 entry.
 
 **Follow-on steps.** Unblocks B-18 in R5. Step 27's delivery retries will want a scheduled sweep, so this lands first.
 
