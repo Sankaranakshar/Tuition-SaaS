@@ -601,6 +601,40 @@ describe("Audit and server-only tables", () => {
     })
   );
 
+  // B-17 (EXECUTION_PLAN.md Step 27): message_outbox carries parent/student
+  // phone numbers and message content -- no client, including the org's own
+  // owner, may read or write it. Same posture as parent_invites/
+  // payment_gateways above.
+  it(
+    "message_outbox has no client read or write path at all, for any role",
+    withFixtures(async (tx, as) => {
+      await tx.query(
+        `insert into message_outbox (organization_id, recipient_phone, channel, template_key, payload, source, idempotency_key)
+         values ($1, '+911234567890', 'whatsapp', 'invoice_raised', '{}'::jsonb, '{}'::jsonb, 'rls-test-key')`,
+        [ORG]
+      );
+
+      await as(uids.owner, "authenticated");
+      const asOwner = await tx.query(`select * from message_outbox where organization_id = $1`, [ORG]);
+      expect(asOwner.rows.length).toBe(0);
+      await expectDenied(tx, () => tx.query(
+        `insert into message_outbox (organization_id, recipient_phone, channel, template_key, payload, source, idempotency_key)
+         values ($1, '+911234567890', 'whatsapp', 'invoice_raised', '{}'::jsonb, '{}'::jsonb, 'rls-test-key-2')`,
+        [ORG]
+      ));
+      const updAsOwner = await tx.query(`update message_outbox set state = 'read' where organization_id = $1`, [ORG]);
+      expect(updAsOwner.affectedRows).toBe(0);
+
+      await as(uids.admin, "authenticated");
+      const asAdmin = await tx.query(`select * from message_outbox where organization_id = $1`, [ORG]);
+      expect(asAdmin.rows.length).toBe(0);
+
+      await as(uids.parent, "authenticated");
+      const asParent = await tx.query(`select * from message_outbox where organization_id = $1`, [ORG]);
+      expect(asParent.rows.length).toBe(0);
+    })
+  );
+
   it(
     "invoice-number counters cannot be tampered with client-side",
     withFixtures(async (tx, as) => {

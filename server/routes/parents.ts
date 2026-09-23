@@ -1,12 +1,14 @@
 import express from "express";
 import crypto from "node:crypto";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
-import { withTransaction } from "../db.ts";
+import { withTransaction, pool } from "../db.ts";
 import { authenticateToken, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
 import { setMembership, setActiveOrganization, hasMembership } from "./members.ts";
 import { parentInviteRequestSchema, parentRedeemRequestSchema } from "../../shared/schemas/parents.ts";
 import { CONSENT_VERSION } from "../../shared/consent.ts";
+import { enqueueMessage } from "../utils/messaging/outbox.ts";
+import { inviteLinkKey } from "../utils/messaging/idempotency.ts";
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -28,7 +30,7 @@ router.post("/invites", async (req: AuthRequest, res, next) => {
     const { studentId } = parentInviteRequestSchema.parse(req.body);
 
     const { data: student, error: studentErr } = await supabaseAdmin
-      .from("students").select("name, organization_id").eq("id", studentId).maybeSingle();
+      .from("students").select("name, organization_id, parent_phone").eq("id", studentId).maybeSingle();
     if (studentErr) throw studentErr;
     if (!student || student.organization_id !== orgId) {
       return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
@@ -41,6 +43,25 @@ router.post("/invites", async (req: AuthRequest, res, next) => {
     });
     if (inviteErr) throw inviteErr;
     await writeAudit(orgId, req.user!.id, "parent_invite.create", "students", studentId, { token: token.slice(0, 8) + "…" });
+
+    // B-17: real send alongside the token staff can still share by hand --
+    // this doesn't replace the token/link response below (staff may have no
+    // phone on file, or prefer to share it another way), it just also puts
+    // the invite where the plan says nobody should have to copy-paste it.
+    // Only fires when the student row already carries a parent phone; a
+    // parent invited with no phone captured yet still gets a working token.
+    if (student.parent_phone) {
+      const inviteUrl = `${process.env.APP_URL ?? ""}/onboarding?invite=${token}`;
+      await enqueueMessage(pool, {
+        organizationId: orgId,
+        recipientUserId: null,
+        recipientPhone: student.parent_phone,
+        templateKey: "invite_link",
+        payload: { studentName: student.name || "your child", inviteUrl, role: "parent" },
+        source: { kind: "parent_invite", entityId: token },
+        idempotencyKey: inviteLinkKey("parent", token),
+      });
+    }
 
     res.status(201).json({ ok: true, token, expiresAt: expiresAt.toISOString(), studentName: student.name || null });
   } catch (err) { next(err); }

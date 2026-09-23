@@ -15,6 +15,8 @@ import type {
   RefundRequest,
   RefundResponse,
   WalletTopupLinkResponse,
+  RemindInvoiceResponse,
+  ReminderStatusResponse,
 } from "../../shared/schemas/billing";
 import type { EnsureClassChannelResponse } from "../../shared/schemas/inbox";
 import type {
@@ -158,6 +160,18 @@ export function createInvoicePaymentLink(invoiceId: string) {
     `/billing/invoices/${invoiceId}/payment-link`,
     { method: "POST" }
   );
+}
+
+/** B-17 (EXECUTION_PLAN.md Step 27): a real WhatsApp/SMS send, tracked in the
+ *  outbox — replaces the old wa.me-for-a-human and clipboard-copy flows. */
+export function remindInvoice(invoiceId: string) {
+  return api<RemindInvoiceResponse>(`/billing/invoices/${invoiceId}/remind`, { method: "POST" });
+}
+
+/** Latest reminder/message delivery state for a batch of invoices, keyed by invoice id. */
+export function getReminderStatuses(invoiceIds: string[]) {
+  if (invoiceIds.length === 0) return Promise.resolve<ReminderStatusResponse>({ ok: true, statuses: {} });
+  return api<ReminderStatusResponse>(`/billing/invoices/reminder-status?ids=${invoiceIds.map(encodeURIComponent).join(",")}`);
 }
 
 /** Download the server-rendered invoice PDF. Streams as a Blob; triggers a
