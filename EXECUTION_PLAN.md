@@ -21,7 +21,7 @@
 
 **D-10 is now decided (2026-09-14, MASTER_PLAN.md §13): WhatsApp-first with SMS fallback, via an aggregator (specific vendor still open).** Step 27 (B-17, outbound comms router) is unblocked for its provider-agnostic transport abstraction and template-registry work — build that now. Only the concrete adapter needs a specific vendor picked, and only the live send needs WhatsApp Business API onboarding + template approval + SMS DLT registration (multi-week procurement — start it in parallel if it hasn't started).
 
-**Separately, and bigger: D-09 (2026-09-14) reversed the marketplace gate — build tutor discovery/search now, not after traction.** This does **not** slot into a numbered step yet. It needs its own dedicated re-scoping pass first (MASTER_PLAN.md §7's R6 section, §8's B-14/15/16 rows) before real EXECUTION_PLAN.md steps get written for it — real dependency questions are open (does B-15's enquiry SLA need Step 27's comms router done first? does minor-safety verification need to land before public discovery goes live, since this now launches without the traction/trust signal the original gate assumed?). Ask before that scoping pass starts if you want it prioritized ahead of, or interleaved with, Step 27 onward.
+**Separately: D-09 (2026-09-14) reversed the marketplace gate — build tutor discovery/search now, not after traction. The re-scoping pass is done; Steps 37-39 below carry it.** MASTER_PLAN.md §7's R6 section and §8's backlog notes were rewritten against the real schema the same day. The open dependency questions are resolved: B-15's enquiry-SLA clock (Step 38) does not need Step 27's comms router first — it alerts in-app via the existing `notifications` table, gaining WhatsApp/SMS delivery only as a Step 27 follow-on; discovery/enquiry introduces no new adult-minor contact vector and does not need to wait on minor-safety verification, though it ships with an honest "unverified" label from day one and Step 30 is recommended (not required) before Step 38's trial-to-enrolment handoff goes live. Per the founder's direction, Steps 37-39 are appended continuing the existing numbering, without reordering or renumbering Steps 27-36 — they are an independent track, startable whenever it's convenient to pick them up rather than under a fixed parallel-or-sequential rule.
 
 **Why that and not Step 24.** Step 24 (B-19, the referral loop) is fully coded. It was committed to local `main` as `1eedd13` during the 2026-09-12 planning session, but was **parked before Step 25's session started**: the commit now lives on branch `parked/b-19-referral`, off `main`'s history since the rebuild. Its migration `20260912150000_referral_loop.sql` has never been applied to staging or production and it has never been walked live. MASTER_PLAN.md §8 parks it: it pays out wallet credit, wallet credit needs a live Razorpay that no org has connected, and there are no users to refer anyone. **Do not push `parked/b-19-referral` and do not apply its migration.** Revisit in R5, after Steps 27 to 29.
 
@@ -29,7 +29,7 @@
 
 **Run in parallel with Step 26, because they are procurement and not engineering** (MASTER_PLAN.md §12): WhatsApp Business API onboarding and template approval, SMS DLT registration, Razorpay live KYC for both the platform account and the pilot org, and booking an external pentest vendor. These have multi-week lead times and they gate Steps 27, 28 and 34.
 
-**Founder decisions D-03, D-09, D-10, D-11, D-12, D-13 all decided 2026-09-14 — see MASTER_PLAN.md §13.** D-10 (WhatsApp-first via an aggregator, vendor TBD) unblocks Step 27's provider-agnostic build; D-11 (hand-rolled Postgres events table) unblocks Step 32; D-03 (keep placeholder tiers, deliberately) unblocks Step 28. D-09 (marketplace gate lifted — build tutor discovery now, not after traction) is the big one: it does **not** unblock a step below yet, because R6's marketplace work (B-14/15/16, ~30 ed) was never scoped into these numbered steps in the first place — MASTER_PLAN.md §7's R6 section is marked stale pending a dedicated re-scoping pass before any Step N+ gets written for it.
+**Founder decisions D-03, D-09, D-10, D-11, D-12, D-13 all decided 2026-09-14 — see MASTER_PLAN.md §13.** D-10 (WhatsApp-first via an aggregator, vendor TBD) unblocks Step 27's provider-agnostic build; D-11 (hand-rolled Postgres events table) unblocks Step 32; D-03 (keep placeholder tiers, deliberately) unblocks Step 28. D-09 (marketplace gate lifted — build tutor discovery now, not after traction) unblocks Steps 37-39 below, written the same day once the re-scoping pass resolved the open dependency questions (see MASTER_PLAN.md §7's R6 section).
 
 ---
 
@@ -55,7 +55,10 @@
 | 34 | C-09 onboarding friction pass | R4 | Not started |
 | 35 | TD-3 paise-native migration | R4 | Not started |
 | 36 | B-20 payout manual-settlement details | Unscheduled, founder request | Not started |
-| 37+ | R5 (C-10, C-11, C-12, B-18, C-13) | R5 | Not scoped as steps yet |
+| 37 | B-14 public tutor profiles + verification labeling | R6 | Not started, no dependency on 27-36 |
+| 38 | B-15 discovery, search, structured enquiry + SLA clock, trial-to-enrolment handoff | R6 | Not started, depends on Step 37 |
+| 39 | B-16 escrow (payout-run variant), reviews, moderation/disputes | R6 | Not started, depends on Step 38 |
+| 40+ | R5 (C-10, C-11, C-12, B-18, C-13) | R5 | Not scoped as steps yet |
 
 **Carried gap from Step 23:** the "Assign to all" substitute-reassignment mutation has never been clicked live. It needs a second real tutor account in the demo org, created through the app's own Team-tab invite link rather than a backend script. Fold this into Step 31's Playwright coverage rather than doing it by hand.
 
@@ -443,13 +446,135 @@ Journeys touching a live Razorpay or phone OTP stay out of CI and are exercised 
 
 ---
 
+## Step 37: B-14, public tutor profiles + verification labeling
+
+**Objective.** Give every tutor (independent or centre-affiliated) a real public profile a visitor can find, and make the platform's verification state honest rather than implied.
+
+**Why this step exists.** D-09 (2026-09-14, MASTER_PLAN.md §13) lifted the commercial gate that used to block all marketplace work. Today `src/pages/public/Home.tsx` sells a marketplace that does not exist: stock photos, invented captions ("Sarah M. — Advanced Calculus Session"), hardcoded counts ("1,200+ Tutors", "850+ Tutors"), and every CTA (`Find 1-on-1 Tutors`, `Browse Group Batches`) links to `/login` rather than any real listing or query. Meanwhile `tutor_profiles` already carries real marketplace-facing fields (`full_name`, `grades`, `experience_years`, `qualification`, `teaching_mode`, `location`, `price_model`, `price_range_min/max`, `max_batch_size`, `is_verified` — added in `20260709020800_group_d_fields.sql`) that nothing public reads. This step makes the public site tell the truth using data that already exists, and builds the one new thing genuinely missing: a public-safe read path, since every existing client read of this data is RLS-scoped to org members only.
+
+**Files and systems likely affected.**
+- `server/routes/` (new): a public route file (no auth required) exposing only a narrow, public-safe column set from `tutor_profiles` joined to `organizations` — never contact info, pricing internals beyond the public `price_range`, or anything from `students`/`invoices`/other org-internal tables.
+- `supabase/migrations/<ts>_marketplace_public_read.sql` (new, only if a Postgres-level anon-readable view is chosen over an Express endpoint — see implementation scope point 1 for the decision to make).
+- `src/pages/public/Home.tsx`: replace the fabricated hero content and tutor counts with real data from the new endpoint.
+- `src/pages/public/` (new): a tutor/profile detail page.
+- `tutor_profiles`'s `is_verified` column and its RLS (`20260710140000_tutor_verify_fix.sql`, owner/admin-only write) are reused as-is, not changed.
+
+**Dependencies.** None. This is why it can start independent of Steps 27-36.
+
+**Implementation scope.**
+1. **Decide the public-read mechanism deliberately and record the choice**: a new unauthenticated Express route with an explicit allow-listed column projection (matches this codebase's existing pattern of Express-mediated privileged access), versus a narrow Postgres view with an `anon`-readable RLS policy (matches the two-data-path architecture's "direct-to-Supabase reads under RLS" half). Prefer the Express route unless the view can be proven not to leak beyond the intended columns even as `tutor_profiles` gains fields later — an allow-list in application code is easier to audit than a view definition drifting out of sync with schema changes.
+2. Because `tutor_profiles` is PK'd `(user_id, organization_id)` with `is_verified` per-row (per `20260912100000_multi_membership_profiles.sql`'s multi-membership change), a tutor with two org memberships could be verified in one and not the other. Decide and document which row's verification state a public profile displays — recommended: the specific `(tutor, organization)` pair being listed, not an aggregate, since a centre's verification of its own tutor is a distinct claim from another centre's.
+3. Build the public listing and detail pages against the new endpoint. Any tutor without `is_verified = true` for the listed org must show an explicit "Not yet verified" state — do not omit the badge or default to a neutral-looking treatment, since an absent signal reads as an implicit vouch.
+4. Rewrite `Home.tsx`: remove all hardcoded tutor counts and fabricated testimonial content; wire the "Find 1-on-1 Tutors" / "Browse Group Batches" CTAs to the new real listing instead of `/login`.
+
+**Tests required.**
+- Contract: the new public endpoint returns only the allow-listed columns for a real seeded tutor/org, returns nothing for a non-existent id rather than an error leaking existence info inconsistently, and — the important negative case — a request cannot pull any column outside the allow-list even by requesting it directly.
+- RLS (if a view-based approach is chosen): an anon role can read only the intended columns of the view and nothing else in the schema.
+- Unit: none expected beyond any new pure formatting helpers.
+
+**Browser verification required.** As a logged-out, anonymous browser session: load the public site, browse to a real seeded tutor's profile, and confirm no private data (contact info beyond what's intended, pricing internals, student data) is visible in the page, the network responses, or the page source. Confirm an unverified tutor visibly reads as unverified.
+
+**Definition of done.**
+- [ ] A public, unauthenticated visitor can browse real tutor profiles with no login.
+- [ ] No hardcoded tutor counts or fabricated content remain in `Home.tsx`.
+- [ ] Every listed profile's verification state is accurate and visible, including the "not yet verified" case.
+- [ ] The public read path is proven, by a contract test, not to leak any column beyond the allow-list.
+- [ ] All seven gates green; API bundle mount count updated if a new Express route was added.
+
+**Expected outcome.** The public site matches the real product for the first time, and "verified" becomes a claim ClassStackr can stand behind rather than an implied one.
+
+**Follow-on steps.** Step 38 depends on this — there is nothing to search until real profiles exist.
+
+---
+
+## Step 38: B-15, discovery, search, structured enquiry with an SLA clock, and trial-to-enrolment handoff
+
+**Objective.** Let a parent find a tutor, ask a structured question, and — if it goes well — end up as a real enrolled student, without any of it depending on infrastructure that doesn't exist yet.
+
+**Why this step exists.** D-09 wants this built now. The two things that looked like hard blockers on inspection are not: (1) an enquiry does not need B-17's outbound comms router (Step 27, not started) — it can alert the receiving staff in-app through the same `notifications` table the credit-expiry cron already writes to, and gain WhatsApp/SMS delivery later as a pure enhancement; (2) a "trial booking" does not need a new prospect-booking system — `session_requests` (shipped R1) requires a real `students.id`, but the existing lead "convert to student" action (`People.tsx`'s Leads lens) plus the existing parent/student invite flow already bridge a prospect into a real student record, at which point the existing booking flow applies unchanged.
+
+**Files and systems likely affected.**
+- `supabase/migrations/<ts>_marketplace_leads.sql` (new): extend `leads` (schema.sql) with `source text` (existing `LEAD_SOURCES` convention, add `'marketplace'`), `tutor_id uuid references auth.users(id)` (nullable, set only for marketplace-sourced leads), `sla_deadline timestamptz` (nullable), matching the `expires_at` pattern already used by `parent_invites`/`student_invites`.
+- `server/routes/` (new or extending the Step 37 public route file): a public, unauthenticated `POST` endpoint that inserts a `leads` row scoped to the target tutor's `organization_id` — the **first anonymous-write path into this schema**, so it needs its own rate limiting (per-IP and/or per-contact-info) and basic spam/abuse checks, deliberately not exposed as raw Supabase table access.
+- `server/routes/cron.ts`: a new sweep (mirroring `creditExpiry.ts`'s per-org loop pattern) that finds leads past or approaching `sla_deadline` and writes a `notifications` row for the org's staff — no outbound send, in-app only.
+- `supabase/migrations/<ts>_contact_reveal_events.sql` (new): a `contact_reveal_events` table (org, lead or tutor reference, revealed_at, nullable `payment_id`) — the reveal ships free in this step; the nullable payment reference exists so gating can be added later without a schema rework, mirroring D-03's deliberately-ungated placeholder pricing.
+- `src/pages/public/` : search/filter UI over Step 37's listing, and the enquiry/reveal-contact form.
+- `src/pages/People.tsx` (`LeadsLens`): the existing "convert to student" action is reused unchanged; the lead list should distinguish `source='marketplace'` leads if useful, but this is not required for correctness.
+- `src/hooks/usePeople.ts`, `src/lib/people.ts`: extend `mapLeadRow`/`LEAD_FUNNEL_STAGES` handling only if a marketplace-sourced lead needs to render differently; otherwise no change, since the funnel already generalizes.
+
+**Dependencies.** Step 37 (needs profiles to search over). The trial-to-enrolment handoff sub-scope (implementation scope point 4 below) is recommended, not required, to land after Step 30 (C-05, D-06 guardian-visible threads) — marketplace-sourced enrolments are a new, less-vetted intake channel, and Step 30 is the control that matters once real in-platform tutor-student contact begins.
+
+**Implementation scope.**
+1. Build search/filter UI over Step 37's public listing (by subject/grade, location, teaching mode, price range — all already columns on `tutor_profiles`).
+2. Build the public enquiry endpoint: validates and rate-limits, then inserts a `leads` row with `organization_id` set to the target tutor's org, `source='marketplace'`, `tutor_id` set, and an `sla_deadline` (pick and document a concrete window, e.g. 24 hours — this is a product default, not a founder-decided number, so record it as an assumption to revisit rather than presenting it as decided). D-02 routing falls out for free here: for a centre (more than one `organization_members` row), the lead is staff-visible org-wide via the existing `leads_rw` RLS policy (`is_staff(organization_id)`), not the individual tutor's private contact; for an independent tutor (exactly one `organization_members` row, per D-01), that tutor is the org's own staff, so it lands with them directly. No new routing table is needed.
+3. Build the "reveal contact" action as a separate, explicit step from submitting an enquiry (a visitor can request contact info without necessarily filing a structured enquiry, or vice versa — decide and document which is the primary path). Ships free; write a `contact_reveal_events` row on every reveal regardless, so future gating has real usage data to price against.
+4. Wire the trial-to-enrolment handoff: from a converted lead (existing action), the existing invite flow (`createParentInvite`/`createStudentInvite`) sends real credentials, and the existing booking/session-request or Add Class flow schedules the actual trial. Do not build a new booking primitive for this — the point of this step is that none is needed.
+5. Add the SLA-sweep cron route, gated the same way as the other four cron routes (`CRON_SECRET`/`Authorization: Bearer`), writing a `notifications` row rather than attempting any outbound send.
+
+**Tests required.**
+- Contract: the public enquiry endpoint (rate-limit enforcement, correct `organization_id`/`tutor_id` scoping, rejection of malformed input, no path from this endpoint to any table other than `leads`); the SLA-sweep cron (mirroring `cron.test.ts`'s fault-injection pattern — a breached-deadline lead writes exactly one notification, a non-breached one writes none, a re-run does not double-notify); a full lead → convert-to-student → invite → trial-scheduled walkthrough at the contract level.
+- RLS: `contact_reveal_events` and the extended `leads` columns don't open any new client read/write path beyond what `leads_rw` already grants to staff.
+- Unit: the SLA-deadline computation, if extracted as a pure helper.
+
+**Browser verification required.** As an anonymous visitor: search, find a tutor, submit an enquiry, and reveal contact info — confirm the lead appears in that org's Leads lens with the marketplace source visible, and (for a centre) confirm it is staff-wide visible, not scoped to just the target tutor. Then, as staff, convert the lead to a student, send an invite, and book a trial through the existing flow end to end. Separately, deliberately let a test lead's SLA deadline pass and confirm the cron sweep produces exactly one in-app notification.
+
+**Definition of done.**
+- [ ] An anonymous visitor can search, enquire, and reveal a tutor's contact info without an account.
+- [ ] D-02 routing is correct: centre-affiliated enquiries are staff-visible org-wide; independent-tutor enquiries land with that tutor.
+- [ ] The SLA clock fires an in-app notification on breach, with no outbound send required.
+- [ ] A lead can be walked end to end to a scheduled trial using only existing conversion, invite, and booking mechanisms — no new booking table.
+- [ ] The public enquiry endpoint is proven, by a contract test, to be rate-limited and unable to write to anything but `leads`.
+- [ ] All seven gates green.
+
+**Expected outcome.** Discovery and enquiry are real, D-02 and the SLA clock work without waiting on Step 27, and the trial-to-enrolment path costs almost nothing to build because it reuses machinery that already exists.
+
+**Follow-on steps.** Step 39 depends on this — escrow and reviews need a real trial/enrolment flow to attach to. Step 27, once it exists, should add outbound delivery to the same SLA-breach and enquiry-received events this step already writes in-app.
+
+---
+
+## Step 39: B-16, escrow (as a payout-run variant), reviews, moderation and disputes
+
+**Objective.** Give the marketplace side of the product trust primitives — a way to hold and release money tied to attendance, and a way for a completed engagement to produce a review — without building a second money subsystem next to the one that already works.
+
+**Why this step exists.** No escrow-specific primitive and no reviews/ratings table exist anywhere in the codebase today (confirmed by grep). But `tutor_earnings_ledger` → `tutor_payouts` (Step 21, B-08, already shipped) is already structurally a hold-then-release pattern: earnings accrue per session at attendance-marking time and sit `issued`, unpaid, until a payout run's `mark-paid` step releases them. B-16's original "take-rate tapering" revenue mechanism is dead (D-03 ruled out take rates entirely), so escrow here is a trust primitive only, not a revenue feature — which makes reusing the existing hold/release machinery the right scope rather than a shortcut.
+
+**Files and systems likely affected.**
+- `server/routes/billing.ts`, `server/routes/payouts.ts`: the existing `FOR UPDATE` row-lock and idempotency-key conventions are the pattern to replicate for any marketplace-specific hold, rather than a new locking scheme.
+- `supabase/migrations/<ts>_marketplace_reviews.sql` (new): a `reviews` table anchored to a real, completed, attended session (reusing the anchor-pattern already established by `conversations.anchor_id`), so a review cannot be left without a verified attendance record behind it.
+- `supabase/migrations/<ts>_marketplace_disputes.sql` (new, if disputes need dedicated state beyond the existing audit log): moderation/dispute fields riding the existing `audit_events` conventions rather than a parallel logging system.
+
+**Dependencies.** Step 38 (needs a real trial/enrolment flow to attach escrow and reviews to). Reuses Step 21's payout machinery directly.
+
+**Implementation scope.**
+1. **Before writing any escrow code, get the founder call this step is explicitly gated on** (see MASTER_PLAN.md §13 and §7's R6 section): does a marketplace-sourced trial or first paid engagement need money held in escrow from day one, or can the trial simply be free (avoiding the question entirely) with escrow deferred to a later engagement type? This plan recommends the free-trial framing — it is simpler, and it matches Step 38's default of not requiring payment to book a trial — but it is a recommendation, not a decision, and this step should not start building an escrow hold/release flow until that call is made.
+2. If escrow is confirmed needed: model it as a variant of `tutor_earnings_ledger`/`tutor_payouts` — a marketplace engagement's payment sits held (mirroring `issued`) until marked attendance triggers release (mirroring `mark-paid`), using the same `FOR UPDATE`-plus-idempotency-key discipline as `billing.ts`'s reversal logic.
+3. Reviews: a `reviews` table where a review row can only be inserted with a reference to a real, completed, attended session — enforce this at the RLS or route layer (decide and document which, per MASTER_PLAN §10's "RLS and the route layer must agree" rule), not just in client-side UI logic.
+4. Moderation/disputes: minimal viable shape — a status field on reviews (published/flagged/removed) and a dispute record tied to the escrow/payment row if escrow was built, using the existing audit-log write pattern for any state transition.
+
+**Tests required.**
+- Contract: a review cannot be created without a real completed attended session backing it; if escrow was built, a hold-then-release round trip mirroring `payouts.test.ts`'s existing mark-paid coverage, plus a double-release/idempotency test analogous to the attendance-reversal double-reverse `409` case.
+- RLS: reviews and any escrow-adjacent table have no broader client access than intended (e.g., a reviewer can only review their own completed engagement).
+- Unit: none expected beyond any new pure logic extracted for review eligibility checks.
+
+**Browser verification required.** Walk a real (or throwaway) engagement from Step 38's trial-to-enrolment handoff through to a completed, attended session, then leave a review and confirm it displays on the tutor's Step 37 public profile. If escrow was built, walk a hold-then-release cycle with real or throwaway amounts and confirm the release only fires on marked attendance.
+
+**Definition of done.**
+- [ ] The escrow-from-day-one founder call has been made and recorded, before any escrow code was written.
+- [ ] Reviews are gated on verified attendance, enforced at the RLS or route layer with a test that fails if the check is removed.
+- [ ] If escrow was built: a hold-then-release cycle works end to end and cannot double-release.
+- [ ] All seven gates green.
+
+**Expected outcome.** The marketplace has real trust primitives, built on machinery this codebase already trusts for money, rather than a second, less-tested system.
+
+---
+
 ## R5 and beyond, not yet scoped as steps
 
 MASTER_PLAN.md §7's R5 holds C-10 (parent attendance and payment history, which is UI-only since RLS already permits both and the blocking code comment in `ParentPortal.tsx:206` is simply stale), C-11 (the gradebook marking loop, which is what makes the progress-report PDF's academic section non-empty for the first time), C-12 (cross-org family view), B-18 (leading indicators, which needs Step 26's cron to have filled `org_stats_daily`), and C-13 (guardian records moving from student-owned free-text to parent-owned).
 
 **Scope these into steps only when R4's gate is met.** Each should open the way Steps 15 to 24 did, with a schema reality check confirmed by reading the code rather than trusting this file's one-line description. Three of the four times that discipline was applied, the plan's premise turned out to be wrong.
 
-**R6, the marketplace (B-14, B-15, B-16),** stays unscoped behind MASTER_PLAN §7's commercial gate: 10 or more paying orgs, week-4 retention above 80%, ₹10L or more per month collected. Do not write steps for it before the gate opens; D-03 already invalidated its original pricing mechanism once, and scoping it early would only invalidate more.
+**R6, the marketplace (B-14, B-15, B-16), is scoped as Steps 37-39 above** — D-09 (2026-09-14) lifted the commercial gate this section used to cite, and the re-scoping pass grounding those steps in the real schema is complete (MASTER_PLAN.md §7).
 
 ---
 
