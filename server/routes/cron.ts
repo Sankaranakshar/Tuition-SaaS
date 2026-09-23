@@ -35,7 +35,7 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-router.post("/materialize-sessions", async (_req, res, next) => {
+async function materializeSessionsHandler(_req: express.Request, res: express.Response, next: express.NextFunction) {
   try {
     // Skip templates materializeTemplate would drop on entry anyway (one-to-ones,
     // unscheduled batches) — across every org that is most of the table.
@@ -69,7 +69,13 @@ router.post("/materialize-sessions", async (_req, res, next) => {
     }
     res.json({ ok: failures.length === 0, ...aggregate, ...(failures.length ? { failures } : {}) });
   } catch (err) { next(err); }
-});
+}
+// Registered for both GET and POST: Vercel Cron always invokes via GET
+// (https://vercel.com/docs/cron-jobs#how-cron-jobs-work), but POST is kept
+// for the existing contract tests and manual/curl invocation, both written
+// against POST before this GET/POST mismatch was found — every unattended
+// scheduled invocation has been silently 404ing since Step 26 shipped.
+router.route("/materialize-sessions").get(materializeSessionsHandler).post(materializeSessionsHandler);
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -82,7 +88,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // full-table scan. One row per active org per day, upserted so a rerun for
 // the same date is idempotent. Defaults to UTC yesterday so the day being
 // aggregated is always fully closed; pass `date` (YYYY-MM-DD) to backfill.
-router.post("/reporting-daily", async (req, res, next) => {
+async function reportingDailyHandler(req: express.Request, res: express.Response, next: express.NextFunction) {
   try {
     const body = (req.body ?? {}) as { date?: unknown };
     const targetDate = typeof body.date === "string" && DATE_RE.test(body.date)
@@ -159,7 +165,8 @@ router.post("/reporting-daily", async (req, res, next) => {
 
     res.json({ ok: failures.length === 0, date: targetDate, orgsProcessed, ...(failures.length ? { failures } : {}) });
   } catch (err) { next(err); }
-});
+}
+router.route("/reporting-daily").get(reportingDailyHandler).post(reportingDailyHandler);
 
 // Wallet-to-ledger reconciliation (B-03, MASTER_PLAN.md §3 R1) — the check
 // that catches the next B-01-shaped bug before a parent notices their
@@ -173,7 +180,7 @@ router.post("/reporting-daily", async (req, res, next) => {
 // viewer. balance_currency is legacy display-mirror rupees (numeric(10,2),
 // shared/money.ts); expected_paise is cast to numeric before dividing since
 // bigint/int division in Postgres truncates.
-router.post("/reconcile-wallets", async (_req, res, next) => {
+async function reconcileWalletsHandler(_req: express.Request, res: express.Response, next: express.NextFunction) {
   try {
     const orgsRes = await pool.query(`select distinct organization_id as id from wallets`);
 
@@ -243,7 +250,8 @@ router.post("/reconcile-wallets", async (_req, res, next) => {
 
     res.json({ ok: failures.length === 0, walletsChecked, mismatches, ...(failures.length ? { failures } : {}) });
   } catch (err) { next(err); }
-});
+}
+router.route("/reconcile-wallets").get(reconcileWalletsHandler).post(reconcileWalletsHandler);
 
 // Credit expiry (B-04, D-07 — EXECUTION_PLAN.md Step 9). Per-org opt-in: a
 // center sets { enabled, windowDays } at organizations.settings.creditExpiry
@@ -261,7 +269,7 @@ router.post("/reconcile-wallets", async (_req, res, next) => {
 // reconciliation still holds (balance == ledger sum). Nothing is deleted.
 // 30-day and 7-day warning notifications fire once per lot via the existing
 // notifications surface, deduped against notifications already written.
-router.post("/expire-credits", async (_req, res, next) => {
+async function expireCreditsHandler(_req: express.Request, res: express.Response, next: express.NextFunction) {
   try {
     const orgsRes = await pool.query(
       `select id, settings from organizations
@@ -377,7 +385,8 @@ router.post("/expire-credits", async (_req, res, next) => {
       ...(failures.length ? { failures } : {}),
     });
   } catch (err) { next(err); }
-});
+}
+router.route("/expire-credits").get(expireCreditsHandler).post(expireCreditsHandler);
 
 // One 30-day and one 7-day notification per lapsing lot, to every parent
 // linked to the student plus the student's own login. Deduped on

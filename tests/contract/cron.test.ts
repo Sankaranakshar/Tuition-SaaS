@@ -58,6 +58,38 @@ describe("cron auth guard", () => {
   });
 });
 
+// Vercel Cron always invokes via GET (https://vercel.com/docs/cron-jobs#how-cron-jobs-work),
+// never POST — the gap this suite closes. All four routes were POST-only from
+// Step 26 (2026-09-14) until this fix: every real unattended scheduled
+// invocation 404'd, silently, for 9 days, while every manual/test POST
+// request succeeded and masked it. These four assert the actual Vercel
+// invocation shape, not just the auth guard.
+describe("cron routes accept GET, the method Vercel Cron actually sends", () => {
+  it("materialize-sessions", async () => {
+    const res = await request(app).get("/api/cron/materialize-sessions").set("Authorization", `Bearer ${CRON_SECRET}`);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it("reporting-daily", async () => {
+    const res = await request(app).get("/api/cron/reporting-daily").set("Authorization", `Bearer ${CRON_SECRET}`);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it("reconcile-wallets", async () => {
+    const res = await request(app).get("/api/cron/reconcile-wallets").set("Authorization", `Bearer ${CRON_SECRET}`);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it("expire-credits", async () => {
+    const res = await request(app).get("/api/cron/expire-credits").set("Authorization", `Bearer ${CRON_SECRET}`);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+});
+
 describe("cron failure isolation + audit trail", () => {
   it("a per-org failure in reporting-daily writes an audit_events row and reports ok:false", async () => {
     const originalQuery = pool.query.bind(pool);

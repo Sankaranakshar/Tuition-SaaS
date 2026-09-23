@@ -3686,7 +3686,7 @@ router9.use((req, res, next) => {
 function errorMessage(err) {
   return err instanceof Error ? err.message : String(err);
 }
-router9.post("/materialize-sessions", async (_req, res, next) => {
+async function materializeSessionsHandler(_req, res, next) {
   try {
     const templatesRes = await pool.query(`${TEMPLATE_SELECT} where ${MATERIALIZABLE}`);
     const aggregate = { created: [], conflicts: [], templatesProcessed: 0 };
@@ -3714,9 +3714,10 @@ router9.post("/materialize-sessions", async (_req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
+}
+router9.route("/materialize-sessions").get(materializeSessionsHandler).post(materializeSessionsHandler);
 var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-router9.post("/reporting-daily", async (req, res, next) => {
+async function reportingDailyHandler(req, res, next) {
   try {
     const body = req.body ?? {};
     const targetDate = typeof body.date === "string" && DATE_RE.test(body.date) ? body.date : new Date(Date.now() - 24 * 3600 * 1e3).toISOString().slice(0, 10);
@@ -3786,8 +3787,9 @@ router9.post("/reporting-daily", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
-router9.post("/reconcile-wallets", async (_req, res, next) => {
+}
+router9.route("/reporting-daily").get(reportingDailyHandler).post(reportingDailyHandler);
+async function reconcileWalletsHandler(_req, res, next) {
   try {
     const orgsRes = await pool.query(`select distinct organization_id as id from wallets`);
     let walletsChecked = 0;
@@ -3850,8 +3852,9 @@ router9.post("/reconcile-wallets", async (_req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
-router9.post("/expire-credits", async (_req, res, next) => {
+}
+router9.route("/reconcile-wallets").get(reconcileWalletsHandler).post(reconcileWalletsHandler);
+async function expireCreditsHandler(_req, res, next) {
   try {
     const orgsRes = await pool.query(
       `select id, settings from organizations
@@ -3955,7 +3958,8 @@ router9.post("/expire-credits", async (_req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
+}
+router9.route("/expire-credits").get(expireCreditsHandler).post(expireCreditsHandler);
 async function sendExpiryWarning(orgId, studentId, warn) {
   const existing = await pool.query(
     `select 1 from notifications
