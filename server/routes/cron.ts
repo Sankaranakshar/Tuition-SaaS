@@ -4,6 +4,12 @@ import { materializeTemplate, TEMPLATE_SELECT, MATERIALIZABLE, type Template } f
 import { writeAudit } from "../utils/audit.ts";
 import { paiseToRupees } from "../../shared/money.ts";
 import { resolveCreditExpiryPolicy, computeCreditExpiry, type ExpiryWarning } from "../../shared/creditExpiry.ts";
+import { enqueueMessage } from "../utils/messaging/outbox.ts";
+import { resolveStudentGuardianRecipients } from "../utils/messaging/recipients.ts";
+import { renderTemplate } from "../utils/messaging/templates.ts";
+import { getMessagingProvider, type MessagingChannel } from "../utils/messaging/provider.ts";
+import { sessionReminderKey } from "../utils/messaging/idempotency.ts";
+import { backoffMinutes, nextChannel, isDeadLetter } from "../utils/messaging/backoff.ts";
 
 // Machine-to-machine endpoint, wired to Vercel Cron (vercel.json's `crons`
 // array) daily against all four routes below. No Supabase user session
@@ -436,5 +442,169 @@ async function sendExpiryWarning(orgId: string, studentId: string, warn: ExpiryW
   }
   return true;
 }
+
+// B-17 (EXECUTION_PLAN.md Step 27): the delivery sweep. Two jobs in one route
+// deliberately, not two cron entries: Vercel Cron on the Hobby plan only
+// schedules daily (see this file's header comment on the 20:00-20:15 UTC
+// window), so a session-reminder job that only *enqueues* on its own daily
+// tick would still need this same sweep to actually send -- combining them
+// means one cron entry instead of two, and "enqueue, then send what's due"
+// reads as one coherent daily pass rather than two jobs racing each other.
+//
+// Retry/backoff/dead-letter state machine: queued -> [send attempt] -> sent,
+// or -> failed (next_attempt_at pushed out, exponential backoff capped at 60
+// minutes) -> retried on a later sweep, up to MAX_DELIVERY_ATTEMPTS, after
+// which the row moves to dead_letter and writes one audit_events row (not
+// one per retry, which would spam the audit log for a single lapsing
+// message). The first failure on a whatsapp-channel message flips it to sms
+// for the next attempt -- D-10's "WhatsApp-first with SMS fallback"
+// implemented as a state transition, not a second code path. The state
+// machine itself lives in server/utils/messaging/backoff.ts so it's
+// unit-testable without a database; this handler is just the IO around it.
+
+// Lookahead covers a bit more than a full day so a session materialized (or
+// a reminder missed) close to the boundary of one daily sweep is still
+// caught by the next one, rather than requiring the two to land exactly 24h
+// apart. Idempotency key is per (session, student) pair, so re-running the
+// sweep before the next day never double-reminds.
+const SESSION_REMINDER_LOOKAHEAD_MS = 26 * 3600 * 1000;
+
+function formatSessionTimeInZone(instant: Date, zone: string): string {
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: zone,
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(instant);
+}
+
+async function enqueueSessionReminders(): Promise<{ sessionsChecked: number; enqueued: number }> {
+  const sessionsRes = await pool.query(
+    `select s.id, s.organization_id, s.student_ids, s.start_time, o.timezone,
+            ct.name as template_name
+     from class_sessions s
+     join organizations o on o.id = s.organization_id
+     left join class_templates ct on ct.id = s.template_id
+     where s.status = 'scheduled'
+       and s.start_time >= now()
+       and s.start_time < now() + ($1 || ' milliseconds')::interval`,
+    [String(SESSION_REMINDER_LOOKAHEAD_MS)]
+  );
+
+  let enqueued = 0;
+  for (const session of sessionsRes.rows as {
+    id: string; organization_id: string; student_ids: string[]; start_time: string;
+    timezone: string; template_name: string | null;
+  }[]) {
+    const startTimeLocal = formatSessionTimeInZone(new Date(session.start_time), session.timezone);
+    for (const studentId of session.student_ids) {
+      const studentRes = await pool.query(`select name from students where id = $1`, [studentId]);
+      const studentName = studentRes.rows[0]?.name as string | undefined;
+      if (!studentName) continue;
+
+      const recipients = await resolveStudentGuardianRecipients(pool, studentId);
+      for (const recipient of recipients) {
+        const result = await enqueueMessage(pool, {
+          organizationId: session.organization_id,
+          recipientUserId: recipient.recipientUserId,
+          recipientPhone: recipient.recipientPhone,
+          templateKey: "session_reminder",
+          payload: { studentName, startTimeLocal, subject: session.template_name },
+          source: { kind: "class_session", entityId: session.id },
+          idempotencyKey: sessionReminderKey(session.id, studentId),
+        });
+        if (result.enqueued) enqueued++;
+      }
+    }
+  }
+  return { sessionsChecked: sessionsRes.rowCount ?? 0, enqueued };
+}
+
+async function sweepOutbox(): Promise<{ checked: number; sent: number; failed: number; deadLettered: number }> {
+  const provider = getMessagingProvider();
+  const dueRes = await pool.query(
+    `select id, organization_id, recipient_phone, channel, template_key, payload, attempts
+     from message_outbox
+     where state in ('queued', 'failed') and next_attempt_at <= now()
+     order by created_at asc
+     limit 200`
+  );
+
+  let sent = 0;
+  let failed = 0;
+  let deadLettered = 0;
+
+  for (const row of dueRes.rows as {
+    id: string; organization_id: string; recipient_phone: string; channel: MessagingChannel;
+    template_key: string; payload: Record<string, unknown>; attempts: number;
+  }[]) {
+    let sendError: string | null = null;
+    let providerMessageId: string | undefined;
+    try {
+      const text = renderTemplate(row.template_key as Parameters<typeof renderTemplate>[0], row.payload);
+      const result = await provider.send({
+        channel: row.channel, recipientPhone: row.recipient_phone, templateKey: row.template_key, text,
+      });
+      if (result.ok) {
+        providerMessageId = result.providerMessageId;
+      } else {
+        sendError = result.error ?? "send_failed";
+      }
+    } catch (err) {
+      sendError = errorMessage(err);
+    }
+
+    if (!sendError) {
+      await pool.query(
+        `update message_outbox
+           set state = 'sent', sent_at = now(), attempts = attempts + 1, provider_message_id = $2,
+               error = null, updated_at = now()
+         where id = $1`,
+        [row.id, providerMessageId ?? null]
+      );
+      sent++;
+      continue;
+    }
+
+    const attempts = row.attempts + 1;
+    if (isDeadLetter(attempts)) {
+      await pool.query(
+        `update message_outbox set state = 'dead_letter', attempts = $2, error = $3, updated_at = now() where id = $1`,
+        [row.id, attempts, sendError]
+      );
+      await writeAudit(
+        row.organization_id,
+        { system: "messaging_delivery_sweep" },
+        "cron.messaging_dead_letter",
+        "message_outbox",
+        row.id,
+        { templateKey: row.template_key, attempts, error: sendError }
+      );
+      deadLettered++;
+    } else {
+      const channel: MessagingChannel = nextChannel(attempts, row.channel);
+      await pool.query(
+        `update message_outbox
+           set state = 'failed', attempts = $2, channel = $3,
+               next_attempt_at = now() + ($4 || ' minutes')::interval, error = $5, updated_at = now()
+         where id = $1`,
+        [row.id, attempts, channel, String(backoffMinutes(attempts)), sendError]
+      );
+      failed++;
+    }
+  }
+
+  return { checked: dueRes.rowCount ?? 0, sent, failed, deadLettered };
+}
+
+async function deliverySweepHandler(_req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const reminders = await enqueueSessionReminders();
+    const sweep = await sweepOutbox();
+    res.json({ ok: true, reminders, ...sweep });
+  } catch (err) { next(err); }
+}
+router.route("/delivery-sweep").get(deliverySweepHandler).post(deliverySweepHandler);
 
 export default router;

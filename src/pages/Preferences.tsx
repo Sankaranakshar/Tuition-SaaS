@@ -1,14 +1,27 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { Bell, Mail, Smartphone, Save, Sun, Moon, Monitor } from "lucide-react";
 import { Toggle, Button } from "@/components/kit";
 import { getThemePref, setThemePref, type ThemePref } from "@/lib/theme";
+import { supabase } from "../supabase";
+import { useAuth } from "../context/AuthContext";
 
 const NOTIFICATION_ROWS = [
   { key: "emailNotifications", icon: Mail },
   { key: "smsNotifications", icon: Smartphone },
   { key: "pushAlerts", icon: Bell },
 ] as const;
+
+type NotificationPrefs = { emailNotifications: boolean; smsNotifications: boolean; pushAlerts: boolean };
+// B-17 (EXECUTION_PLAN.md Step 27): these preferences are read for real now
+// -- smsNotifications gates every WhatsApp/SMS send server-side
+// (server/utils/messaging/outbox.ts's enqueueMessage). Default true: every
+// message this router sends is transactional (about the parent's own child,
+// under an existing relationship), not marketing, so opt-in-by-default is
+// the correct posture — the toggle is for the rare parent who wants to opt
+// out, not a consent gate on messages nobody would otherwise expect.
+const DEFAULT_PREFS: NotificationPrefs = { emailNotifications: true, smsNotifications: true, pushAlerts: true };
 
 const THEME_OPTIONS: { value: ThemePref; icon: typeof Sun }[] = [
   { value: "light", icon: Sun },
@@ -18,14 +31,20 @@ const THEME_OPTIONS: { value: ThemePref; icon: typeof Sun }[] = [
 
 export default function Preferences() {
   const { t } = useTranslation();
-  const [preferences, setPreferences] = useState({
-    emailNotifications: true,
-    smsNotifications: false,
-    pushAlerts: true,
-  });
+  const { user } = useAuth();
+  const [preferences, setPreferences] = useState<NotificationPrefs>(DEFAULT_PREFS);
   const [themePref, setThemePrefState] = useState<ThemePref>(getThemePref);
+  const [saving, setSaving] = useState(false);
 
-  const setToggle = (key: keyof typeof preferences, next: boolean) => {
+  useEffect(() => {
+    if (!user) return;
+    supabase.from("profiles").select("preferences").eq("id", user.id).maybeSingle().then(({ data }) => {
+      const stored = (data?.preferences as { notifications?: Partial<NotificationPrefs> } | null)?.notifications;
+      if (stored) setPreferences((prev) => ({ ...prev, ...stored }));
+    });
+  }, [user]);
+
+  const setToggle = (key: keyof NotificationPrefs, next: boolean) => {
     setPreferences((prev) => ({ ...prev, [key]: next }));
   };
 
@@ -34,11 +53,30 @@ export default function Preferences() {
     setThemePref(pref);
   };
 
+  const save = async () => {
+    if (!user) return;
+    setSaving(true);
+    try {
+      // profiles.preferences is a jsonb column with other keys the app may
+      // set elsewhere -- merge under a `notifications` key rather than
+      // overwriting the whole column.
+      const { data } = await supabase.from("profiles").select("preferences").eq("id", user.id).maybeSingle();
+      const merged = { ...(data?.preferences as Record<string, unknown> | null), notifications: preferences };
+      const { error } = await supabase.from("profiles").update({ preferences: merged, updated_at: new Date().toISOString() }).eq("id", user.id);
+      if (error) throw error;
+      toast.success(t("preferences.saved"));
+    } catch (err: any) {
+      toast.error(t("preferences.saveFailed"), { description: err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[var(--cs-text)]">{t("preferences.title")}</h1>
-        <Button icon={Save}>{t("preferences.save")}</Button>
+        <Button icon={Save} onClick={save} disabled={saving}>{t("preferences.save")}</Button>
       </div>
 
       <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">

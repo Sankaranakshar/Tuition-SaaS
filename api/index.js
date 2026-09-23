@@ -907,6 +907,17 @@ var walletTopupLinkRequestSchema = z2.object({
   amountPaise: z2.number().int().positive()
 });
 var walletTopupLinkResponseSchema = z2.object({ ok: z2.literal(true), shortUrl: z2.string() });
+var remindInvoiceResponseSchema = z2.object({
+  ok: z2.literal(true),
+  enqueued: z2.boolean(),
+  suppressed: z2.boolean().optional(),
+  reason: z2.string().optional()
+});
+var outboxMessageStateSchema = z2.enum(["queued", "sent", "delivered", "read", "failed", "dead_letter", "suppressed"]);
+var reminderStatusResponseSchema = z2.object({
+  ok: z2.literal(true),
+  statuses: z2.record(z2.string(), z2.object({ state: outboxMessageStateSchema, createdAt: z2.string() }))
+});
 
 // shared/cancellationPolicy.ts
 var DEFAULT_CANCELLATION_POLICY = {
@@ -941,7 +952,161 @@ function computeTdsPaise(grossPaise, tdsPercent) {
   return Math.round(grossPaise * tdsPercent / 100);
 }
 
+// server/utils/messaging/templates.ts
+function inr(paise3) {
+  return `\u20B9${(paise3 / 100).toLocaleString("en-IN")}`;
+}
+var TEMPLATES = {
+  invoice_raised: {
+    key: "invoice_raised",
+    category: "transactional",
+    render: (p) => `A new invoice of ${inr(p.amountPaise)} for ${p.studentName} is due` + (p.dueDate ? ` on ${p.dueDate}` : "") + `. View and pay: ${p.portalUrl}`
+  },
+  fee_due_reminder: {
+    key: "fee_due_reminder",
+    category: "transactional",
+    render: (p) => `Reminder: ${inr(p.outstandingPaise)} is outstanding for ${p.studentName}'s tuition. Pay here: ${p.portalUrl}`
+  },
+  payment_received: {
+    key: "payment_received",
+    category: "transactional",
+    render: (p) => `Payment of ${inr(p.amountPaise)} received for ${p.studentName}. Thank you! View receipt: ${p.portalUrl}`
+  },
+  invite_link: {
+    key: "invite_link",
+    category: "transactional",
+    render: (p) => p.role === "parent" ? `You've been invited to follow ${p.studentName}'s tuition on ClassStackr. Join here: ${p.inviteUrl}` : `You've been invited to join ClassStackr as ${p.studentName}. Join here: ${p.inviteUrl}`
+  },
+  session_reminder: {
+    key: "session_reminder",
+    category: "transactional",
+    render: (p) => `Reminder: ${p.studentName} has ${p.subject ? `${p.subject} ` : ""}class at ${p.startTimeLocal}.`
+  },
+  absence_alert: {
+    key: "absence_alert",
+    category: "transactional",
+    render: (p) => `${p.studentName} was marked absent for the class on ${p.sessionDateLocal}.`
+  }
+};
+function renderTemplate(key, payload) {
+  const def = TEMPLATES[key];
+  if (!def) throw new Error(`Unknown messaging template: ${key}`);
+  return def.render(payload);
+}
+
+// server/utils/messaging/outbox.ts
+var INITIAL_CHANNEL = "whatsapp";
+async function enqueueMessage(db, params) {
+  if (!TEMPLATES[params.templateKey]) {
+    throw new Error(`Unknown messaging template: ${params.templateKey}`);
+  }
+  let recipientPhone = params.recipientPhone ?? null;
+  if (!recipientPhone && params.recipientUserId) {
+    const res = await db.query(`select phone from profiles where id = $1`, [params.recipientUserId]);
+    recipientPhone = res.rows[0]?.phone ?? null;
+  }
+  if (!recipientPhone) return { enqueued: false, reason: "no_phone" };
+  if (params.recipientUserId) {
+    const prefRes = await db.query(`select preferences from profiles where id = $1`, [params.recipientUserId]);
+    const prefs = prefRes.rows[0]?.preferences ?? {};
+    if (prefs.notifications?.smsNotifications === false) {
+      const inserted2 = await insertRow(db, params, recipientPhone, "suppressed");
+      if (!inserted2) return { enqueued: false, reason: "duplicate" };
+      return { enqueued: false, suppressed: true, id: inserted2 };
+    }
+  }
+  const inserted = await insertRow(db, params, recipientPhone, "queued");
+  if (!inserted) return { enqueued: false, reason: "duplicate" };
+  return { enqueued: true, id: inserted };
+}
+async function insertRow(db, params, recipientPhone, state) {
+  const res = await db.query(
+    `insert into message_outbox
+       (organization_id, recipient_user_id, recipient_phone, channel, template_key, payload, state, source, idempotency_key)
+     values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9)
+     on conflict (organization_id, idempotency_key) do nothing
+     returning id`,
+    [
+      params.organizationId,
+      params.recipientUserId ?? null,
+      recipientPhone,
+      INITIAL_CHANNEL,
+      params.templateKey,
+      JSON.stringify(params.payload),
+      state,
+      JSON.stringify(params.source),
+      params.idempotencyKey
+    ]
+  );
+  return res.rows[0]?.id ?? null;
+}
+
+// server/utils/messaging/recipients.ts
+async function resolveStudentGuardianRecipients(db, studentId) {
+  const linkedRes = await db.query(
+    `select pl.parent_user_id, p.phone
+     from parent_links pl
+     join profiles p on p.id = pl.parent_user_id
+     where pl.student_id = $1`,
+    [studentId]
+  );
+  const linked = linkedRes.rows.filter((r) => !!r.phone).map((r) => ({ recipientUserId: r.parent_user_id, recipientPhone: r.phone }));
+  if (linked.length > 0) return linked;
+  const studentRes = await db.query(`select parent_phone from students where id = $1`, [studentId]);
+  const parentPhone = studentRes.rows[0]?.parent_phone;
+  return parentPhone ? [{ recipientUserId: null, recipientPhone: parentPhone }] : [];
+}
+
+// server/utils/messaging/idempotency.ts
+function invoiceRaisedKey(invoiceId) {
+  return `invoice_raised:${invoiceId}`;
+}
+function paymentReceivedKey(source, paymentIdentifier) {
+  return `payment_received:${source}:${paymentIdentifier}`;
+}
+function feeDueReminderKey(invoiceId, dateBucket) {
+  return `fee_due_reminder:${invoiceId}:${dateBucket}`;
+}
+function inviteLinkKey(role, token) {
+  return `invite_link:${role}:${token}`;
+}
+function sessionReminderKey(sessionId, studentId) {
+  return `session_reminder:${sessionId}:${studentId}`;
+}
+function absenceAlertKey(sessionId, studentId) {
+  return `absence_alert:${sessionId}:${studentId}`;
+}
+
 // server/routes/billing.ts
+var PORTAL_URL = () => `${process.env.APP_URL ?? ""}/app`;
+async function enqueueInvoiceRaised(db, orgId, studentId, studentName, invoiceId, totalPaise, dueDate) {
+  const recipients = await resolveStudentGuardianRecipients(db, studentId);
+  for (const recipient of recipients) {
+    await enqueueMessage(db, {
+      organizationId: orgId,
+      recipientUserId: recipient.recipientUserId,
+      recipientPhone: recipient.recipientPhone,
+      templateKey: "invoice_raised",
+      payload: { studentName, amountPaise: totalPaise, dueDate, portalUrl: PORTAL_URL() },
+      source: { kind: "invoice", entityId: invoiceId },
+      idempotencyKey: invoiceRaisedKey(invoiceId)
+    });
+  }
+}
+async function enqueuePaymentReceived(db, orgId, studentId, studentName, manualIdempotencyKey, amountPaise) {
+  const recipients = await resolveStudentGuardianRecipients(db, studentId);
+  for (const recipient of recipients) {
+    await enqueueMessage(db, {
+      organizationId: orgId,
+      recipientUserId: recipient.recipientUserId,
+      recipientPhone: recipient.recipientPhone,
+      templateKey: "payment_received",
+      payload: { studentName, amountPaise, portalUrl: PORTAL_URL() },
+      source: { kind: "payment", entityId: manualIdempotencyKey },
+      idempotencyKey: paymentReceivedKey("manual", manualIdempotencyKey)
+    });
+  }
+}
 var router3 = express3.Router();
 router3.use(authenticateToken, requireOrg);
 var CAN_MARK = ["owner", "admin", "tutor", "frontdesk"];
@@ -974,6 +1139,11 @@ router3.post("/invoices", requireRole(...CAN_MARK), async (req, res, next) => {
     }).select("id").single();
     if (error) throw error;
     await writeAudit(orgId, req.user.id, "invoice.create", "invoices", inv.id, { studentId: body.studentId, totalPaise });
+    const studentRes = await pool.query(`select name from students where id = $1`, [body.studentId]);
+    const studentName = studentRes.rows[0]?.name;
+    if (studentName) {
+      await enqueueInvoiceRaised(pool, orgId, body.studentId, studentName, inv.id, totalPaise, body.dueDate ?? null);
+    }
     res.status(201).json({ ok: true, invoiceId: inv.id });
   } catch (err) {
     next(err);
@@ -1144,11 +1314,12 @@ router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => 
         if (invoiceStudentIds.length > 0) {
           const due = new Date(Date.now() + 7 * 24 * 3600 * 1e3);
           const items = [{ description: `${template.type} session on ${start.toISOString().split("T")[0]}`, amountPaise: feePaise, quantity: 1 }];
-          await client.query(
+          const insertedRes = await client.query(
             `insert into invoices
                (organization_id, tutor_id, student_id, subtotal_paise, total_paise, tax_paise, discount_paise, total_amount, subtotal, status, due_date, items, source)
              select $1, $2, v.student_id, $3, $3, 0, 0, $4, $4, 'unpaid', $5, $6::jsonb, $7::jsonb
-             from unnest($8::uuid[]) as v(student_id)`,
+             from unnest($8::uuid[]) as v(student_id)
+             returning id, student_id`,
             [
               orgId,
               session.tutor_id,
@@ -1160,6 +1331,39 @@ router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => 
               invoiceStudentIds
             ]
           );
+          const namesRes = await client.query(
+            `select id, name from students where id = any($1::uuid[])`,
+            [insertedRes.rows.map((r) => r.student_id)]
+          );
+          const nameById = new Map(namesRes.rows.map((r) => [r.id, r.name]));
+          for (const row of insertedRes.rows) {
+            const studentName = nameById.get(row.student_id);
+            if (studentName) {
+              await enqueueInvoiceRaised(client, orgId, row.student_id, studentName, row.id, feePaise, due.toISOString().split("T")[0]);
+            }
+          }
+        }
+      }
+      const absentIds = marks.filter((m) => m.status === "absent").map((m) => m.studentId);
+      if (absentIds.length > 0) {
+        const absentNamesRes = await client.query(
+          `select id, name from students where id = any($1::uuid[])`,
+          [absentIds]
+        );
+        const dateLocal = start.toISOString().split("T")[0];
+        for (const row of absentNamesRes.rows) {
+          const recipients = await resolveStudentGuardianRecipients(client, row.id);
+          for (const recipient of recipients) {
+            await enqueueMessage(client, {
+              organizationId: orgId,
+              recipientUserId: recipient.recipientUserId,
+              recipientPhone: recipient.recipientPhone,
+              templateKey: "absence_alert",
+              payload: { studentName: row.name, sessionDateLocal: dateLocal },
+              source: { kind: "class_session", entityId: sessionId },
+              idempotencyKey: absenceAlertKey(sessionId, row.id)
+            });
+          }
         }
       }
       await client.query(
@@ -1380,6 +1584,13 @@ router3.post("/payments/manual", requireRole(...CAN_MONEY), async (req, res, nex
           [orgId, inv.student_id, applied.overpaidPaise, body.invoiceId, req.user.id]
         );
       }
+      if (inv.student_id) {
+        const studentRes = await client.query(`select name from students where id = $1`, [inv.student_id]);
+        const studentName = studentRes.rows[0]?.name;
+        if (studentName) {
+          await enqueuePaymentReceived(client, orgId, inv.student_id, studentName, body.idempotencyKey, body.amountPaise);
+        }
+      }
       return { duplicate: false, status: applied.status };
     });
     if (!outcome.duplicate) {
@@ -1508,6 +1719,79 @@ router3.post("/invoices/:invoiceId/payment-link", requireRole(...CAN_MONEY), asy
       });
     }
     res.json({ ok: true, shortUrl: result.shortUrl, reused: result.reused });
+  } catch (err) {
+    next(err);
+  }
+});
+router3.get("/invoices/reminder-status", requireRole(...CAN_MONEY), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const idsParam = typeof req.query.ids === "string" ? req.query.ids : "";
+    const ids = idsParam.split(",").map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 0) return res.json({ ok: true, statuses: {} });
+    const { rows } = await pool.query(
+      `select distinct on (source ->> 'entityId')
+              source ->> 'entityId' as invoice_id, state, created_at
+       from message_outbox
+       where organization_id = $1 and source ->> 'kind' in ('invoice')
+         and source ->> 'entityId' = any($2::text[])
+       order by source ->> 'entityId', created_at desc`,
+      [orgId, ids]
+    );
+    const statuses = {};
+    for (const row of rows) {
+      statuses[row.invoice_id] = { state: row.state, createdAt: row.created_at.toISOString() };
+    }
+    res.json({ ok: true, statuses });
+  } catch (err) {
+    next(err);
+  }
+});
+router3.post("/invoices/:invoiceId/remind", requireRole(...CAN_MONEY), async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const invRes = await pool.query(
+      `select organization_id, student_id, total_paise, paid_paise from invoices where id = $1`,
+      [req.params.invoiceId]
+    );
+    if (invRes.rowCount === 0 || invRes.rows[0].organization_id !== orgId) {
+      return res.status(404).json({ error: { code: "not_found", message: "Invoice not found" } });
+    }
+    const inv = invRes.rows[0];
+    const outstandingPaise = inv.total_paise - inv.paid_paise;
+    if (outstandingPaise <= 0 || !inv.student_id) {
+      return res.status(422).json({ error: { code: "nothing_outstanding", message: "This invoice has nothing outstanding" } });
+    }
+    const studentRes = await pool.query(`select name from students where id = $1`, [inv.student_id]);
+    const studentName = studentRes.rows[0]?.name;
+    if (!studentName) {
+      return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
+    }
+    const dateBucket = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    const recipients = await resolveStudentGuardianRecipients(pool, inv.student_id);
+    let anyEnqueued = false;
+    let anySuppressed = false;
+    for (const recipient of recipients) {
+      const result = await enqueueMessage(pool, {
+        organizationId: orgId,
+        recipientUserId: recipient.recipientUserId,
+        recipientPhone: recipient.recipientPhone,
+        templateKey: "fee_due_reminder",
+        payload: { studentName, outstandingPaise, portalUrl: PORTAL_URL() },
+        source: { kind: "invoice", entityId: req.params.invoiceId },
+        idempotencyKey: feeDueReminderKey(req.params.invoiceId, dateBucket)
+      });
+      if (result.enqueued) anyEnqueued = true;
+      if (result.suppressed) anySuppressed = true;
+    }
+    if (recipients.length === 0) {
+      return res.status(422).json({ error: { code: "no_recipient", message: "No parent phone number on file for this student" } });
+    }
+    if (!anyEnqueued && !anySuppressed) {
+      return res.json({ ok: true, enqueued: false, reason: "already_reminded_today" });
+    }
+    await writeAudit(orgId, req.user.id, "invoice.remind", "invoices", req.params.invoiceId, { outstandingPaise, suppressed: anySuppressed });
+    res.json({ ok: true, enqueued: anyEnqueued, suppressed: anySuppressed });
   } catch (err) {
     next(err);
   }
@@ -1886,7 +2170,7 @@ router5.post("/invites", async (req, res, next) => {
       return res.status(403).json({ error: { code: "forbidden", message: "Insufficient role" } });
     }
     const { studentId } = parentInviteRequestSchema.parse(req.body);
-    const { data: student, error: studentErr } = await supabaseAdmin.from("students").select("name, organization_id").eq("id", studentId).maybeSingle();
+    const { data: student, error: studentErr } = await supabaseAdmin.from("students").select("name, organization_id, parent_phone").eq("id", studentId).maybeSingle();
     if (studentErr) throw studentErr;
     if (!student || student.organization_id !== orgId) {
       return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
@@ -1901,6 +2185,18 @@ router5.post("/invites", async (req, res, next) => {
     });
     if (inviteErr) throw inviteErr;
     await writeAudit(orgId, req.user.id, "parent_invite.create", "students", studentId, { token: token.slice(0, 8) + "\u2026" });
+    if (student.parent_phone) {
+      const inviteUrl = `${process.env.APP_URL ?? ""}/onboarding?invite=${token}`;
+      await enqueueMessage(pool, {
+        organizationId: orgId,
+        recipientUserId: null,
+        recipientPhone: student.parent_phone,
+        templateKey: "invite_link",
+        payload: { studentName: student.name || "your child", inviteUrl, role: "parent" },
+        source: { kind: "parent_invite", entityId: token },
+        idempotencyKey: inviteLinkKey("parent", token)
+      });
+    }
     res.status(201).json({ ok: true, token, expiresAt: expiresAt.toISOString(), studentName: student.name || null });
   } catch (err) {
     next(err);
@@ -2421,7 +2717,7 @@ router6.post("/invites", async (req, res, next) => {
       return res.status(403).json({ error: { code: "forbidden", message: "Insufficient role" } });
     }
     const { studentId } = studentInviteRequestSchema.parse(req.body);
-    const { data: student, error: studentErr } = await supabaseAdmin.from("students").select("name, organization_id, student_user_id").eq("id", studentId).maybeSingle();
+    const { data: student, error: studentErr } = await supabaseAdmin.from("students").select("name, organization_id, student_user_id, phone").eq("id", studentId).maybeSingle();
     if (studentErr) throw studentErr;
     if (!student || student.organization_id !== orgId) {
       return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
@@ -2439,6 +2735,18 @@ router6.post("/invites", async (req, res, next) => {
     });
     if (inviteErr) throw inviteErr;
     await writeAudit(orgId, req.user.id, "student_invite.create", "students", studentId, { token: token.slice(0, 8) + "\u2026" });
+    if (student.phone) {
+      const inviteUrl = `${process.env.APP_URL ?? ""}/onboarding?invite=${token}`;
+      await enqueueMessage(pool, {
+        organizationId: orgId,
+        recipientUserId: null,
+        recipientPhone: student.phone,
+        templateKey: "invite_link",
+        payload: { studentName: student.name || "there", inviteUrl, role: "student" },
+        source: { kind: "student_invite", entityId: token },
+        idempotencyKey: inviteLinkKey("student", token)
+      });
+    }
     res.status(201).json({ ok: true, token, expiresAt: expiresAt.toISOString(), studentName: student.name || null });
   } catch (err) {
     next(err);
@@ -2873,6 +3181,25 @@ function isPlanId(value) {
 }
 
 // server/routes/webhooks.ts
+var MESSAGING_WEBHOOK = { system: "messaging_delivery_webhook" };
+async function enqueuePaymentReceivedMessage(client, orgId, studentId, paymentId, amountPaise) {
+  if (!studentId) return;
+  const studentRes = await client.query(`select name from students where id = $1`, [studentId]);
+  const studentName = studentRes.rows[0]?.name;
+  if (!studentName) return;
+  const recipients = await resolveStudentGuardianRecipients(client, studentId);
+  for (const recipient of recipients) {
+    await enqueueMessage(client, {
+      organizationId: orgId,
+      recipientUserId: recipient.recipientUserId,
+      recipientPhone: recipient.recipientPhone,
+      templateKey: "payment_received",
+      payload: { studentName, amountPaise, portalUrl: `${process.env.APP_URL ?? ""}/app` },
+      source: { kind: "payment", entityId: paymentId },
+      idempotencyKey: paymentReceivedKey("rzp", paymentId)
+    });
+  }
+}
 var router7 = express7.Router();
 var RAZORPAY_WEBHOOK = { system: "razorpay_webhook" };
 router7.post("/razorpay/:orgId", async (req, res) => {
@@ -3005,6 +3332,7 @@ async function handleEvent(orgId, event) {
         [orgId, inv.student_id, applied.overpaidPaise, invoiceId, paymentId]
       );
     }
+    await enqueuePaymentReceivedMessage(client, orgId, inv.student_id, paymentId, amountPaise);
     return { duplicate: false, status: applied.status, overpaidPaise: applied.overpaidPaise };
   });
   if (result.orphan) return { ignored: true, reason: "invoice_not_found" };
@@ -3056,6 +3384,68 @@ async function handleWalletTopupPayment(orgId, studentId, paymentEntity) {
     });
   }
   return { duplicate: result.duplicate ?? false };
+}
+router7.post("/messaging/delivery-status", async (req, res) => {
+  const secret = process.env.MESSAGING_WEBHOOK_SECRET;
+  const signature = req.header("x-webhook-signature") || "";
+  const rawBody = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
+  if (!secret) {
+    return res.status(503).json({ error: { code: "not_configured", message: "Messaging provider not yet wired" } });
+  }
+  if (!verifyWebhookSignature(rawBody, signature, secret)) {
+    return res.status(400).json({ error: { code: "bad_signature", message: "Signature verification failed" } });
+  }
+  try {
+    const event = JSON.parse(rawBody);
+    const outcome = await handleMessagingDeliveryEvent(event);
+    return res.json({ ok: true, ...outcome });
+  } catch (err) {
+    req.log?.error?.({ err }, "Messaging delivery webhook processing failed");
+    return res.status(500).json({ error: { code: "internal", message: "Webhook processing failed" } });
+  }
+});
+async function handleMessagingDeliveryEvent(event) {
+  const providerMessageId = event?.providerMessageId;
+  const status = event?.status;
+  if (!providerMessageId || !status) return { ignored: true, reason: "missing_fields" };
+  if (status !== "delivered" && status !== "read" && status !== "failed") {
+    return { ignored: true, reason: "unknown_status" };
+  }
+  const result = await withTransaction(async (client) => {
+    const rowRes = await client.query(
+      `select id, organization_id, state from message_outbox where provider_message_id = $1 for update`,
+      [providerMessageId]
+    );
+    if (rowRes.rowCount === 0) return { orphan: true };
+    const row = rowRes.rows[0];
+    if (row.state !== "sent") {
+      return { duplicate: true };
+    }
+    if (status === "failed") {
+      await client.query(
+        `update message_outbox set state = 'dead_letter', error = $2, updated_at = now() where id = $1`,
+        [row.id, String(event?.error ?? "provider_reported_failure")]
+      );
+    } else if (status === "delivered") {
+      await client.query(
+        `update message_outbox set state = 'delivered', delivered_at = now(), updated_at = now() where id = $1`,
+        [row.id]
+      );
+    } else {
+      await client.query(
+        `update message_outbox set state = 'read', read_at = now(), updated_at = now() where id = $1`,
+        [row.id]
+      );
+    }
+    return { duplicate: false, organizationId: row.organization_id, id: row.id };
+  });
+  if (result.orphan) return { ignored: true, reason: "message_not_found" };
+  if (!result.duplicate) {
+    await writeAudit(result.organizationId, MESSAGING_WEBHOOK, `message.${status}`, "message_outbox", result.id, {
+      providerMessageId
+    });
+  }
+  return result;
 }
 var webhooks_default = router7;
 
@@ -3671,6 +4061,36 @@ function computeCreditExpiry(rows, windowDays, now) {
   };
 }
 
+// server/utils/messaging/provider.ts
+var ConsoleMessagingProvider = class {
+  async send(message) {
+    const providerMessageId = `console_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    console.log(
+      `[messaging:console] would send ${message.channel} to ${message.recipientPhone} (template=${message.templateKey}, id=${providerMessageId}): ${message.text}`
+    );
+    return { ok: true, providerMessageId };
+  }
+};
+var cachedProvider = null;
+function getMessagingProvider() {
+  if (!cachedProvider) {
+    cachedProvider = new ConsoleMessagingProvider();
+  }
+  return cachedProvider;
+}
+
+// server/utils/messaging/backoff.ts
+var MAX_DELIVERY_ATTEMPTS = 5;
+function backoffMinutes(attempts) {
+  return Math.min(60, 2 ** attempts);
+}
+function nextChannel(attempts, currentChannel) {
+  return attempts === 1 && currentChannel === "whatsapp" ? "sms" : currentChannel;
+}
+function isDeadLetter(attempts) {
+  return attempts >= MAX_DELIVERY_ATTEMPTS;
+}
+
 // server/routes/cron.ts
 var router9 = express9.Router();
 router9.use((req, res, next) => {
@@ -3996,6 +4416,133 @@ async function sendExpiryWarning(orgId, studentId, warn) {
   }
   return true;
 }
+var SESSION_REMINDER_LOOKAHEAD_MS = 26 * 3600 * 1e3;
+function formatSessionTimeInZone(instant, zone) {
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: zone,
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true
+  }).format(instant);
+}
+async function enqueueSessionReminders() {
+  const sessionsRes = await pool.query(
+    `select s.id, s.organization_id, s.student_ids, s.start_time, o.timezone,
+            ct.name as template_name
+     from class_sessions s
+     join organizations o on o.id = s.organization_id
+     left join class_templates ct on ct.id = s.template_id
+     where s.status = 'scheduled'
+       and s.start_time >= now()
+       and s.start_time < now() + ($1 || ' milliseconds')::interval`,
+    [String(SESSION_REMINDER_LOOKAHEAD_MS)]
+  );
+  let enqueued = 0;
+  for (const session of sessionsRes.rows) {
+    const startTimeLocal = formatSessionTimeInZone(new Date(session.start_time), session.timezone);
+    for (const studentId of session.student_ids) {
+      const studentRes = await pool.query(`select name from students where id = $1`, [studentId]);
+      const studentName = studentRes.rows[0]?.name;
+      if (!studentName) continue;
+      const recipients = await resolveStudentGuardianRecipients(pool, studentId);
+      for (const recipient of recipients) {
+        const result = await enqueueMessage(pool, {
+          organizationId: session.organization_id,
+          recipientUserId: recipient.recipientUserId,
+          recipientPhone: recipient.recipientPhone,
+          templateKey: "session_reminder",
+          payload: { studentName, startTimeLocal, subject: session.template_name },
+          source: { kind: "class_session", entityId: session.id },
+          idempotencyKey: sessionReminderKey(session.id, studentId)
+        });
+        if (result.enqueued) enqueued++;
+      }
+    }
+  }
+  return { sessionsChecked: sessionsRes.rowCount ?? 0, enqueued };
+}
+async function sweepOutbox() {
+  const provider = getMessagingProvider();
+  const dueRes = await pool.query(
+    `select id, organization_id, recipient_phone, channel, template_key, payload, attempts
+     from message_outbox
+     where state in ('queued', 'failed') and next_attempt_at <= now()
+     order by created_at asc
+     limit 200`
+  );
+  let sent = 0;
+  let failed = 0;
+  let deadLettered = 0;
+  for (const row of dueRes.rows) {
+    let sendError = null;
+    let providerMessageId;
+    try {
+      const text = renderTemplate(row.template_key, row.payload);
+      const result = await provider.send({
+        channel: row.channel,
+        recipientPhone: row.recipient_phone,
+        templateKey: row.template_key,
+        text
+      });
+      if (result.ok) {
+        providerMessageId = result.providerMessageId;
+      } else {
+        sendError = result.error ?? "send_failed";
+      }
+    } catch (err) {
+      sendError = errorMessage(err);
+    }
+    if (!sendError) {
+      await pool.query(
+        `update message_outbox
+           set state = 'sent', sent_at = now(), attempts = attempts + 1, provider_message_id = $2,
+               error = null, updated_at = now()
+         where id = $1`,
+        [row.id, providerMessageId ?? null]
+      );
+      sent++;
+      continue;
+    }
+    const attempts = row.attempts + 1;
+    if (isDeadLetter(attempts)) {
+      await pool.query(
+        `update message_outbox set state = 'dead_letter', attempts = $2, error = $3, updated_at = now() where id = $1`,
+        [row.id, attempts, sendError]
+      );
+      await writeAudit(
+        row.organization_id,
+        { system: "messaging_delivery_sweep" },
+        "cron.messaging_dead_letter",
+        "message_outbox",
+        row.id,
+        { templateKey: row.template_key, attempts, error: sendError }
+      );
+      deadLettered++;
+    } else {
+      const channel = nextChannel(attempts, row.channel);
+      await pool.query(
+        `update message_outbox
+           set state = 'failed', attempts = $2, channel = $3,
+               next_attempt_at = now() + ($4 || ' minutes')::interval, error = $5, updated_at = now()
+         where id = $1`,
+        [row.id, attempts, channel, String(backoffMinutes(attempts)), sendError]
+      );
+      failed++;
+    }
+  }
+  return { checked: dueRes.rowCount ?? 0, sent, failed, deadLettered };
+}
+async function deliverySweepHandler(_req, res, next) {
+  try {
+    const reminders = await enqueueSessionReminders();
+    const sweep = await sweepOutbox();
+    res.json({ ok: true, reminders, ...sweep });
+  } catch (err) {
+    next(err);
+  }
+}
+router9.route("/delivery-sweep").get(deliverySweepHandler).post(deliverySweepHandler);
 var cron_default = router9;
 
 // server/routes/documents.ts

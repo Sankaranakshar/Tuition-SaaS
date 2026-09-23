@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -9,7 +9,7 @@ import {
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import {
-  createInvoice, recordManualPayment, downloadInvoicePdf, createInvoicePaymentLink,
+  createInvoice, recordManualPayment, downloadInvoicePdf, remindInvoice, getReminderStatuses,
   topUpWallet, voidInvoice,
 } from "../lib/api";
 import { useStudentsList, type StudentRow } from "../hooks/usePeople";
@@ -167,9 +167,21 @@ function OutstandingSegment({
 }) {
   const { t } = useTranslation();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [reminderStatuses, setReminderStatuses] = useState<Record<string, { state: string; createdAt: string }>>({});
 
   const groups = useMemo(() => groupOutstandingByPayer(invoices, students, new Date()), [invoices, students]);
   const totals = useMemo(() => selectionTotal(groups, selected), [groups, selected]);
+
+  // B-17 (EXECUTION_PLAN.md Step 27): "delivery and read state visible in
+  // Money's reminder surface" (DoD). Refetched whenever the invoice list
+  // changes, not on a poll — this is a staff-facing summary, not a live
+  // delivery tracker, and the delivery sweep only runs once a day anyway
+  // (see server/routes/cron.ts's delivery-sweep handler).
+  const invoiceIds = useMemo(() => groups.flatMap((g) => g.lines.map((l: any) => l.invoice.id as string)), [groups]);
+  useEffect(() => {
+    if (invoiceIds.length === 0) { setReminderStatuses({}); return; }
+    getReminderStatuses(invoiceIds).then((r) => setReminderStatuses(r.statuses)).catch(() => {});
+  }, [invoiceIds.join(",")]);
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -180,38 +192,34 @@ function OutstandingSegment({
     });
   };
 
-  const remind = async (invoiceId: string, studentName: string) => {
+  const remind = async (invoiceId: string) => {
     try {
-      const { shortUrl } = await createInvoicePaymentLink(invoiceId);
-      const text = `Hi, here's the payment link for ${studentName}'s tuition invoice: ${shortUrl}` + t("money.paymentLinkFooter", { url: window.location.origin + "/" });
-      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+      const result = await remindInvoice(invoiceId);
+      if (result.suppressed) toast(t("money.reminderSuppressed"));
+      else if (!result.enqueued) toast(t("money.reminderAlreadySentToday"));
+      else toast.success(t("money.reminderSent"));
+      getReminderStatuses(invoiceIds).then((r) => setReminderStatuses(r.statuses)).catch(() => {});
     } catch (err: any) {
       toast.error(t("money.reminderFailed"), { description: err.message });
     }
   };
 
   const bulkRemind = async () => {
-    const lines: string[] = [];
+    const ids = Array.from(selected);
+    let sent = 0;
     for (const group of groups) {
       const own = group.lines.filter((l: any) => selected.has(l.invoice.id));
-      if (own.length === 0) continue;
-      try {
-        const links = await Promise.all(own.map((l: any) => createInvoicePaymentLink(l.invoice.id)));
-        lines.push(
-          `${group.studentName}: ` + links.map((r, i) => `₹${paiseToRupees(own[i].outstandingPaise).toFixed(0)} → ${r.shortUrl}`).join(", ")
-        );
-      } catch (err: any) {
-        toast.error(t("money.reminderFailed"), { description: `${group.studentName}: ${err.message}` });
+      for (const line of own) {
+        try {
+          const result = await remindInvoice(line.invoice.id);
+          if (result.enqueued) sent++;
+        } catch (err: any) {
+          toast.error(t("money.reminderFailed"), { description: `${group.studentName}: ${err.message}` });
+        }
       }
     }
-    if (lines.length === 0) return;
-    const text = lines.join("\n") + t("money.paymentLinkFooter", { url: window.location.origin + "/" });
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(t("money.remindersCopied", { count: lines.length }));
-    } catch {
-      toast.success(t("money.remindersReady"));
-    }
+    if (sent > 0) toast.success(t("money.remindersSent", { count: sent }));
+    getReminderStatuses(ids).then((r) => setReminderStatuses((prev) => ({ ...prev, ...r.statuses }))).catch(() => {});
     setSelected(new Set());
   };
 
@@ -271,12 +279,17 @@ function OutstandingSegment({
                   <div className="text-xs text-[var(--cs-text-muted)]">{t("money.due")} {formatDate(line.invoice.dueDate)}</div>
                 </button>
                 <AgedBadge daysOverdue={line.daysOverdue} />
+                {reminderStatuses[line.invoice.id] && (
+                  <span className="hidden text-xs text-[var(--cs-text-faint)] sm:inline">
+                    {reminderStatusLabel(t, reminderStatuses[line.invoice.id])}
+                  </span>
+                )}
                 <span className="w-24 text-right text-sm font-medium tabular-nums text-[var(--cs-text)]">
                   {formatPaise(line.outstandingPaise)}
                 </span>
                 <RecordPaymentPopover invoiceId={line.invoice.id} outstandingPaise={line.outstandingPaise} />
                 <button
-                  onClick={() => remind(line.invoice.id, group.studentName)}
+                  onClick={() => remind(line.invoice.id)}
                   title={t("money.remind")}
                   className="rounded-[var(--cs-radius-control)] p-1.5 text-[var(--cs-text-muted)] transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)] hover:text-[var(--cs-accent)]"
                 >
@@ -300,12 +313,29 @@ function OutstandingSegment({
             >
               {t("money.clearSelection")}
             </button>
-            <Button onClick={bulkRemind}>{t("money.copyReminders")}</Button>
+            <Button onClick={bulkRemind}>{t("money.sendReminders")}</Button>
           </div>
         </div>
       )}
     </div>
   );
+}
+
+// B-17: turns a message_outbox row's {state, createdAt} into the short label
+// Money's reminder surface shows next to an invoice. `sent` and `queued`
+// both read "reminder sent" from a staff perspective — the queued-vs-sent
+// distinction is a delivery-sweep implementation detail, not something
+// worth surfacing here.
+function reminderStatusLabel(t: (key: string, opts?: any) => string, status: { state: string; createdAt: string }): string {
+  const hours = Math.max(0, Math.round((Date.now() - new Date(status.createdAt).getTime()) / 3600000));
+  const when = hours < 1 ? t("money.reminderJustNow") : t("money.reminderHoursAgo", { count: hours });
+  switch (status.state) {
+    case "delivered": return t("money.reminderDelivered", { when });
+    case "read": return t("money.reminderRead", { when });
+    case "suppressed": return t("money.reminderSuppressedLabel");
+    case "dead_letter": return t("money.reminderUndelivered");
+    default: return t("money.reminderSentLabel", { when });
+  }
 }
 
 function RecordPaymentPopover({ invoiceId, outstandingPaise }: { invoiceId: string; outstandingPaise: number }) {
@@ -607,11 +637,12 @@ function InvoiceDetailModal({ invoice, studentName, payments, onClose, onChanged
     }
   };
 
-  const share = async () => {
+  const remindFromDetail = async () => {
     try {
-      const { shortUrl } = await createInvoicePaymentLink(invoice.id);
-      const text = `Hi, here's the payment link for ${studentName}'s tuition invoice: ${shortUrl}` + t("money.paymentLinkFooter", { url: window.location.origin + "/" });
-      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+      const result = await remindInvoice(invoice.id);
+      if (result.suppressed) toast(t("money.reminderSuppressed"));
+      else if (!result.enqueued) toast(t("money.reminderAlreadySentToday"));
+      else toast.success(t("money.reminderSent"));
     } catch (err: any) {
       toast.error(t("money.reminderFailed"), { description: err.message });
     }
@@ -678,7 +709,7 @@ function InvoiceDetailModal({ invoice, studentName, payments, onClose, onChanged
         <div className="flex flex-wrap items-center gap-2 border-t border-[var(--cs-border)] pt-4">
           <Button variant="ghost" icon={Download} onClick={download}>{t("money.downloadPdf")}</Button>
           {outstandingPaise > 0 && (
-            <Button variant="ghost" icon={Share2} onClick={share}>{t("money.remind")}</Button>
+            <Button variant="ghost" icon={Share2} onClick={remindFromDetail}>{t("money.remind")}</Button>
           )}
           {outstandingPaise > 0 && <RecordPaymentPopover invoiceId={invoice.id} outstandingPaise={outstandingPaise} />}
           {canVoid && (

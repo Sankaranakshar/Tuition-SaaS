@@ -21,6 +21,60 @@ import {
 import { rupeesToPaise, paiseToRupees } from "../../shared/money.ts";
 import { getCancellationPolicy } from "../utils/cancellationPolicy.ts";
 import { computeSessionEarningsPaise } from "../../shared/payouts.ts";
+import { enqueueMessage } from "../utils/messaging/outbox.ts";
+import { resolveStudentGuardianRecipients } from "../utils/messaging/recipients.ts";
+import { invoiceRaisedKey, paymentReceivedKey, absenceAlertKey, feeDueReminderKey } from "../utils/messaging/idempotency.ts";
+
+const PORTAL_URL = () => `${process.env.APP_URL ?? ""}/app`;
+
+// Shared by every invoice-raised call site (the free-form POST /invoices
+// below and attendance's per-student accrual): one message per guardian,
+// idempotency-keyed on the invoice id so a retried request can't double-send
+// even though the two call sites reach this from different transactions.
+async function enqueueInvoiceRaised(
+  db: Parameters<typeof enqueueMessage>[0],
+  orgId: string,
+  studentId: string,
+  studentName: string,
+  invoiceId: string,
+  totalPaise: number,
+  dueDate: string | null
+) {
+  const recipients = await resolveStudentGuardianRecipients(db, studentId);
+  for (const recipient of recipients) {
+    await enqueueMessage(db, {
+      organizationId: orgId,
+      recipientUserId: recipient.recipientUserId,
+      recipientPhone: recipient.recipientPhone,
+      templateKey: "invoice_raised",
+      payload: { studentName, amountPaise: totalPaise, dueDate, portalUrl: PORTAL_URL() },
+      source: { kind: "invoice", entityId: invoiceId },
+      idempotencyKey: invoiceRaisedKey(invoiceId),
+    });
+  }
+}
+
+async function enqueuePaymentReceived(
+  db: Parameters<typeof enqueueMessage>[0],
+  orgId: string,
+  studentId: string,
+  studentName: string,
+  manualIdempotencyKey: string,
+  amountPaise: number
+) {
+  const recipients = await resolveStudentGuardianRecipients(db, studentId);
+  for (const recipient of recipients) {
+    await enqueueMessage(db, {
+      organizationId: orgId,
+      recipientUserId: recipient.recipientUserId,
+      recipientPhone: recipient.recipientPhone,
+      templateKey: "payment_received",
+      payload: { studentName, amountPaise, portalUrl: PORTAL_URL() },
+      source: { kind: "payment", entityId: manualIdempotencyKey },
+      idempotencyKey: paymentReceivedKey("manual", manualIdempotencyKey),
+    });
+  }
+}
 
 const router = express.Router();
 router.use(authenticateToken, requireOrg);
@@ -60,6 +114,13 @@ router.post("/invoices", requireRole(...CAN_MARK), async (req: AuthRequest, res,
     if (error) throw error;
 
     await writeAudit(orgId, req.user!.id, "invoice.create", "invoices", inv.id, { studentId: body.studentId, totalPaise });
+
+    const studentRes = await pool.query(`select name from students where id = $1`, [body.studentId]);
+    const studentName = studentRes.rows[0]?.name as string | undefined;
+    if (studentName) {
+      await enqueueInvoiceRaised(pool, orgId, body.studentId, studentName, inv.id, totalPaise, body.dueDate ?? null);
+    }
+
     res.status(201).json({ ok: true, invoiceId: inv.id });
   } catch (err) { next(err); }
 });
@@ -256,14 +317,60 @@ router.post("/attendance", requireRole(...CAN_MARK), async (req: AuthRequest, re
         if (invoiceStudentIds.length > 0) {
           const due = new Date(Date.now() + 7 * 24 * 3600 * 1000);
           const items = [{ description: `${template!.type} session on ${start.toISOString().split("T")[0]}`, amountPaise: feePaise, quantity: 1 }];
-          await client.query(
+          const insertedRes = await client.query(
             `insert into invoices
                (organization_id, tutor_id, student_id, subtotal_paise, total_paise, tax_paise, discount_paise, total_amount, subtotal, status, due_date, items, source)
              select $1, $2, v.student_id, $3, $3, 0, 0, $4, $4, 'unpaid', $5, $6::jsonb, $7::jsonb
-             from unnest($8::uuid[]) as v(student_id)`,
+             from unnest($8::uuid[]) as v(student_id)
+             returning id, student_id`,
             [orgId, session.tutor_id, feePaise, paiseToRupees(feePaise), due.toISOString().split("T")[0],
               JSON.stringify(items), JSON.stringify({ kind: "attendance", sessionId }), invoiceStudentIds]
           );
+
+          // B-17: one invoice_raised message per newly-accrued invoice, in
+          // the same transaction as the accrual itself -- an invoice that
+          // exists always has (at minimum) a queued message row, and a
+          // transaction rollback (a later statement in this same callback
+          // failing) takes the message with it, same guarantee the money
+          // writes above already have.
+          const namesRes = await client.query(
+            `select id, name from students where id = any($1::uuid[])`,
+            [insertedRes.rows.map((r) => r.student_id)]
+          );
+          const nameById = new Map(namesRes.rows.map((r) => [r.id as string, r.name as string]));
+          for (const row of insertedRes.rows) {
+            const studentName = nameById.get(row.student_id);
+            if (studentName) {
+              await enqueueInvoiceRaised(client, orgId, row.student_id, studentName, row.id, feePaise, due.toISOString().split("T")[0]);
+            }
+          }
+        }
+      }
+
+      // B-17: absence alert, independent of the billing branch above -- an
+      // absent student is never in `toBill` (BILLABLE excludes 'absent'), so
+      // this has to be its own pass over every mark, not folded into the
+      // invoicing loop.
+      const absentIds = marks.filter((m) => m.status === "absent").map((m) => m.studentId);
+      if (absentIds.length > 0) {
+        const absentNamesRes = await client.query(
+          `select id, name from students where id = any($1::uuid[])`,
+          [absentIds]
+        );
+        const dateLocal = start.toISOString().split("T")[0];
+        for (const row of absentNamesRes.rows as { id: string; name: string }[]) {
+          const recipients = await resolveStudentGuardianRecipients(client, row.id);
+          for (const recipient of recipients) {
+            await enqueueMessage(client, {
+              organizationId: orgId,
+              recipientUserId: recipient.recipientUserId,
+              recipientPhone: recipient.recipientPhone,
+              templateKey: "absence_alert",
+              payload: { studentName: row.name, sessionDateLocal: dateLocal },
+              source: { kind: "class_session", entityId: sessionId },
+              idempotencyKey: absenceAlertKey(sessionId, row.id),
+            });
+          }
         }
       }
 
@@ -540,6 +647,14 @@ router.post("/payments/manual", requireRole(...CAN_MONEY), async (req: AuthReque
           [orgId, inv.student_id, applied.overpaidPaise, body.invoiceId, req.user!.id]
         );
       }
+
+      if (inv.student_id) {
+        const studentRes = await client.query(`select name from students where id = $1`, [inv.student_id]);
+        const studentName = studentRes.rows[0]?.name as string | undefined;
+        if (studentName) {
+          await enqueuePaymentReceived(client, orgId, inv.student_id, studentName, body.idempotencyKey, body.amountPaise);
+        }
+      }
       return { duplicate: false, status: applied.status };
     });
 
@@ -684,6 +799,95 @@ router.post("/invoices/:invoiceId/payment-link", requireRole(...CAN_MONEY), asyn
       });
     }
     res.json({ ok: true, shortUrl: result.shortUrl, reused: result.reused });
+  } catch (err) { next(err); }
+});
+
+// B-17 (EXECUTION_PLAN.md Step 27): replaces Money.tsx's wa.me-for-a-human
+// share and clipboard-copy bulk flow with a real, tracked send. One reminder
+// per invoice per UTC day at most -- the idempotency key buckets on date, so
+// staff clicking "remind" twice on the same invoice today doesn't double
+// message a parent, but tomorrow's click is a fresh, legitimate reminder,
+// not a duplicate.
+// B-17: "Delivery and read state visible in Money's reminder surface" (Step
+// 27 DoD). message_outbox has no client read policy at all (server-only,
+// same posture as parent_invites/payment_gateways) -- Money.tsx can't query
+// it directly the way it reads invoices/payments, so this is the one read
+// path onto it. Bulk rather than per-invoice: OutstandingSegment renders a
+// whole page of invoices, and a call per row would be a real N+1 against a
+// page load.
+router.get("/invoices/reminder-status", requireRole(...CAN_MONEY), async (req: AuthRequest, res, next) => {
+  try {
+    const orgId = req.user!.organizationId!;
+    const idsParam = typeof req.query.ids === "string" ? req.query.ids : "";
+    const ids = idsParam.split(",").map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 0) return res.json({ ok: true, statuses: {} });
+
+    const { rows } = await pool.query(
+      `select distinct on (source ->> 'entityId')
+              source ->> 'entityId' as invoice_id, state, created_at
+       from message_outbox
+       where organization_id = $1 and source ->> 'kind' in ('invoice')
+         and source ->> 'entityId' = any($2::text[])
+       order by source ->> 'entityId', created_at desc`,
+      [orgId, ids]
+    );
+    const statuses: Record<string, { state: string; createdAt: string }> = {};
+    for (const row of rows) {
+      statuses[row.invoice_id] = { state: row.state, createdAt: row.created_at.toISOString() };
+    }
+    res.json({ ok: true, statuses });
+  } catch (err) { next(err); }
+});
+
+router.post("/invoices/:invoiceId/remind", requireRole(...CAN_MONEY), async (req: AuthRequest, res, next) => {
+  try {
+    const orgId = req.user!.organizationId!;
+    const invRes = await pool.query(
+      `select organization_id, student_id, total_paise, paid_paise from invoices where id = $1`,
+      [req.params.invoiceId]
+    );
+    if (invRes.rowCount === 0 || invRes.rows[0].organization_id !== orgId) {
+      return res.status(404).json({ error: { code: "not_found", message: "Invoice not found" } });
+    }
+    const inv = invRes.rows[0];
+    const outstandingPaise = inv.total_paise - inv.paid_paise;
+    if (outstandingPaise <= 0 || !inv.student_id) {
+      return res.status(422).json({ error: { code: "nothing_outstanding", message: "This invoice has nothing outstanding" } });
+    }
+
+    const studentRes = await pool.query(`select name from students where id = $1`, [inv.student_id]);
+    const studentName = studentRes.rows[0]?.name as string | undefined;
+    if (!studentName) {
+      return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
+    }
+
+    const dateBucket = new Date().toISOString().slice(0, 10);
+    const recipients = await resolveStudentGuardianRecipients(pool, inv.student_id);
+    let anyEnqueued = false;
+    let anySuppressed = false;
+    for (const recipient of recipients) {
+      const result = await enqueueMessage(pool, {
+        organizationId: orgId,
+        recipientUserId: recipient.recipientUserId,
+        recipientPhone: recipient.recipientPhone,
+        templateKey: "fee_due_reminder",
+        payload: { studentName, outstandingPaise, portalUrl: PORTAL_URL() },
+        source: { kind: "invoice", entityId: req.params.invoiceId },
+        idempotencyKey: feeDueReminderKey(req.params.invoiceId, dateBucket),
+      });
+      if (result.enqueued) anyEnqueued = true;
+      if (result.suppressed) anySuppressed = true;
+    }
+
+    if (recipients.length === 0) {
+      return res.status(422).json({ error: { code: "no_recipient", message: "No parent phone number on file for this student" } });
+    }
+    if (!anyEnqueued && !anySuppressed) {
+      // Every recipient's key already existed -- a duplicate click today.
+      return res.json({ ok: true, enqueued: false, reason: "already_reminded_today" });
+    }
+    await writeAudit(orgId, req.user!.id, "invoice.remind", "invoices", req.params.invoiceId, { outstandingPaise, suppressed: anySuppressed });
+    res.json({ ok: true, enqueued: anyEnqueued, suppressed: anySuppressed });
   } catch (err) { next(err); }
 });
 

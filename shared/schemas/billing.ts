@@ -120,3 +120,19 @@ export const walletTopupLinkRequestSchema = z.object({
 export type WalletTopupLinkRequest = z.infer<typeof walletTopupLinkRequestSchema>;
 export const walletTopupLinkResponseSchema = z.object({ ok: z.literal(true), shortUrl: z.string() });
 export type WalletTopupLinkResponse = z.infer<typeof walletTopupLinkResponseSchema>;
+
+// B-17 (EXECUTION_PLAN.md Step 27): replaces the old clipboard/wa.me flow.
+export const remindInvoiceResponseSchema = z.object({
+  ok: z.literal(true),
+  enqueued: z.boolean(),
+  suppressed: z.boolean().optional(),
+  reason: z.string().optional(),
+});
+export type RemindInvoiceResponse = z.infer<typeof remindInvoiceResponseSchema>;
+
+const outboxMessageStateSchema = z.enum(["queued", "sent", "delivered", "read", "failed", "dead_letter", "suppressed"]);
+export const reminderStatusResponseSchema = z.object({
+  ok: z.literal(true),
+  statuses: z.record(z.string(), z.object({ state: outboxMessageStateSchema, createdAt: z.string() })),
+});
+export type ReminderStatusResponse = z.infer<typeof reminderStatusResponseSchema>;

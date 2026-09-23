@@ -7,6 +7,36 @@ import { writeAudit, type AuditActor } from "../utils/audit.ts";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { PLAN_CATALOG, isPlanId } from "../../shared/plans.ts";
 import { paiseToRupees } from "../../shared/money.ts";
+import { enqueueMessage } from "../utils/messaging/outbox.ts";
+import { resolveStudentGuardianRecipients } from "../utils/messaging/recipients.ts";
+import { paymentReceivedKey } from "../utils/messaging/idempotency.ts";
+
+const MESSAGING_WEBHOOK: AuditActor = { system: "messaging_delivery_webhook" };
+
+async function enqueuePaymentReceivedMessage(
+  client: PoolClient,
+  orgId: string,
+  studentId: string | null,
+  paymentId: string,
+  amountPaise: number
+) {
+  if (!studentId) return;
+  const studentRes = await client.query(`select name from students where id = $1`, [studentId]);
+  const studentName = studentRes.rows[0]?.name as string | undefined;
+  if (!studentName) return;
+  const recipients = await resolveStudentGuardianRecipients(client, studentId);
+  for (const recipient of recipients) {
+    await enqueueMessage(client, {
+      organizationId: orgId,
+      recipientUserId: recipient.recipientUserId,
+      recipientPhone: recipient.recipientPhone,
+      templateKey: "payment_received",
+      payload: { studentName, amountPaise, portalUrl: `${process.env.APP_URL ?? ""}/app` },
+      source: { kind: "payment", entityId: paymentId },
+      idempotencyKey: paymentReceivedKey("rzp", paymentId),
+    });
+  }
+}
 
 // Razorpay webhook receiver (DEV_PLAN E6.2). Public but signature-gated: the
 // body is HMAC-verified against the org's stored webhook secret before we
@@ -206,6 +236,7 @@ async function handleEvent(orgId: string, event: any) {
         [orgId, inv.student_id, applied.overpaidPaise, invoiceId, paymentId]
       );
     }
+    await enqueuePaymentReceivedMessage(client, orgId, inv.student_id, paymentId, amountPaise);
     return { duplicate: false, status: applied.status, overpaidPaise: applied.overpaidPaise };
   });
 
@@ -268,6 +299,90 @@ async function handleWalletTopupPayment(orgId: string, studentId: string, paymen
     });
   }
   return { duplicate: result.duplicate ?? false };
+}
+
+// B-17 (EXECUTION_PLAN.md Step 27): provider-agnostic delivery-status
+// webhook. Inert until a vendor is picked and MESSAGING_WEBHOOK_SECRET is
+// set, exactly like /razorpay-platform above -- the raw-body mount and
+// signature check are live now so switching this on later needs no code
+// change. Real aggregators (Gupshup/Interakt/AiSensy/Twilio, D-10's shortlist)
+// each have their own payload shape; the intent is a thin per-vendor
+// normalizer sits in front of this handler once one is picked, translating
+// to the {providerMessageId, status} shape below -- same one-adapter-swap
+// principle as server/utils/messaging/provider.ts.
+router.post("/messaging/delivery-status", async (req, res) => {
+  const secret = process.env.MESSAGING_WEBHOOK_SECRET;
+  const signature = req.header("x-webhook-signature") || "";
+  const rawBody = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
+
+  if (!secret) {
+    return res.status(503).json({ error: { code: "not_configured", message: "Messaging provider not yet wired" } });
+  }
+  if (!verifyWebhookSignature(rawBody, signature, secret)) {
+    return res.status(400).json({ error: { code: "bad_signature", message: "Signature verification failed" } });
+  }
+
+  try {
+    const event = JSON.parse(rawBody);
+    const outcome = await handleMessagingDeliveryEvent(event);
+    return res.json({ ok: true, ...outcome });
+  } catch (err: any) {
+    req.log?.error?.({ err }, "Messaging delivery webhook processing failed");
+    return res.status(500).json({ error: { code: "internal", message: "Webhook processing failed" } });
+  }
+});
+
+async function handleMessagingDeliveryEvent(event: any) {
+  const providerMessageId = event?.providerMessageId as string | undefined;
+  const status = event?.status as string | undefined;
+  if (!providerMessageId || !status) return { ignored: true, reason: "missing_fields" };
+  if (status !== "delivered" && status !== "read" && status !== "failed") {
+    return { ignored: true, reason: "unknown_status" };
+  }
+
+  const result = await withTransaction(async (client: PoolClient) => {
+    const rowRes = await client.query(
+      `select id, organization_id, state from message_outbox where provider_message_id = $1 for update`,
+      [providerMessageId]
+    );
+    if (rowRes.rowCount === 0) return { orphan: true };
+    const row = rowRes.rows[0];
+
+    // Idempotent settlement: a replayed webhook (the same provider event
+    // delivered twice) must not move state backwards or re-fire a duplicate
+    // update. `sent` is the only state a real transition can start from;
+    // `delivered`/`read`/`dead_letter` are each either already this status
+    // or further along a one-way lifecycle.
+    if (row.state !== "sent") {
+      return { duplicate: true };
+    }
+
+    if (status === "failed") {
+      await client.query(
+        `update message_outbox set state = 'dead_letter', error = $2, updated_at = now() where id = $1`,
+        [row.id, String(event?.error ?? "provider_reported_failure")]
+      );
+    } else if (status === "delivered") {
+      await client.query(
+        `update message_outbox set state = 'delivered', delivered_at = now(), updated_at = now() where id = $1`,
+        [row.id]
+      );
+    } else {
+      await client.query(
+        `update message_outbox set state = 'read', read_at = now(), updated_at = now() where id = $1`,
+        [row.id]
+      );
+    }
+    return { duplicate: false, organizationId: row.organization_id as string, id: row.id as string };
+  });
+
+  if (result.orphan) return { ignored: true, reason: "message_not_found" };
+  if (!result.duplicate) {
+    await writeAudit(result.organizationId!, MESSAGING_WEBHOOK, `message.${status}`, "message_outbox", result.id!, {
+      providerMessageId,
+    });
+  }
+  return result;
 }
 
 export default router;

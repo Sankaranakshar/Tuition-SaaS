@@ -88,6 +88,67 @@ describe("cron routes accept GET, the method Vercel Cron actually sends", () => 
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
   });
+
+  it("delivery-sweep", async () => {
+    const res = await request(app).get("/api/cron/delivery-sweep").set("Authorization", `Bearer ${CRON_SECRET}`);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+});
+
+// B-17 (EXECUTION_PLAN.md Step 27): the delivery sweep sends queued messages
+// through the console provider (no live vendor exists yet — see
+// server/utils/messaging/provider.ts) and moves a permanently-failing one
+// through retry, sms fallback, and dead-letter.
+describe("delivery-sweep: send, retry/fallback, and dead-letter", () => {
+  it("sends a queued message and marks it sent", async () => {
+    const id = crypto.randomUUID();
+    await pool.query(
+      `insert into message_outbox
+         (id, organization_id, recipient_phone, channel, template_key, payload, state, source, idempotency_key)
+       values ($1, $2, '+911234567890', 'whatsapp', 'invoice_raised', $3::jsonb, 'queued', '{}'::jsonb, $4)`,
+      [id, ORG, JSON.stringify({ studentName: "Test", amountPaise: 1000, dueDate: null, portalUrl: "https://x" }), `sweep-test-${id}`]
+    );
+
+    const res = await request(app).get("/api/cron/delivery-sweep").set("Authorization", `Bearer ${CRON_SECRET}`);
+    expect(res.status).toBe(200);
+    expect(res.body.sent).toBeGreaterThanOrEqual(1);
+
+    const row = (await pool.query(`select state, provider_message_id from message_outbox where id = $1`, [id])).rows[0];
+    expect(row.state).toBe("sent");
+    expect(row.provider_message_id).toBeTruthy();
+  });
+
+  it("a permanently-failing send retries with sms fallback, then dead-letters, writing one audit row", async () => {
+    const id = crypto.randomUUID();
+    await pool.query(
+      `insert into message_outbox
+         (id, organization_id, recipient_phone, channel, template_key, payload, state, source, idempotency_key)
+       values ($1, $2, '+911234567890', 'whatsapp', 'not_a_real_template', '{}'::jsonb, 'queued', '{}'::jsonb, $3)`,
+      [id, ORG, `dead-letter-test-${id}`]
+    );
+
+    // renderTemplate throws on an unknown key — every sweep attempt for this
+    // row fails deterministically, so driving it to dead_letter needs no
+    // provider mock, just enough sweep calls to exhaust MAX_DELIVERY_ATTEMPTS.
+    // Each retry's backoff is pushed into the future, so force next_attempt_at
+    // back to "now" before each subsequent sweep to avoid a real wall-clock wait.
+    for (let i = 0; i < 5; i++) {
+      await pool.query(`update message_outbox set next_attempt_at = now() where id = $1`, [id]);
+      await request(app).get("/api/cron/delivery-sweep").set("Authorization", `Bearer ${CRON_SECRET}`);
+    }
+
+    const row = (await pool.query(`select state, channel, attempts, error from message_outbox where id = $1`, [id])).rows[0];
+    expect(row.state).toBe("dead_letter");
+    expect(row.channel).toBe("sms"); // flipped from whatsapp on the first failure
+    expect(row.attempts).toBe(5);
+
+    const auditRes = await pool.query(
+      `select * from audit_events where organization_id = $1 and action = 'cron.messaging_dead_letter' and payload ->> 'entityId' = $2`,
+      [ORG, id]
+    );
+    expect((auditRes.rows as any[]).length).toBe(1);
+  });
 });
 
 describe("cron failure isolation + audit trail", () => {

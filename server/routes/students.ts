@@ -21,6 +21,8 @@ import { CONSENT_VERSION } from "../../shared/consent.ts";
 import { getPaymentPermissions } from "../utils/paymentPermissions.ts";
 import { resolveMonthRange, computeAttendanceSummary, type AttendanceStatus } from "../../shared/progressReport.ts";
 import { renderProgressReportPdf, formatMonthLabel } from "../utils/progressReportPdf.ts";
+import { enqueueMessage } from "../utils/messaging/outbox.ts";
+import { inviteLinkKey } from "../utils/messaging/idempotency.ts";
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -45,7 +47,7 @@ router.post("/invites", async (req: AuthRequest, res, next) => {
     const { studentId } = studentInviteRequestSchema.parse(req.body);
 
     const { data: student, error: studentErr } = await supabaseAdmin
-      .from("students").select("name, organization_id, student_user_id").eq("id", studentId).maybeSingle();
+      .from("students").select("name, organization_id, student_user_id, phone").eq("id", studentId).maybeSingle();
     if (studentErr) throw studentErr;
     if (!student || student.organization_id !== orgId) {
       return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
@@ -61,6 +63,21 @@ router.post("/invites", async (req: AuthRequest, res, next) => {
     });
     if (inviteErr) throw inviteErr;
     await writeAudit(orgId, req.user!.id, "student_invite.create", "students", studentId, { token: token.slice(0, 8) + "…" });
+
+    // B-17: real send alongside the token, same posture as parents.ts's
+    // invite route -- only fires when the student's own phone is on file.
+    if (student.phone) {
+      const inviteUrl = `${process.env.APP_URL ?? ""}/onboarding?invite=${token}`;
+      await enqueueMessage(pool, {
+        organizationId: orgId,
+        recipientUserId: null,
+        recipientPhone: student.phone,
+        templateKey: "invite_link",
+        payload: { studentName: student.name || "there", inviteUrl, role: "student" },
+        source: { kind: "student_invite", entityId: token },
+        idempotencyKey: inviteLinkKey("student", token),
+      });
+    }
 
     res.status(201).json({ ok: true, token, expiresAt: expiresAt.toISOString(), studentName: student.name || null });
   } catch (err) { next(err); }
