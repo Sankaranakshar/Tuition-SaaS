@@ -4,6 +4,7 @@ import { withTransaction } from "../db.ts";
 import { getGatewayCreds, verifyWebhookSignature } from "../utils/razorpay.ts";
 import { applyPayment, type InvoiceStatus } from "../utils/invoiceStatus.ts";
 import { writeAudit, type AuditActor } from "../utils/audit.ts";
+import { trackEvent } from "../utils/analytics.ts";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { PLAN_CATALOG, isPlanId } from "../../shared/plans.ts";
 import { paiseToRupees } from "../../shared/money.ts";
@@ -245,6 +246,11 @@ async function handleEvent(orgId: string, event: any) {
     await writeAudit(orgId, RAZORPAY_WEBHOOK, "payment.gateway_captured", "invoices", invoiceId, {
       gatewayPaymentId: paymentId, amountPaise, invoiceStatus: result.status,
     });
+    await trackEvent({
+      organizationId: orgId, name: "payment.recorded",
+      properties: { invoiceId, amountPaise, channel: "gateway", method: "upi" },
+      dedupeKey: `payment.recorded:${orgId}:${idempotencyKey}`,
+    });
   }
   return result;
 }
@@ -296,6 +302,11 @@ async function handleWalletTopupPayment(orgId: string, studentId: string, paymen
   if (!result.duplicate) {
     await writeAudit(orgId, RAZORPAY_WEBHOOK, "wallet.topup.gateway_captured", "wallets", studentId, {
       gatewayPaymentId: paymentId, amountPaise,
+    });
+    await trackEvent({
+      organizationId: orgId, name: "wallet.topped_up",
+      properties: { amountPaise, channel: "gateway" },
+      dedupeKey: `wallet.topped_up:${orgId}:${idempotencyKey}`,
     });
   }
   return { duplicate: result.duplicate ?? false };

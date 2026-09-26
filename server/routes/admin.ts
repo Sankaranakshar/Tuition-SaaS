@@ -4,6 +4,7 @@ import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { authenticateToken, requirePlatformAdmin, type AuthRequest } from "../middleware/auth.ts";
 import { writePlatformAudit } from "../utils/platformAudit.ts";
 import { writeAudit } from "../utils/audit.ts";
+import { buildAnalyticsReport } from "../utils/analyticsReport.ts";
 import {
   setFeatureFlagRequestSchema,
   impersonateRequestSchema,
@@ -65,6 +66,17 @@ router.get("/orgs", async (_req: AuthRequest, res, next) => {
       })),
     };
     res.json(body);
+  } catch (err) { next(err); }
+});
+
+// C-07 (EXECUTION_PLAN.md Step 32): activation analytics across every org,
+// including rupees collected per org per month (MASTER_PLAN.md §11's one
+// metric that matters). Platform-level like the rest of this router: an
+// org's own staff never see other orgs, and product_events has no client
+// read path at all.
+router.get("/analytics", async (_req: AuthRequest, res, next) => {
+  try {
+    res.json(await buildAnalyticsReport());
   } catch (err) { next(err); }
 });
 

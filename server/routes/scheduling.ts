@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 import { pool, withTransaction } from "../db.ts";
 import { authenticateToken, requireRole, requireOrg, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
+import { trackEvent } from "../utils/analytics.ts";
 import {
   enrollRequestSchema as enrollSchema,
   createSessionRequestSchema as sessionSchema,
@@ -501,6 +502,12 @@ router.post("/materialize", requireRole(...CAN_SCHEDULE), async (req: AuthReques
       const r = await materializeTemplate(row);
       aggregate.created.push(...r.created);
       aggregate.conflicts.push(...r.conflicts);
+    }
+    if (aggregate.created.length > 0) {
+      await trackEvent({
+        organizationId: orgId, actorUserId: req.user!.id, name: "sessions.materialized",
+        properties: { sessionsCreated: aggregate.created.length },
+      });
     }
     res.json({ ok: true, ...aggregate });
   } catch (err) { next(err); }

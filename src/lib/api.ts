@@ -30,6 +30,8 @@ import type {
 import type { SubscriptionResponse, CheckoutResponse } from "../../shared/schemas/subscription";
 import type { PlanId } from "../../shared/plans";
 import type { ListOrgsResponse, ImpersonateResponse } from "../../shared/schemas/admin";
+import type { AnalyticsReport } from "../../shared/analytics";
+import type { ClientEventName } from "../../shared/analyticsEvents";
 import type { OffboardResponse } from "../../shared/schemas/orgExport";
 import type { EraseStudentResponse } from "../../shared/schemas/students";
 import type { ListAuditEventsResponse } from "../../shared/schemas/auditLog";
@@ -546,6 +548,23 @@ export function checkoutSubscription(plan: PlanId) {
 
 export function listOrgsForAdmin() {
   return api<ListOrgsResponse>("/admin/orgs");
+}
+
+/** Platform admin: activation funnel, rupees collected per org per month, cohorts (C-07, EXECUTION_PLAN.md Step 32). */
+export function getAdminAnalytics() {
+  return api<AnalyticsReport>("/admin/analytics");
+}
+
+/**
+ * Records a product event the server cannot see happen (an onboarding beat,
+ * a parent opening their portal, a workspace opened), via
+ * POST /api/v1/analytics/events. Fire and forget: it never throws and never
+ * delays the page, since analytics must not break the thing it measures.
+ * The server stamps the org and person and refuses anything outside
+ * shared/analyticsEvents.ts's payload rule.
+ */
+export function trackClientEvent(name: ClientEventName, properties: Record<string, string | number | boolean> = {}): void {
+  api("/analytics/events", { method: "POST", body: { name, properties } }).catch(() => {});
 }
 
 export function setOrgFeatureFlag(orgId: string, key: string, enabled: boolean) {

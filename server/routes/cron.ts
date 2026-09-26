@@ -10,6 +10,7 @@ import { renderTemplate } from "../utils/messaging/templates.ts";
 import { getMessagingProvider, type MessagingChannel } from "../utils/messaging/provider.ts";
 import { sessionReminderKey } from "../utils/messaging/idempotency.ts";
 import { backoffMinutes, nextChannel, isDeadLetter } from "../utils/messaging/backoff.ts";
+import { rollupWeeklyLoop, rollupActivation } from "../utils/analyticsRollup.ts";
 
 // Machine-to-machine endpoint, wired to Vercel Cron (vercel.json's `crons`
 // array) daily against all four routes below. No Supabase user session
@@ -606,5 +607,39 @@ async function deliverySweepHandler(_req: express.Request, res: express.Response
   } catch (err) { next(err); }
 }
 router.route("/delivery-sweep").get(deliverySweepHandler).post(deliverySweepHandler);
+
+// C-07 (EXECUTION_PLAN.md Step 32): activation analytics' aggregation job,
+// the sixth cron (vercel.json, 20:25 UTC, after delivery-sweep so the day's
+// deliveries are settled first). For every active org it recomputes the
+// weekly loop and the activation snapshot in full from the tables of record
+// (server/utils/analyticsRollup.ts), so a re-run writes identical rows and
+// org.activated lands at most once per org. Offboarded orgs keep their last
+// rows untouched. Same per-org failure isolation and audit trail as
+// reporting-daily.
+async function analyticsRollupHandler(_req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const orgsRes = await pool.query(`select id from organizations where status = 'active' order by created_at`);
+    let orgsProcessed = 0;
+    let weekRows = 0;
+    let activated = 0;
+    let newlyActivated = 0;
+    const failures: { organizationId: string; error: string }[] = [];
+    for (const org of orgsRes.rows as { id: string }[]) {
+      try {
+        weekRows += await rollupWeeklyLoop(org.id);
+        const a = await rollupActivation(org.id);
+        if (a.result.activatedAt) activated++;
+        if (a.newlyActivated) newlyActivated++;
+        orgsProcessed++;
+      } catch (err) {
+        const error = errorMessage(err);
+        failures.push({ organizationId: org.id, error });
+        await writeAudit(org.id, { system: "analytics_rollup_cron" }, "cron.analytics_rollup_failed", "organizations", org.id, { error });
+      }
+    }
+    res.json({ ok: failures.length === 0, orgsProcessed, weekRows, activated, newlyActivated, ...(failures.length ? { failures } : {}) });
+  } catch (err) { next(err); }
+}
+router.route("/analytics-rollup").get(analyticsRollupHandler).post(analyticsRollupHandler);
 
 export default router;

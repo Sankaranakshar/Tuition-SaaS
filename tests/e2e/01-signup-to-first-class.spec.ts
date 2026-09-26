@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { admin, createAuthUser, type TestUser } from "./support/admin";
 import { runOrgPrefix } from "./support/env";
 import { login, expectAccessible } from "./support/ui";
+import { whenAnalyticsMigrated, eventuallyEvents, productEvents } from "./support/analytics";
 
 // Journey 1 (EXECUTION_PLAN.md Step 31): signup to first class. Onboarding's
 // three beats (solo-or-centre, first class from the template gallery, first
@@ -50,7 +51,7 @@ async function walkOnboarding(
   await page.waitForURL((url) => url.pathname === "/app");
 }
 
-async function expectFirstClassLanded(page: Page, user: TestUser, orgName: string, className: string, students: string[]) {
+async function expectFirstClassLanded(page: Page, user: TestUser, orgName: string, className: string, students: string[]): Promise<string> {
   // What the database says: one org owned by this user, named as chosen, with
   // the class template, its enrolled students, and future sessions.
   const { data: membership } = await admin()
@@ -103,6 +104,35 @@ async function expectFirstClassLanded(page: Page, user: TestUser, orgName: strin
   await page.getByRole("button", { name: "Next week" }).click();
   await expect(page.getByText(className).first()).toBeVisible();
   await expectAccessible(page, "Schedule");
+  return orgId;
+}
+
+// Step 32 (C-07): the funnel's first beats. Each onboarding beat reported
+// itself before the org existed (so no org on those rows), the final submit
+// created the org (org.created, attributed to this person) and filled the
+// first sessions, and the workspaces just visited count as feature usage.
+// No row carries a student's name.
+async function expectOnboardingEvents(user: TestUser, orgId: string, mode: "solo" | "center", students: string[]) {
+  await whenAnalyticsMigrated("journey 1 product events", async () => {
+    const beats = await eventuallyEvents({ actorUserId: user.id, name: "onboarding.beat_viewed" }, 3);
+    expect(beats.map((b) => b.properties.beat).sort()).toEqual([1, 2, 3]);
+    expect(beats.every((b) => b.organization_id === null)).toBe(true);
+    expect(beats.filter((b) => b.properties.beat !== 1).every((b) => b.properties.mode === mode)).toBe(true);
+
+    const created = await productEvents({ organizationId: orgId, name: "org.created" });
+    expect(created).toHaveLength(1);
+    expect(created[0].actor_user_id).toBe(user.id);
+
+    const materialized = await productEvents({ organizationId: orgId, name: "sessions.materialized" });
+    expect(materialized.length).toBeGreaterThanOrEqual(1);
+    expect(materialized[0].properties.sessionsCreated as number).toBeGreaterThan(0);
+
+    const features = await eventuallyEvents({ organizationId: orgId, name: "feature.opened" }, 3);
+    expect(new Set(features.map((f) => f.properties.feature))).toEqual(new Set(["today", "people", "schedule"]));
+
+    const all = JSON.stringify([...beats, ...(await productEvents({ organizationId: orgId }))]);
+    for (const name of students) expect(all).not.toContain(name);
+  });
 }
 
 test("solo tutor: signup to first class", async ({ page }) => {
@@ -113,7 +143,8 @@ test("solo tutor: signup to first class", async ({ page }) => {
 
   await walkOnboarding(page, user, { className, students });
   // The solo path names the org after the person (lib/onboarding.ts defaultOrgName).
-  await expectFirstClassLanded(page, user, `${name}'s Tutoring`, className, students);
+  const orgId = await expectFirstClassLanded(page, user, `${name}'s Tutoring`, className, students);
+  await expectOnboardingEvents(user, orgId, "solo", students);
 });
 
 test("centre owner: signup to first class", async ({ page }) => {
@@ -123,5 +154,6 @@ test("centre owner: signup to first class", async ({ page }) => {
   const students = ["Ishaan Centre"];
 
   await walkOnboarding(page, user, { centreName, className, students });
-  await expectFirstClassLanded(page, user, centreName, className, students);
+  const orgId = await expectFirstClassLanded(page, user, centreName, className, students);
+  await expectOnboardingEvents(user, orgId, "center", students);
 });
