@@ -108,7 +108,7 @@ export function BookingRequestsPanel({ orgId }: { orgId: string }) {
               <h3 id="booking-request-title" className="font-semibold text-[var(--cs-text)]">
                 {open.requested_by_name} — {open.student_name}
               </h3>
-              <button onClick={() => { setOpenId(null); setProposeMode(null); }} className="text-gray-400 hover:text-gray-600">
+              <button onClick={() => { setOpenId(null); setProposeMode(null); }} aria-label={t("common.close")} className="text-gray-400 hover:text-gray-600">
                 <X className="h-4 w-4" />
               </button>
             </div>

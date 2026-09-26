@@ -268,6 +268,7 @@ function OutstandingSegment({
                   type="checkbox"
                   checked={selected.has(line.invoice.id)}
                   onChange={() => toggle(line.invoice.id)}
+                  aria-label={t("money.selectInvoice", { number: line.invoice.invoiceNumber || `INV-${line.invoice.id.slice(0, 6).toUpperCase()}` })}
                   className="h-4 w-4 accent-[var(--cs-accent)]"
                 />
                 <button onClick={() => onViewInvoice(line.invoice.id)} className="min-w-0 flex-1 text-left">
@@ -673,7 +674,7 @@ function InvoiceDetailModal({ invoice, studentName, payments, onClose, onChanged
             </h2>
             <p className="text-sm text-[var(--cs-text-muted)]">{studentName}</p>
           </div>
-          <button onClick={onClose} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]"><X className="h-5 w-5" /></button>
+          <button onClick={onClose} aria-label={t("common.close")} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]"><X className="h-5 w-5" /></button>
         </div>
 
         <div className="mb-4 grid grid-cols-3 gap-3 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface-2)] p-3 text-center">
@@ -790,7 +791,7 @@ function CreateInvoiceModal({ students, userOrgId, prefillStudentId, onClose, on
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 id="create-invoice-heading" className="text-lg font-semibold text-[var(--cs-text)]">{t("money.generateInvoice")}</h2>
-          <button onClick={onClose} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]"><X className="h-5 w-5" /></button>
+          <button onClick={onClose} aria-label={t("common.close")} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]"><X className="h-5 w-5" /></button>
         </div>
         <form onSubmit={submit} className="space-y-4">
           {error && <div className="rounded-[var(--cs-radius-control)] bg-[var(--cs-danger-soft)] p-2 text-sm text-[var(--cs-danger)]">{error}</div>}
@@ -821,10 +822,12 @@ function CreateInvoiceModal({ students, userOrgId, prefillStudentId, onClose, on
                       if (templates.some((tpl) => `${tpl.type} - ${tpl.pricing_model}` === e.target.value)) selectTemplate(i, e.target.value);
                     }}
                     placeholder={t("money.description")}
+                    aria-label={t("money.description")}
                     className="flex-1"
                   />
                   <Input
                     type="number" required min="1" value={item.quantity}
+                    aria-label={t("money.quantity")}
                     onChange={(e) => setLine(i, "quantity", parseInt(e.target.value) || 1)}
                     className="w-16"
                   />
@@ -832,6 +835,7 @@ function CreateInvoiceModal({ students, userOrgId, prefillStudentId, onClose, on
                     type="number" required min="0" step="0.01" value={item.amount}
                     onChange={(e) => setLine(i, "amount", parseFloat(e.target.value) || 0)}
                     placeholder="₹"
+                    aria-label={t("money.amount")}
                     className="w-24"
                   />
                   {lineItems.length > 1 && (

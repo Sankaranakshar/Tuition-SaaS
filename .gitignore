@@ -27,3 +27,7 @@ supabase/.branches/
 # a fresh bundle on every deploy, which Vercel then deploys as that
 # already-registered function.
 .vercel
+
+# Playwright (tests/e2e, EXECUTION_PLAN.md Step 31)
+test-results/
+playwright-report/

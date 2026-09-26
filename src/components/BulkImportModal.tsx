@@ -111,7 +111,7 @@ export function BulkImportModal({ onClose, onImported }: { onClose: () => void; 
       <Modal onClose={close} labelledBy="bulk-import-title" className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 id="bulk-import-title" className="text-lg font-semibold text-gray-900">{t("people.bulkImportTitle")}</h2>
-          <button onClick={close} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+          <button onClick={close} aria-label={t("common.close")} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
         </div>
 
         {error && <div className="mb-4 rounded-md bg-red-50 p-2 text-sm text-red-700">{error}</div>}

@@ -23,7 +23,7 @@ npm run seed                  # idempotent demo org, tutor, courses, students, s
 
 Secrets: generate `JWT_SECRET`, `ENCRYPTION_KEY`, and `CRON_SECRET` with `openssl rand -hex 32`. In production these belong in your host's secret manager.
 
-**A staging Supabase project exists** (`classstackr-staging`, ref `fcshxorkxsaerwnuqrjh` — see supabase/README.md), but there's no Vercel environment for it yet, so local dev still points at the production Supabase project by default. Be deliberate about test data on whichever project your `.env` targets and clean up after walkthroughs.
+**A staging Supabase project exists** (`classstackr-staging`, ref `fcshxorkxsaerwnuqrjh` — see supabase/README.md). Vercel Preview deployments and the e2e gate use it; local dev still points at the production Supabase project by default. Be deliberate about test data on whichever project your `.env` targets and clean up after walkthroughs.
 
 ## Testing
 
@@ -32,10 +32,11 @@ npm run lint         # typecheck
 npm test             # unit tests
 npm run test:rls     # RLS/RBAC suite, PGlite-backed, no Docker or live database needed
 npm run test:contract # route-contract suite (supertest against the real Express app, PGlite-backed)
+npx dotenvx run -f .env.staging -- npm run test:e2e # Playwright golden journeys + axe, against classstackr-staging
 npm run test:load:smoke # k6 load test against a running server (not run in CI)
 ```
 
-CI (`.github/workflows/ci.yml`) runs typecheck, a report-only `npm audit`, unit, RLS, route-contract, the production build, the bundle-size budget, and a rebuild+verify of the Vercel API bundle on every PR — all seven gates, none needing Docker, Java, or a live database.
+CI (`.github/workflows/ci.yml`) runs all eight gates on every PR: typecheck, a report-only `npm audit`, unit, RLS, route-contract, the production build, the bundle-size budget, a rebuild+verify of the Vercel API bundle (none of those need Docker, Java, or a live database), and, as a separate job, the Playwright golden journeys with automated axe accessibility checks, which build the app and drive it in Chromium against the `classstackr-staging` Supabase project. The e2e job reads four `STAGING_*` repository secrets and creates and deletes its own throwaway data on every run; see HANDOFF.md §4.
 
 ## Deployment
 

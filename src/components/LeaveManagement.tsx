@@ -105,7 +105,7 @@ function SubstituteAssignmentRow({ leave, tutors, onDone }: { leave: LeaveReques
                 ))}
               </ul>
               <div className="mt-3 flex items-center gap-2">
-                <select value={substituteId} onChange={(e) => setSubstituteId(e.target.value)} className={FIELD_CLASS}>
+                <select aria-label="Substitute" value={substituteId} onChange={(e) => setSubstituteId(e.target.value)} className={FIELD_CLASS}>
                   <option value="">Choose a substitute…</option>
                   {substituteOptions.map((t) => (
                     <option key={t.userId} value={t.userId}>{t.name}</option>
@@ -219,16 +219,16 @@ export default function LeaveManagement() {
         <div className="p-4 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Start date</label>
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={FIELD_CLASS} />
+              <label htmlFor="leave-start" className="block text-sm font-medium text-[var(--cs-text-muted)]">Start date</label>
+              <input id="leave-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={FIELD_CLASS} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[var(--cs-text-muted)]">End date</label>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={FIELD_CLASS} />
+              <label htmlFor="leave-end" className="block text-sm font-medium text-[var(--cs-text-muted)]">End date</label>
+              <input id="leave-end" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={FIELD_CLASS} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[var(--cs-text-muted)]">Reason (optional)</label>
-              <input type="text" value={reason} onChange={(e) => setReason(e.target.value)} className={FIELD_CLASS} placeholder="Family event" />
+              <label htmlFor="leave-reason" className="block text-sm font-medium text-[var(--cs-text-muted)]">Reason (optional)</label>
+              <input id="leave-reason" type="text" value={reason} onChange={(e) => setReason(e.target.value)} className={FIELD_CLASS} placeholder="Family event" />
             </div>
           </div>
           <Button onClick={handleRequest} disabled={submitting}>{submitting ? "Requesting…" : "Request leave"}</Button>

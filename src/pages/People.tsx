@@ -561,12 +561,12 @@ function InviteLinkGenerator({ label, hint, onGenerate }: { label: string; hint:
       {link ? (
         <div className="space-y-1">
           <div className="flex gap-2">
-            <input readOnly value={link} className="w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] bg-[var(--cs-surface-2)] px-2 py-1.5 text-xs text-[var(--cs-text-muted)]" />
+            <input readOnly value={link} aria-label={t("people.inviteLink")} className="w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border)] bg-[var(--cs-surface-2)] px-2 py-1.5 text-xs text-[var(--cs-text-muted)]" />
             <button onClick={copy} title={t("people.inviteCopy")} className="shrink-0 rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] px-2 py-1.5 text-[var(--cs-text-muted)] hover:bg-[var(--cs-surface-2)]">
               <Copy className="h-3.5 w-3.5" />
             </button>
           </div>
-          {expiresAt && <p className="text-xs text-[var(--cs-text-faint)]">{t("people.inviteExpires", { date: new Date(expiresAt).toLocaleDateString() })}</p>}
+          {expiresAt && <p className="text-xs text-[var(--cs-text-muted)]">{t("people.inviteExpires", { date: new Date(expiresAt).toLocaleDateString() })}</p>}
         </div>
       ) : (
         <Button size="sm" onClick={generate} disabled={loading}>

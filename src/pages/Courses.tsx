@@ -146,7 +146,7 @@ export default function Courses() {
           <div className="w-full max-w-sm rounded-[10px] border border-[var(--cs-border)] bg-[var(--cs-surface)] shadow-2xl">
             <div className="flex items-center justify-between border-b border-[var(--cs-border)] px-5 py-4">
               <h3 className="text-sm font-semibold text-[var(--cs-text)]">New course</h3>
-              <button onClick={closeModal} className="text-[var(--cs-text-muted)] hover:text-[var(--cs-text)]">
+              <button onClick={closeModal} aria-label="Close" className="text-[var(--cs-text-muted)] hover:text-[var(--cs-text)]">
                 <X className="h-4 w-4" strokeWidth={1.75} />
               </button>
             </div>

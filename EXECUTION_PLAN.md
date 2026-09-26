@@ -6,16 +6,18 @@
 
 - **Steps are numbered continuously and never renumbered.** Source comments cite `EXECUTION_PLAN.md Step N`; those anchors must stay stable. Steps 1 to 13 (R1) are archived in [docs/EXECUTION_PLAN_R1_ARCHIVE.md](docs/EXECUTION_PLAN_R1_ARCHIVE.md); Steps 14 to 24 (R2) are summarized in §"Completed work" below, with full detail in git history at commit `86ca0e4`.
 - **Order is dependency order, not priority order.** Where they conflict, dependency wins.
-- **Every step ends the same way:** all seven gates green, a live browser walkthrough against a real environment, this file's tracker and "Start here" section updated, HANDOFF.md's gate line and verification log updated, then commit.
+- **Every step ends the same way:** all eight gates green, a live browser walkthrough against a real environment, this file's tracker and "Start here" section updated, HANDOFF.md's gate line and verification log updated, then commit.
 - **Standing rule, do not self-authorize:** no migration is pushed to `classstackr-staging` or production, and nothing is pushed to `main`, without explicit founder go-ahead. Rehearse on staging first, always.
 
-**The seven gates.** `npm run lint` · `npm test` · `npm run test:rls` · `npm run test:contract` · `npm run build` · `npm run check:bundle-size` · `npm run build:api && npm run check:api-bundle`. All seven run in CI; none need Docker, Java or a live database.
+**The eight gates.** `npm run lint` · `npm test` · `npm run test:rls` · `npm run test:contract` · `npm run build` · `npm run check:bundle-size` · `npm run build:api && npm run check:api-bundle` · `npm run test:e2e` (Step 31). All eight run in CI. The first seven need no Docker, Java or live database; the eighth drives a real browser against `classstackr-staging` and needs the staging credentials (locally from `.env.staging`, in CI from GitHub secrets; see HANDOFF.md §4).
 
-**Baseline as of 2026-09-23, after Step 27's outbound comms router:** typecheck clean, 274 unit, 105 RLS, 364 contract, build (`dist/server.js` 259.4 KB), bundle 205.6 KB against a 260 KB budget, 18 of 18 API route mounts, `api/index.js` regenerated (258.5 KB). (The 2026-09-12 baseline of 249/106/353 included the since-parked B-19 referral loop's tests; those numbers are stale — this line reflects `main` as it actually stands.)
+**Baseline as of 2026-09-26, on branch `feat/step-31-playwright`:** typecheck clean, 278 unit, 117 RLS, 372 contract, build (`dist/server.js` 261.6 KB), bundle 206.3 KB against a 260 KB budget, 18 of 18 API route mounts, `api/index.js` byte-identical, and the new e2e gate: 7 Playwright tests (five golden journeys plus Step 30's guardian threads) with 25 axe audits, green against `classstackr-staging` locally. `main` itself (Step 30, `c7e3f0c`) was re-verified the same morning at 278/117/372, 261.6 KB, 206.1 KB, 18/18, byte-identical.
 
 ---
 
 ## Start here
+
+**Step 31 (C-06, Playwright on the golden journeys) is 🟡 built and green locally against staging as of 2026-09-26**, the founder's pick after Step 30, on branch `feat/step-31-playwright`. This repo now has a browser-level test layer: five golden journeys plus a sixth for Step 30's guardian threads, with automated axe accessibility checks on 25 screens, as an eighth CI gate against `classstackr-staging`. It closed Step 23's carried gap (a real second tutor joins through the Team invite link and "Assign to all" is clicked), and its first run found and fixed a batch of accessibility regressions (contrast, unnamed buttons, 21 unlabelled form fields) plus one deployment finding (the Dockerfile path's security headers block Supabase; production on Vercel is unaffected). **Blocking CI: the founder adds four GitHub Actions secrets** (names and sources in Step 31's Decisions). Then: CI green on the PR, the deliberate-failure check, founder go-ahead, merge. No migration in this step. Step 32 is now unblocked (D-11 was decided 2026-09-14).
 
 **Step 30 (C-05, D-06 parent-visible tutor-student threads) is ✅ merged and live on production as of 2026-09-26** ([PR #11](https://github.com/Sankaranakshar/Tuition-SaaS/pull/11)), the founder's pick after Step 27. A parent can read, but not post into, any DM between staff and their child; the database anchors every such thread to the child itself; tutor, student and parent all see a disclosure; and, per founder direction the same day, a parent can start a DM with their child's tutors. The same migration closed two pre-existing messaging holes (anyone could post into any thread; class-channel posts were readable only by their sender). Staging-rehearsed and walked live with four accounts before production. **What's next is an open founder call:** Steps 28/29 stay on hold for Razorpay KYC; Step 31 (Playwright) has no blockers; Steps 37-39 (marketplace) are independently startable and Step 30 was their recommended precursor. Small follow-ups Step 30 surfaced, none urgent: no unread dot for a parent on threads they only read, and B-11 erasure doesn't delete an erased child's messages.
 
@@ -45,7 +47,7 @@
 | 14-20 | Staging, multi-membership identity, org switcher | R2 | ✅ Complete 2026-09-12 |
 | 21 | B-08 tutor payouts and earnings ledger | R2 | ✅ Complete 2026-09-12 |
 | 22 | B-12 monthly progress-report PDF | R2 | ✅ Complete 2026-09-12 |
-| 23 | B-13 substitute and leave management | R2 | ✅ Complete 2026-09-12, one gap (see below) |
+| 23 | B-13 substitute and leave management | R2 | ✅ Complete 2026-09-12; its one gap is closed by Step 31's journey 5 (see below) |
 | 24 | B-19 referral loop | — | ⏸ **Parked.** Moved to branch `parked/b-19-referral` (commit `1eedd13`), `main` rebuilt at `86ca0e4`. Migration unpushed, never deployed or walked live. Do not push. |
 | 25 | C-01 timezone model | R3 | ✅ Complete 2026-09-14 |
 | 26 | C-02 wire the scheduler | R3 | ✅ Complete 2026-09-23 (GET/POST bug found + fixed + live-fired; see "Start here") |
@@ -53,8 +55,8 @@
 | 28 | C-03 platform billing switch-on | R3 | Blocked on D-03 numbers + platform KYC |
 | 29 | C-04 Razorpay live rehearsal | R3 | Blocked on pilot-org KYC |
 | 30 | C-05 parent-visible tutor-student threads (+ parents can message tutors) | R4 | ✅ Complete 2026-09-26 ([PR #11](https://github.com/Sankaranakshar/Tuition-SaaS/pull/11), merged, live on production) |
-| 31 | C-06 Playwright golden journeys | R4 | Not started |
-| 32 | C-07 activation analytics | R4 | Blocked on D-11 |
+| 31 | C-06 Playwright golden journeys | R4 | 🟡 Built, green locally against staging 2026-09-26 (branch `feat/step-31-playwright`); CI waits on the founder adding four GitHub secrets, then the deliberate-failure check |
+| 32 | C-07 activation analytics | R4 | Not started. Unblocked: D-11 decided 2026-09-14 (hand-rolled Postgres events table, MASTER_PLAN.md §13) |
 | 33 | C-08 operational floor | R4 | Not started |
 | 34 | C-09 onboarding friction pass | R4 | Not started |
 | 35 | TD-3 paise-native migration | R4 | Not started |
@@ -64,7 +66,7 @@
 | 39 | B-16 escrow (payout-run variant), reviews, moderation/disputes | R6 | Not started, depends on Step 38 |
 | 40+ | R5 (C-10, C-11, C-12, B-18, C-13) | R5 | Not scoped as steps yet |
 
-**Carried gap from Step 23:** the "Assign to all" substitute-reassignment mutation has never been clicked live. It needs a second real tutor account in the demo org, created through the app's own Team-tab invite link rather than a backend script. Fold this into Step 31's Playwright coverage rather than doing it by hand.
+**Carried gap from Step 23, closed 2026-09-26 by Step 31's journey 5:** the "Assign to all" substitute-reassignment mutation had never been clicked live, because it needs a second real tutor created through the app's own Team-tab invite link. Journey 5 does exactly that against staging, on every run.
 
 ---
 
@@ -222,7 +224,7 @@ Merged to `main` with founder go-ahead (PR #10, commits `51d84e3`/`fed0f27`/`0b3
 - [ ] Downgrade works and the cap moves both ways.
 - [ ] All four env vars documented in `.env.example` with where each comes from.
 - [ ] Pricing page and `shared/plans.ts` agree.
-- [ ] All seven gates green.
+- [ ] All eight gates green.
 
 **Expected outcome.** ClassStackr has a revenue mechanism. This is a prerequisite for calling anything a pilot rather than a giveaway.
 
@@ -338,13 +340,43 @@ Journeys touching a live Razorpay or phone OTP stay out of CI and are exercised 
 **Browser verification required.** By construction.
 
 **Definition of done.**
-- [ ] Five journeys green in CI against staging, on every PR.
-- [ ] Axe automated on the main surfaces.
-- [ ] Deliberately break one assertion and confirm CI fails, so the gate is known to be real. (HANDOFF §5.10's discipline, applied to a new layer.)
-- [ ] Step 23's substitute-reassignment gap closed.
-- [ ] All eight gates green; README and HANDOFF updated to say eight.
+- [ ] Five journeys green in CI against staging, on every PR. *(Five journeys plus a sixth for Step 30, seven tests, all green locally against `classstackr-staging` 2026-09-26, 37s. The CI job is written and wired; it cannot go green until the founder adds the four staging secrets below.)*
+- [x] Axe automated on the main surfaces. *(WCAG 2.1 A/AA, 25 audits across Login, Onboarding (tutor, parent-invite and staff-invite), Today, People and its invite modal, Schedule and the Add Class wizard, Money (settled, outstanding, new invoice), Student Story, Audit log, Settings (Team, Leave), Inbox (picker, staff thread, student thread, guardian view, parent picker), Student dashboard, Parent portal (overview, invoices). Light theme only; see "Not covered".)*
+- [ ] Deliberately break one assertion and confirm CI fails, so the gate is known to be real. (HANDOFF §5.10's discipline, applied to a new layer.) *(Waiting on the same secrets.)*
+- [x] Step 23's substitute-reassignment gap closed. *(Journey 5: a second tutor joins through the Settings → Team invite link, "Assign to all" is clicked, the session's `tutor_id` moves, a `session.reassign_tutor` audit row is written, and the substitute sees the class on their own tutor-role Schedule.)*
+- [ ] All eight gates green; README and HANDOFF updated to say eight. *(Docs updated; the eighth gate goes green in CI once the secrets exist.)*
 
 **Expected outcome.** The bug class that has cost the most time stops recurring silently.
+
+**The journeys (2026-09-26).** `tests/e2e/`, one spec per journey, run by `npm run test:e2e`:
+1. `01-signup-to-first-class.spec.ts`, solo and centre paths (two tests): first login, all three onboarding beats, then the database (org name, one template, sessions on Mon/Wed/Fri at 16:00 IST, the students) and the UI (Today, People, next week's Schedule).
+2. and 3. `02-attendance-invoice-reversal.spec.ts`, serial: a recurring Per-Session batch class through the Add Class wizard; materialized sessions; attendance marked on Today's roster popover; a ₹500 invoice accrued; Money's Outstanding goes from "All settled" to ₹500. Then the reversal: invoice voided, one zero-delta `credit_reversal` ledger row, any wallet still equal to its ledger sum, Outstanding back to "All settled", `attendance.mark` and `attendance.reverse` in the Audit log page, and a second reverse returns `409 already_reversed`.
+4. `04-parent-journey.spec.ts`: staff raise an invoice from the student's People row and generate a parent invite; a brand-new parent opens the link signed out, signs in, consents (the Link button stays disabled until they do), lands in the portal and sees ₹1,200 outstanding and the invoice; the database has the parent membership, the `parent_links` row and a `consent_records` row.
+5. `05-substitute-reassignment.spec.ts`: as above.
+6. `06-guardian-threads.spec.ts`, **Step 30 recorded as a sixth journey, not folded into journey 4**, so a failure names the rule that broke. Tutor DMs a student (picker notice, staff disclosure, thread anchored to the child in the database); the student sees their disclosure; the parent sees the thread with the "Parent view" tag, the explanation and the read-only footer, with no composer rendered; the parent's picker offers exactly one entry for their child's tutor and a parent-to-tutor DM sends (unanchored); a parent of a different child in the same org sees neither thread and is offered only their own child's tutor; the tutor receives the parent's message.
+
+**Decisions (2026-09-26).**
+- **Where CI's browser tests point: the app built and served inside the CI job, not the PR's Vercel Preview URL.** The job builds the SPA with the staging `VITE_*` values and serves it with `tests/e2e/server.ts`, which reproduces `vercel.json`'s routing exactly (`/api/*` to the same Express app `server/vercelHandler.ts` exports, static files from `dist/`, everything else to `index.html`). Weighed: *Flakiness:* a Preview-based gate has to wait for Vercel to finish deploying, discover the per-PR URL, and get past Vercel's deployment protection, and it goes red whenever Vercel is slow or down for reasons unrelated to the code; a same-job server has none of those moving parts and tests exactly the commit CI checked out. *Secrets exposure:* both designs need the staging service-role key in GitHub, because fixtures and cleanup create and delete auth users; the in-job design additionally needs the staging `DATABASE_URL`. Both are staging-only credentials, over data that is only demo and test rows, and GitHub never hands secrets to pull requests from forks. *Parallel PRs:* every CI job runs its own server, so the only shared resource is the staging database, which the fixture design below isolates. What this gives up: the Preview build is Vercel's real runtime, which caught Step 25's timezone bug. The suite covers that difference directly: the CI runner is UTC like Vercel, and the browser is pinned to `Asia/Kolkata`.
+- **Fixture isolation on the shared staging database.** Every `playwright test` invocation gets a run id (`<GitHub run id><attempt>x<random>`, or `localx<random>`). Every auth user it creates is `e2e.<run>.<label>-<random>@classstackr.dev`, and every org it names is `E2E <run> <label>`, so two concurrent runs never share a row, and a retried test never collides with its own first attempt. Each journey creates its own org and people. Nothing touches the seeded demo accounts. `global-teardown.ts` deletes this run's orgs (every org-scoped table cascades from `organizations`) and then its auth users (`profiles` cascades from `auth.users`), pass or fail. A run that never reaches teardown (a cancelled CI job) is caught by the next run's `global-setup.ts`, which sweeps any suite-made org or user over two hours old; the age floor is what keeps it from touching a run still in progress. Leftover data cannot break the next run in any case, because nothing reads another run's namespace. Proven 2026-09-26: a run with cleanup deliberately switched off (`E2E_KEEP_DATA=1`) left 1 org and 1 user; a two-hour sweep correctly left them alone; a zero-age sweep removed them; staging back to 1 org and 3 users (the demo accounts).
+- **Guardrails against pointing at production.** `tests/e2e/support/env.ts` refuses to start unless `SUPABASE_URL`, `VITE_SUPABASE_URL` and `DATABASE_URL` all name the staging ref `fcshxorkxsaerwnuqrjh` and none names production's. `global-setup.ts` then downloads the served SPA bundle and refuses to run unless it was built against staging (Vite bakes the Supabase URL in at build time, independently of the server env). `tests/e2e/server.ts` never loads `.env`, which on a developer's machine points at production.
+- **How CI gets staging credentials: four GitHub Actions repository secrets, added by the founder**, never in the repo, the workflow file, or chat. Each value comes from the local, gitignored `.env.staging`: `STAGING_SUPABASE_URL` (its `SUPABASE_URL`), `STAGING_SUPABASE_ANON_KEY` (its `VITE_SUPABASE_ANON_KEY`), `STAGING_SUPABASE_SERVICE_ROLE_KEY` (its `SUPABASE_SERVICE_ROLE_KEY`), `STAGING_DATABASE_URL` (its `DATABASE_URL`, the pooler host, which GitHub's runners can reach). The job fails with a named error if any is missing, rather than silently skipping. `JWT_SECRET`, `ENCRYPTION_KEY` and `CRON_SECRET` are generated fresh per run, since no journey needs a persistent one.
+- **Signup itself is not driven through the form.** Staging has email confirmation on (`mailer_autoconfirm: false`) and no mail provider, so the signup form's `supabase.auth.signUp` call cannot produce a session. Journey 1 creates the confirmed account with the Admin API (the state right after someone clicks the confirmation link) and does everything from the first login on through the UI, including the `profiles` row the app creates itself.
+- **No reversal UI exists**, so journey 3 calls `POST /api/v1/billing/attendance/reverse` through the signed-in page's own session and `X-Organization-Id`, as every earlier live check did. The one step a test cannot wait out, a class's start time arriving, is simulated in journey 2 by moving that one materialized session to five minutes ago with the service role; the server correctly refuses attendance before a session starts and materialize never creates past sessions.
+- **Axe failures are soft within a journey** (`expect.soft`): the test still fails, but the journey runs to the end, so one run reports every violation and every functional failure together.
+- **Retries: one, in CI only.** A flaky pass is reported as flaky, not hidden.
+
+**Found along the way.**
+1. **The Dockerfile's deployment path cannot sign anyone in.** `node dist/server.js` with `NODE_ENV=production` serves the SPA under helmet's default Content-Security-Policy, whose `connect-src 'self'` blocks every browser call to Supabase ("Failed to fetch" on the login form). Production on Vercel is unaffected: it serves the SPA as static files with no CSP header (checked against the live site). Not fixed here, since no deployment uses that path today; noted for Step 33 (operational floor). The suite serves the app the way Vercel does instead.
+2. **Accessibility regressions since the 2026-07-25 axe pass**, all fixed in this step:
+   - Contrast: `--cs-text-muted` (#6d716c) measured 4.39:1 on `--cs-surface-2` and 4.2:1 on `--cs-accent-soft`, under AA's 4.5:1, so every grey label on a grey panel failed (Schedule's day headers, Inbox rows and banners, the "Parent view" tag). Darkened to #666a65, which clears 4.5:1 on every surface; the visual change is slight. `--cs-text-faint` (#969a94) is under 4.5:1 everywhere, so the readable text that used it (Today's section headings, the Audit log's table header and times, the invite-link expiry line, every `Field` hint) moved to `--cs-text-muted`; faint stays for icons and placeholders (HANDOFF §6).
+   - Settings' inactive tabs were 60%-opacity text; now `--cs-text-muted`.
+   - Toasts: sonner's `richColors` greens, blues and oranges were under 4.5:1, and broke the near-monochrome rule. All four toast types now read `--cs-*` tokens (success = accent, error = danger on the plain surface, info and warning neutral).
+   - Labels: the kit `Field` component's `<label htmlFor>` pointed at an id no control carried in 21 places (every `Field` given a bare `<Input>`/`<select>`/`<textarea>` child), so those fields were unnamed to screen readers. `Field` now gives such a child its id. Also labelled: the Leave form's three fields and the substitute picker, the invoice line-item inputs and each Outstanding row's checkbox, the People and Team invite-link boxes.
+   - Unnamed icon buttons: six modal close buttons and Student Story's back arrow (which also had HANDOFF §6's `hover:bg-[var(--cs-bg)]` no-op hover; now `--cs-surface-2`).
+
+**Not covered, noted for later.** Dark theme is not audited (the suite runs light). `RoleSelection.tsx` is still never rendered: the plan listed a multi-role seed account under this step's files, but none of the five journeys needs one, and the fixtures live per run in `tests/e2e/support/` rather than in `scripts/seed.ts` so that concurrent runs never share them. The signup form itself (see Decisions). Live Razorpay and phone OTP stay out of CI by design, as this step's scope says. The Login page still opens on the Phone tab, which cannot work; every login in the suite clicks "Email" first. That default is Step 34's to fix and is deliberately left alone here.
+
+**Status: built on branch `feat/step-31-playwright`, green locally against staging; waiting on the founder to add the four GitHub secrets so CI can run it and the deliberate-failure check can be done.**
 
 ---
 
@@ -354,7 +386,7 @@ Journeys touching a live Razorpay or phone OTP stay out of CI and are exercised 
 
 **Why this step exists.** There is no product analytics of any kind. `@vercel/analytics` gives anonymous pageviews; there is no event instrumentation, no signup attribution, no funnel, no cohort. The next twelve months are a search for product-market fit and the search is currently unobservable.
 
-**Blocked on.** **D-11** (build or buy). DPDP posture with minors' data is the deciding factor, not cost.
+**Unblocked 2026-09-14: D-11 is decided** (MASTER_PLAN.md §13): a hand-rolled events table on the existing Postgres, not self-hosted PostHog and not a paid SaaS tier, because DPDP posture with minors' data made shipping behavioural data to a third party before a legal review an avoidable risk. The self-hosted branch below is the one to build.
 
 **Files and systems likely affected.** Depends entirely on D-11. If self-hosted on the existing Postgres: a `product_events` table with an org-scoped, server-written append-only shape, plus an aggregation job riding Step 26's scheduler. If SaaS: a client SDK and a server-side event helper, plus a DPDP review of what leaves the country.
 
@@ -477,7 +509,7 @@ Journeys touching a live Razorpay or phone OTP stay out of CI and are exercised 
 - [ ] Migration additive, rehearsed on staging, applied to production with founder go-ahead.
 - [ ] `mark-paid` captures payment method, a reference number, and an optional note, and records who marked it paid.
 - [ ] `PayoutRuns.tsx`'s mark-paid flow collects these before submitting; payout history displays them once paid.
-- [ ] All seven gates green.
+- [ ] All eight gates green.
 
 **Expected outcome.** An owner can answer "how and when was this payout actually settled" from inside the app alone, without a Razorpay-failure fallback that has nothing to fall back from.
 
@@ -516,7 +548,7 @@ Journeys touching a live Razorpay or phone OTP stay out of CI and are exercised 
 - [ ] No hardcoded tutor counts or fabricated content remain in `Home.tsx`.
 - [ ] Every listed profile's verification state is accurate and visible, including the "not yet verified" case.
 - [ ] The public read path is proven, by a contract test, not to leak any column beyond the allow-list.
-- [ ] All seven gates green; API bundle mount count updated if a new Express route was added.
+- [ ] All eight gates green; API bundle mount count updated if a new Express route was added.
 
 **Expected outcome.** The public site matches the real product for the first time, and "verified" becomes a claim ClassStackr can stand behind rather than an implied one.
 
@@ -561,7 +593,7 @@ Journeys touching a live Razorpay or phone OTP stay out of CI and are exercised 
 - [ ] The SLA clock fires an in-app notification on breach, with no outbound send required.
 - [ ] A lead can be walked end to end to a scheduled trial using only existing conversion, invite, and booking mechanisms — no new booking table.
 - [ ] The public enquiry endpoint is proven, by a contract test, to be rate-limited and unable to write to anything but `leads`.
-- [ ] All seven gates green.
+- [ ] All eight gates green.
 
 **Expected outcome.** Discovery and enquiry are real, D-02 and the SLA clock work without waiting on Step 27, and the trial-to-enrolment path costs almost nothing to build because it reuses machinery that already exists.
 

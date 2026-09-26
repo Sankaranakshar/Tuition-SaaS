@@ -698,7 +698,7 @@ function NewMessageDialog({
       >
         <div className="mb-3 flex items-center justify-between">
           <h2 id="new-message-title" className="text-sm font-semibold text-[var(--cs-text)]">{t("inbox.newMessage")}</h2>
-          <button onClick={onClose} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]">
+          <button onClick={onClose} aria-label={t("common.close")} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]">
             <X className="h-4 w-4" />
           </button>
         </div>
