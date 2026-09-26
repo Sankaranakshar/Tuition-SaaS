@@ -230,7 +230,7 @@ export default function TeamSettings() {
           {inviteLink && (
             <div className="space-y-1">
               <div className="flex gap-2">
-                <input readOnly value={inviteLink} className="w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface-2)] px-3 py-2 text-xs text-[var(--cs-text-muted)]" />
+                <input readOnly value={inviteLink} aria-label="Invite link" className="w-full rounded-[var(--cs-radius-control)] border border-[var(--cs-border-strong)] bg-[var(--cs-surface-2)] px-3 py-2 text-xs text-[var(--cs-text-muted)]" />
                 <Button variant="ghost" onClick={copyLink} icon={Copy} aria-label="Copy invite link" />
               </div>
               {expiresAt && <p className="text-xs text-[var(--cs-text-muted)]">Expires {new Date(expiresAt).toLocaleDateString()}</p>}

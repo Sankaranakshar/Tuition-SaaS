@@ -133,7 +133,7 @@ const STATUS_LABEL_KEY: Record<AttendanceStatus, string> = {
 };
 
 // Shared section label (direction.html .section > .label): 12/600, tracked, faint.
-const SECTION_LABEL = "mb-3 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--cs-text-faint)]";
+const SECTION_LABEL = "mb-3 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--cs-text-muted)]";
 
 export default function Today() {
   const { user, currentRole } = useAuth();

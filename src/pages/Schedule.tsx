@@ -760,7 +760,7 @@ function SessionPopover({
       <Modal onClose={onClose} labelledBy="session-popover-title" className="w-80 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-4 shadow-[var(--cs-shadow-pop)]">
         <div className="mb-3 flex items-start justify-between">
           <h3 id="session-popover-title" className="font-semibold text-[var(--cs-text)]">{t("schedule.sessionDetails")}</h3>
-          <button onClick={onClose} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]"><X className="h-4 w-4" /></button>
+          <button onClick={onClose} aria-label={t("common.close")} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]"><X className="h-4 w-4" /></button>
         </div>
         <div className="space-y-2 text-sm text-[var(--cs-text-muted)]">
           <div className="flex items-center gap-2"><Clock className="h-4 w-4" /> {format(new Date(session.startTime), "MMM d, yyyy h:mm a")}</div>
@@ -960,7 +960,7 @@ function ClassWizard({
       <Modal onClose={onClose} labelledBy="class-wizard-title" className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-[var(--cs-radius-container)] bg-[var(--cs-surface)] shadow-[var(--cs-shadow-pop)]">
         <div className="flex items-center justify-between border-b border-[var(--cs-border)] bg-[var(--cs-surface-2)] px-6 py-4">
           <h3 id="class-wizard-title" className="text-lg font-semibold text-[var(--cs-text)]">{step === 1 ? t("schedule.selectClassType") : t("schedule.classDetails")}</h3>
-          <button onClick={onClose} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]"><X className="h-5 w-5" /></button>
+          <button onClick={onClose} aria-label={t("common.close")} className="text-[var(--cs-text-faint)] hover:text-[var(--cs-text-muted)]"><X className="h-5 w-5" /></button>
         </div>
         <form onSubmit={step === 1 ? (e) => { e.preventDefault(); setStep(2); } : handleSubmit}>
           <div className="space-y-6 px-6 py-6">

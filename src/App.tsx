@@ -36,6 +36,28 @@ const AuditLog = lazy(() => import("./pages/AuditLog"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Preferences = lazy(() => import("./pages/Preferences"));
 
+// sonner's richColors palette (bright greens, blues, oranges) put success,
+// info and warning text under WCAG AA's 4.5:1 contrast (Step 31's axe pass)
+// and broke the near-monochrome rule (HANDOFF.md §6). Map every toast type
+// onto the --cs-* tokens instead: success is the accent, error the danger
+// red (on the plain surface: --cs-danger on --cs-danger-soft is 4.45:1),
+// info and warning plain neutral. Inline custom properties on the
+// toaster outrank sonner's own stylesheet, and the tokens follow dark mode.
+const TOAST_TOKENS = {
+  "--success-bg": "var(--cs-accent-soft)",
+  "--success-border": "var(--cs-border)",
+  "--success-text": "var(--cs-accent)",
+  "--error-bg": "var(--cs-surface)",
+  "--error-border": "var(--cs-border)",
+  "--error-text": "var(--cs-danger)",
+  "--info-bg": "var(--cs-surface)",
+  "--info-border": "var(--cs-border)",
+  "--info-text": "var(--cs-text)",
+  "--warning-bg": "var(--cs-surface)",
+  "--warning-border": "var(--cs-border)",
+  "--warning-text": "var(--cs-text)",
+} as React.CSSProperties;
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, currentRole, loading } = useAuth();
   const location = useLocation();
@@ -101,7 +123,7 @@ capturePendingStaffInvite();
 export default function App() {
   return (
     <AuthProvider>
-      <Toaster position="bottom-right" richColors closeButton />
+      <Toaster position="bottom-right" richColors closeButton style={TOAST_TOKENS} />
       <Router>
         <Suspense fallback={<LoadingFallback />}>
           <Routes>

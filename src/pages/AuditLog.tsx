@@ -123,7 +123,7 @@ export default function AuditLog() {
 
       <div className="overflow-hidden rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
         <table className="min-w-full divide-y divide-[var(--cs-border)] text-sm">
-          <thead className="bg-[var(--cs-surface-2)] text-left text-xs font-medium uppercase tracking-wide text-[var(--cs-text-faint)]">
+          <thead className="bg-[var(--cs-surface-2)] text-left text-xs font-medium uppercase tracking-wide text-[var(--cs-text-muted)]">
             <tr>
               <th className="px-4 py-2">When</th>
               {isPlatformAdmin && <th className="px-4 py-2">Organization</th>}
@@ -153,7 +153,7 @@ export default function AuditLog() {
                     onClick={() => setExpandedId(isExpanded ? null : event.id)}
                   >
                     <td className="whitespace-nowrap px-4 py-3 text-[var(--cs-text-muted)]">
-                      {formatDate(event.createdAt)} <span className="text-[var(--cs-text-faint)]">{formatTime(event.createdAt)}</span>
+                      {formatDate(event.createdAt)} <span className="text-[var(--cs-text-muted)]">{formatTime(event.createdAt)}</span>
                     </td>
                     {isPlatformAdmin && (
                       <td className="px-4 py-3 text-[var(--cs-text-muted)]">{event.organizationName ?? event.organizationId}</td>

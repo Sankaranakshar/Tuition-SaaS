@@ -277,7 +277,7 @@ export default function StudentStory() {
       <div className="rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
-            <button onClick={() => navigate(backTo)} className="rounded-full p-2 hover:bg-[var(--cs-bg)]">
+            <button onClick={() => navigate(backTo)} aria-label={t("common.back")} className="rounded-full p-2 transition-colors duration-[var(--cs-motion-fast)] ease-[var(--cs-ease-out)] hover:bg-[var(--cs-surface-2)]">
               <ArrowLeft className="h-5 w-5 text-[var(--cs-text-muted)]" />
             </button>
             <div>

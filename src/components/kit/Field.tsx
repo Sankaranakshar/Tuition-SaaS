@@ -1,4 +1,4 @@
-import { forwardRef, useId, type InputHTMLAttributes, type ReactNode } from "react";
+import { cloneElement, forwardRef, isValidElement, useId, type InputHTMLAttributes, type ReactElement, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 // The shared text-input skin (REDESIGN §13): surface fill, strong hairline,
@@ -26,7 +26,8 @@ Input.displayName = "Input";
 interface FieldProps {
   label: string;
   /** Supply when wrapping a control you render yourself; otherwise the
-   *  generated id is passed to the single child via `renderControl`. */
+   *  generated id is given to a single input/select/textarea child, or
+   *  passed to `renderControl`. */
   htmlFor?: string;
   hint?: string;
   error?: string | null;
@@ -35,6 +36,17 @@ interface FieldProps {
   children?: ReactNode;
   /** Alternative to children when you want the generated id wired for you. */
   renderControl?: (id: string) => ReactNode;
+}
+
+// A <label htmlFor> only names a control that carries that id. Most call
+// sites pass one bare <Input>/<select>/<textarea> as children with no id, so
+// until 2026-09-26 their labels named nothing and screen readers announced
+// unlabelled fields (found by Step 31's axe pass). Give such a child the id.
+const LABELLABLE = new Set<unknown>(["input", "select", "textarea", Input]);
+function withControlId(children: ReactNode, id: string): ReactNode {
+  if (!isValidElement(children) || !LABELLABLE.has(children.type)) return children;
+  const el = children as ReactElement<{ id?: string }>;
+  return el.props.id ? el : cloneElement(el, { id });
 }
 
 // Label + optional hint + inline error, in plain language and at the field
@@ -48,8 +60,8 @@ export function Field({ label, htmlFor, hint, error, required, className, childr
         {label}
         {required && <span className="ml-0.5 text-[var(--cs-danger)]">*</span>}
       </label>
-      {renderControl ? renderControl(id) : children}
-      {hint && !error && <p className="text-xs text-[var(--cs-text-faint)]">{hint}</p>}
+      {renderControl ? renderControl(id) : withControlId(children, id)}
+      {hint && !error && <p className="text-xs text-[var(--cs-text-muted)]">{hint}</p>}
       {error && <p className="text-xs text-[var(--cs-danger)]">{error}</p>}
     </div>
   );

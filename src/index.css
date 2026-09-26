@@ -136,7 +136,12 @@
   --cs-border: #e3e3df;
   --cs-border-strong: #cfcfca;
   --cs-text: #1f211f;
-  --cs-text-muted: #6d716c;
+  /* Darkened from #6d716c on 2026-09-26: that measured 4.39:1 on
+     --cs-surface-2 and 4.2:1 on --cs-accent-soft, under WCAG AA's 4.5:1 for
+     body text (Step 31's axe pass). #666a65 clears 4.5:1 on every surface. */
+  --cs-text-muted: #666a65;
+  /* Below 4.5:1 on every surface: icons, placeholders and dividers only,
+     never text someone has to read (HANDOFF.md §6). */
   --cs-text-faint: #969a94;
 
   /* one brand accent — buttons, active nav, links, focus, "paid/enrolled" */
