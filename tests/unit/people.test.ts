@@ -21,7 +21,7 @@ describe("rankStudentsByAttention (REDESIGN §6.2)", () => {
       { id: "i1", studentId: "b", status: "unpaid", dueDate: "2026-07-01" }, // 9 days overdue
       { id: "i2", studentId: "c", status: "unpaid", dueDate: "2026-07-08" }, // 2 days overdue
     ];
-    const ranked = rankStudentsByAttention(students, invoices, [], NOW);
+    const ranked = rankStudentsByAttention(students, invoices, [], NOW, "UTC");
     expect(ranked[0].student.id).toBe("b");
     expect(ranked[0].reason).toEqual({ kind: "overdue_fee", days: 9 });
     expect(ranked[1].student.id).toBe("c");
@@ -36,7 +36,7 @@ describe("rankStudentsByAttention (REDESIGN §6.2)", () => {
       { studentId: "b", status: "absent", sessionStart: "2026-07-06T10:00:00Z" },
       { studentId: "b", status: "absent", sessionStart: "2026-07-04T10:00:00Z" },
     ];
-    const ranked = rankStudentsByAttention(students, [], attendance, NOW);
+    const ranked = rankStudentsByAttention(students, [], attendance, NOW, "UTC");
     expect(ranked[0].student.id).toBe("b");
     expect(ranked[0].reason).toEqual({ kind: "absence_streak", length: 3 });
   });
@@ -47,7 +47,7 @@ describe("rankStudentsByAttention (REDESIGN §6.2)", () => {
       student("no-phone-old", { createdAt: "2026-01-01T00:00:00Z" }),
       student("no-phone-new", { createdAt: "2026-07-09T00:00:00Z" }),
     ];
-    const ranked = rankStudentsByAttention(students, [], [], NOW);
+    const ranked = rankStudentsByAttention(students, [], [], NOW, "UTC");
     const byId = Object.fromEntries(ranked.map((r) => [r.student.id, r.reason]));
     expect(byId["has-phone"]).toEqual({ kind: "none" });
     expect(byId["no-phone-new"]).toEqual({ kind: "none" });
@@ -56,7 +56,7 @@ describe("rankStudentsByAttention (REDESIGN §6.2)", () => {
 
   it("ties break alphabetically for a stable, predictable list", () => {
     const students = [student("Zed"), student("Amy")];
-    const ranked = rankStudentsByAttention(students, [], [], NOW);
+    const ranked = rankStudentsByAttention(students, [], [], NOW, "UTC");
     expect(ranked.map((r) => r.student.id)).toEqual(["Amy", "Zed"]);
   });
 });

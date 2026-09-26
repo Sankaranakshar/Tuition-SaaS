@@ -27,6 +27,7 @@ import { markAttendance, type AttendanceStatus } from "../lib/api";
 import { debounce } from "../lib/debounce";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useSwipeAction } from "../hooks/useSwipeAction";
+import { useOrgTimezone } from "../hooks/useOrgTimezone";
 import StudentDashboard from "./StudentDashboard";
 import ParentPortal from "./ParentPortal";
 import {
@@ -176,6 +177,9 @@ function StaffToday({ user }: { user: any }) {
     const id = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(id);
   }, []);
+  // "Today", this week, this month and days overdue are the org's calendar
+  // (C-01), not the viewer's browser zone.
+  const zone = useOrgTimezone();
 
   // Client overlay for optimistic marking (E9.2): a session shows as done the
   // instant the roster is confirmed; the real API call is deferred so Undo can
@@ -362,16 +366,16 @@ function StaffToday({ user }: { user: any }) {
     [students]
   );
 
-  const todaySessions = useMemo(() => (sessions ? sessionsForDay(sessions, now) : []), [sessions, now]);
+  const todaySessions = useMemo(() => (sessions ? sessionsForDay(sessions, now, zone) : []), [sessions, now, zone]);
   const debt = useMemo(() => (sessions ? attendanceDebt(sessions, now) : []), [sessions, now]);
-  const pulse = useMemo(() => buildPulse(invoices, sessions || [], now), [invoices, sessions, now]);
+  const pulse = useMemo(() => buildPulse(invoices, sessions || [], now, zone), [invoices, sessions, now, zone]);
 
   const queue = useMemo(() => {
     if (!sessions) return [];
-    return buildAttentionQueue({ invoices, sessions, leads, students, attendance }, now).filter(
+    return buildAttentionQueue({ invoices, sessions, leads, students, attendance }, now, zone).filter(
       (it) => !hidden[it.id] || hidden[it.id] <= Date.now()
     );
-  }, [invoices, sessions, leads, students, attendance, now, hidden]);
+  }, [invoices, sessions, leads, students, attendance, now, zone, hidden]);
 
   // --- Attendance commit with a 5-second undo window ---
   const commitAttendance = useCallback(

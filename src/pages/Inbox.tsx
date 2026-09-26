@@ -34,6 +34,7 @@ import {
   ensureClassChannel,
   findOrCreateDirectConversation,
 } from "../hooks/useInbox";
+import { useOrgTimezone } from "../hooks/useOrgTimezone";
 
 type Segment = "all" | "unread" | "waiting" | "archived" | "requests";
 const SEGMENTS: { key: Segment; labelKey: string }[] = [
@@ -397,7 +398,8 @@ function ThreadView({
   }, [messages.length]);
 
   const now = new Date();
-  const anchorDescription = thread.anchorType ? describeAnchor(thread.anchorType, context, now) : null;
+  const zone = useOrgTimezone();
+  const anchorDescription = thread.anchorType ? describeAnchor(thread.anchorType, context, now, zone) : null;
   const otherParticipant = thread.participantIds.find((id: string) => id !== currentUserId) ?? null;
 
   const submit = async (e: React.FormEvent) => {

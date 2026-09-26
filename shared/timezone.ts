@@ -108,3 +108,32 @@ export function civilDateKey(sentinel: Date): string {
 export function monthKeyInZone(instant: Date, zone: string): string {
   return localDateKeyInZone(instant, zone).slice(0, 7);
 }
+
+/** Minutes since midnight (0-1439), in `zone`, for `instant`: the
+ *  zone-correct replacement for `getHours() * 60 + getMinutes()`. The minute
+ *  has to come from the zone too, not just the hour, because IST's offset
+ *  is a half hour. */
+export function minutesSinceMidnightInZone(instant: Date, zone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", hour: "2-digit", minute: "2-digit" }).formatToParts(instant);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  return get("hour") * 60 + get("minute");
+}
+
+/** The real UTC instant at which the calendar day `key` (`YYYY-MM-DD`)
+ *  begins on a clock in `zone`: the zone-correct replacement for
+ *  `new Date(y, m, d)` and `d.setHours(0, 0, 0, 0)`. */
+export function startOfDayInZone(key: string, zone: string): Date {
+  const [y, m, d] = key.split("-").map(Number);
+  return zonedTimeToUtc(y, m, d, 0, 0, zone);
+}
+
+/** Whole calendar days from `fromKey` to `toKey` (both `YYYY-MM-DD`),
+ *  negative when `toKey` is earlier. Pure civil-date arithmetic in UTC
+ *  fields, so a DST day's 23 or 25 hours cannot skew it. */
+export function civilDaysBetween(fromKey: string, toKey: string): number {
+  const toUtc = (key: string) => {
+    const [y, m, d] = key.split("-").map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((toUtc(toKey) - toUtc(fromKey)) / 86_400_000);
+}

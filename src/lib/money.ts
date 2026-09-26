@@ -47,14 +47,16 @@ export interface PayerGroup {
 const OPEN_INVOICE = new Set(["unpaid", "partially_paid", "sent", "overdue", "pending"]);
 
 /**
- * Open invoices grouped by payer (student), each line aged. Groups sort by
+ * Open invoices grouped by payer (student), each line aged in days on the
+ * org's calendar (`zone`). Groups sort by
  * worst overdue first, then by amount outstanding — the payers who most need
  * a nudge float to the top of the Outstanding segment.
  */
 export function groupOutstandingByPayer(
   invoices: MoneyInvoice[],
   students: MoneyStudent[],
-  now: Date
+  now: Date,
+  zone: string
 ): PayerGroup[] {
   const nameOf = new Map(students.map((s) => [s.id, s.name]));
   const byStudent = new Map<string, OutstandingLine[]>();
@@ -64,7 +66,7 @@ export function groupOutstandingByPayer(
     if (!OPEN_INVOICE.has(inv.status || "")) continue;
     const outstandingPaise = invoiceOutstandingPaise(inv);
     if (outstandingPaise <= 0) continue;
-    const days = daysOverdue(inv, now);
+    const days = daysOverdue(inv, now, zone);
     const line: OutstandingLine = { invoice: inv, outstandingPaise, daysOverdue: days, bucket: agingBucket(days) };
     if (!byStudent.has(inv.studentId)) byStudent.set(inv.studentId, []);
     byStudent.get(inv.studentId)!.push(line);

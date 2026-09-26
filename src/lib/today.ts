@@ -2,8 +2,22 @@
 // Firestore reads — every function takes plain data plus an explicit `now`, so
 // the whole workspace is unit-testable and the clock is injectable. The page
 // (src/pages/Today.tsx) is the only place these get wired to live listeners.
+//
+// Anything that asks "which day" or "which week/month" also takes the org's
+// zone (`organizations.timezone`, C-01) explicitly. In the browser the
+// ambient zone is the viewer's, not the org's, so `getDate()`-style reads
+// would put an evening session or a due date on the wrong day for anyone
+// viewing from another zone.
 
 import { rupeesToPaise } from "../../shared/money";
+import {
+  civilDateKey,
+  civilDateSentinelInZone,
+  civilDaysBetween,
+  localDateKeyInZone,
+  startOfDayInZone,
+  zonedTimeToUtc,
+} from "../../shared/timezone";
 
 // ---- Shapes (loose; Firestore docs carry extra fields we ignore) -----------
 
@@ -115,14 +129,15 @@ export function attendanceDebt(sessions: TodaySession[], now: Date): TodaySessio
     .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 }
 
-export function isSameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+/** True when both instants fall on the same calendar day in `zone`. */
+export function isSameDay(a: Date, b: Date, zone: string): boolean {
+  return localDateKeyInZone(a, zone) === localDateKeyInZone(b, zone);
 }
 
 /** Today's sessions, sorted by start (cancelled kept — the Line shows them struck out). */
-export function sessionsForDay(sessions: TodaySession[], day: Date): TodaySession[] {
+export function sessionsForDay(sessions: TodaySession[], day: Date, zone: string): TodaySession[] {
   return sessions
-    .filter((s) => isSameDay(new Date(s.startTime), day))
+    .filter((s) => isSameDay(new Date(s.startTime), day, zone))
     .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 }
 
@@ -153,13 +168,11 @@ export function invoiceOutstandingPaise(inv: TodayInvoice): number {
 
 const OPEN_INVOICE = new Set(["unpaid", "partially_paid", "sent", "overdue", "pending"]);
 
-/** Whole days an invoice is past due (0 or negative = not yet due). */
-export function daysOverdue(inv: TodayInvoice, now: Date): number {
+/** Whole days an invoice is past due (0 or negative = not yet due), counted
+ *  from the due date to today's date on the org's calendar (`zone`). */
+export function daysOverdue(inv: TodayInvoice, now: Date, zone: string): number {
   if (!inv.dueDate) return 0;
-  const due = new Date(inv.dueDate + "T00:00:00");
-  const midnight = new Date(now);
-  midnight.setHours(0, 0, 0, 0);
-  return Math.floor((midnight.getTime() - due.getTime()) / DAY);
+  return civilDaysBetween(inv.dueDate.slice(0, 10), localDateKeyInZone(now, zone));
 }
 
 // ---- The Pulse (E9.4): three numbers, no charts ----------------------------
@@ -171,20 +184,24 @@ export interface Pulse {
   sessionsLastWeek: number;
 }
 
-function startOfMonth(now: Date): Date {
-  return new Date(now.getFullYear(), now.getMonth(), 1);
+/** The instant the org's current month began (midnight on the 1st, in `zone`). */
+function startOfMonth(now: Date, zone: string): Date {
+  const [y, m] = localDateKeyInZone(now, zone).split("-").map(Number);
+  return zonedTimeToUtc(y, m, 1, 0, 0, zone);
 }
 
-/** Monday-anchored week start in local time. */
-function startOfWeek(now: Date): Date {
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const dow = (d.getDay() + 6) % 7; // 0 = Monday
-  d.setDate(d.getDate() - dow);
-  return d;
+/** Monday-anchored week start in `zone`, `offsetWeeks` weeks from the
+ *  current one. Walks civil dates rather than adding 7 × 24h, so a DST
+ *  week's extra or missing hour cannot shift the boundary. */
+function startOfWeek(now: Date, zone: string, offsetWeeks = 0): Date {
+  const d = civilDateSentinelInZone(zone, now);
+  const dow = (d.getUTCDay() + 6) % 7; // 0 = Monday
+  d.setUTCDate(d.getUTCDate() - dow + 7 * offsetWeeks);
+  return startOfDayInZone(civilDateKey(d), zone);
 }
 
-export function buildPulse(invoices: TodayInvoice[], sessions: TodaySession[], now: Date): Pulse {
-  const monthStart = startOfMonth(now).getTime();
+export function buildPulse(invoices: TodayInvoice[], sessions: TodaySession[], now: Date, zone: string): Pulse {
+  const monthStart = startOfMonth(now, zone).getTime();
   let collectedPaise = 0;
   let outstandingPaise = 0;
   for (const inv of invoices) {
@@ -196,8 +213,9 @@ export function buildPulse(invoices: TodayInvoice[], sessions: TodaySession[], n
     }
   }
 
-  const weekStart = startOfWeek(now).getTime();
-  const lastWeekStart = weekStart - 7 * DAY;
+  const weekStart = startOfWeek(now, zone).getTime();
+  const lastWeekStart = startOfWeek(now, zone, -1).getTime();
+  const nextWeekStart = startOfWeek(now, zone, 1).getTime();
   const countBetween = (from: number, to: number) =>
     sessions.filter((s) => {
       if (s.status === "cancelled") return false;
@@ -208,7 +226,7 @@ export function buildPulse(invoices: TodayInvoice[], sessions: TodaySession[], n
   return {
     collectedPaise,
     outstandingPaise,
-    sessionsThisWeek: countBetween(weekStart, weekStart + 7 * DAY),
+    sessionsThisWeek: countBetween(weekStart, nextWeekStart),
     sessionsLastWeek: countBetween(lastWeekStart, weekStart),
   };
 }
@@ -250,7 +268,7 @@ export interface QueueInput {
 }
 
 /** Build the full rules-based queue, most urgent first. */
-export function buildAttentionQueue(input: QueueInput, now: Date): QueueItem[] {
+export function buildAttentionQueue(input: QueueInput, now: Date, zone: string): QueueItem[] {
   const nameOf = new Map(input.students.map((s) => [s.id, s.name || "a student"]));
   const phoneOf = new Map(input.students.map((s) => [s.id, s.parentPhone || s.phone || ""]));
   const items: QueueItem[] = [];
@@ -258,7 +276,7 @@ export function buildAttentionQueue(input: QueueInput, now: Date): QueueItem[] {
   // 1. Overdue invoices, aged.
   for (const inv of input.invoices) {
     if (!OPEN_INVOICE.has(inv.status || "") || invoiceOutstandingPaise(inv) <= 0) continue;
-    const d = daysOverdue(inv, now);
+    const d = daysOverdue(inv, now, zone);
     if (d <= 0) continue;
     items.push({
       id: `overdue_invoice:${inv.id}`,

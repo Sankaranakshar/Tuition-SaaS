@@ -14,6 +14,7 @@ import {
   useStudentsList, useStudentInvoices, useStudentAttendance,
   useLeadsList, useParentsList, useTutorsList, type StudentRow,
 } from "../hooks/usePeople";
+import { useOrgTimezone } from "../hooks/useOrgTimezone";
 import {
   rankStudentsByAttention, buildLeadFunnel, rankLeadsByGoingCold,
   LEAD_FUNNEL_STAGES, type AttentionReason,
@@ -118,6 +119,7 @@ function StudentsLens({ search, user, navigate, t }: any) {
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
 
   const canErase = user?.organizationRole === "owner" || user?.organizationRole === "admin";
+  const zone = useOrgTimezone();
 
   const ranked = useMemo(() => {
     const now = new Date();
@@ -126,8 +128,8 @@ function StudentsLens({ search, user, navigate, t }: any) {
         s.name.toLowerCase().includes(search.toLowerCase()) ||
         (s.parentName || "").toLowerCase().includes(search.toLowerCase())
     );
-    return rankStudentsByAttention(filtered, invoices, attendance, now);
-  }, [students, invoices, attendance, search]);
+    return rankStudentsByAttention(filtered, invoices, attendance, now, zone);
+  }, [students, invoices, attendance, search, zone]);
 
   const toggleSelect = (id: string) => {
     setSelected((prev) => {

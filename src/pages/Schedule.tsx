@@ -17,9 +17,10 @@ import {
   useScheduleSessions, useMyScheduleSessions, useClassTemplates, useTutorAvailability,
   type ScheduleSessionRow,
 } from "../hooks/useSchedule";
+import { useOrgTimezone } from "../hooks/useOrgTimezone";
 import {
   layoutOverlappingSessions, checkClientSideConflict, isOutsideAvailability,
-  buildClassTemplatePayload, minutesSinceMidnight, snapMinutes,
+  buildClassTemplatePayload, minutesSinceMidnight, snapMinutes, wizardFieldsInZone, wizardStartInstant,
   type ScheduleClassType, type SchedulePricingModel,
 } from "../lib/schedule";
 import { EmptyState, Modal, Button, Input, Field } from "../components/kit";
@@ -52,6 +53,14 @@ const DAY_END_HOUR = 21;
 const HOUR_PX = 56;
 const PX_PER_MINUTE = HOUR_PX / 60;
 const GRID_HOURS = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, i) => DAY_START_HOUR + i);
+
+// The week grid lays out columns and hours the way the rest of the app
+// renders times: in the viewer's own zone (date-fns local days, formatTime).
+// Grid math says so explicitly rather than reading it implicitly. Anything
+// written to an org-zone field (a template's start_hour, the wizard's typed
+// time) or checked against one (tutor availability) uses the org's zone
+// from useOrgTimezone() instead (C-01).
+const VIEWER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 function toLocalIso(date: Date) {
   return date.toISOString();
@@ -175,6 +184,7 @@ function StaffSchedule() {
   const { data: sessions, loading, refetch } = useScheduleSessions(weekStart, weekEnd);
   const { data: templates } = useClassTemplates();
   const { data: availability } = useTutorAvailability(user?.role === "tutor" ? user.id : undefined);
+  const orgZone = useOrgTimezone();
   // Step 3 (EXECUTION_PLAN.md): D-08's per-org policy, read once so the
   // popover can disclose the cutoff/fee before staff clicks cancel — the
   // same policy the parent-facing ParentPortal.tsx overview now surfaces.
@@ -349,7 +359,7 @@ function StaffSchedule() {
       return;
     }
     if (prev.mode === "resize" && prev.originalStart) {
-      const newEndMinutes = Math.max(minutesSinceMidnight(prev.originalStart) + 15, offsetMinutes);
+      const newEndMinutes = Math.max(minutesSinceMidnight(prev.originalStart, VIEWER_ZONE) + 15, offsetMinutes);
       const newEnd = new Date(prev.originalStart);
       newEnd.setHours(0, 0, 0, 0);
       newEnd.setMinutes(newEndMinutes);
@@ -378,7 +388,8 @@ function StaffSchedule() {
       const durationMinutes = Math.round((current.currentEnd.getTime() - current.currentStart.getTime()) / 60000);
       if (durationMinutes < 15) return; // treat as a stray click, not a real drag
       setWizardOpen(true);
-      setWizardPrefill({ startDate: format(current.currentStart, "yyyy-MM-dd"), startTime: format(current.currentStart, "HH:mm"), duration: durationMinutes });
+      const fields = wizardFieldsInZone(current.currentStart, orgZone);
+      setWizardPrefill({ startDate: fields.date, startTime: fields.time, duration: durationMinutes });
       return;
     }
 
@@ -413,7 +424,7 @@ function StaffSchedule() {
       return;
     }
 
-    if (user?.role === "tutor" && isOutsideAvailability({ startTime: toLocalIso(current.currentStart), endTime: toLocalIso(current.currentEnd) }, availability)) {
+    if (user?.role === "tutor" && isOutsideAvailability({ startTime: toLocalIso(current.currentStart), endTime: toLocalIso(current.currentEnd) }, availability, orgZone)) {
       const ok = await new Promise<boolean>((resolve) => setOutsideHoursConfirm({ resolve }));
       if (!ok) return;
     }
@@ -440,11 +451,14 @@ function StaffSchedule() {
     if (!scopePrompt) return;
     const { session, newStart, newEnd } = scopePrompt;
     setScopePrompt(null);
+    // start_hour/start_minute are the org's wall clock (the server
+    // materializes them in organizations.timezone), not the viewer's.
+    const startMinutes = minutesSinceMidnight(newStart, orgZone);
     try {
       await updateTemplateScope(session.templateId!, {
         scope,
-        startHour: newStart.getHours(),
-        startMinute: newStart.getMinutes(),
+        startHour: Math.floor(startMinutes / 60),
+        startMinute: startMinutes % 60,
         durationMinutes: Math.round((newEnd.getTime() - newStart.getTime()) / 60000),
       });
       toast.success(t("schedule.scopeUpdated"));
@@ -676,7 +690,7 @@ function StaffSchedule() {
 }
 
 function timeOffsetPx(date: Date) {
-  return (minutesSinceMidnight(date) - DAY_START_HOUR * 60) * PX_PER_MINUTE;
+  return (minutesSinceMidnight(date, VIEWER_ZONE) - DAY_START_HOUR * 60) * PX_PER_MINUTE;
 }
 
 // ---- Month view (density scanning) ----------------------------------------
@@ -833,6 +847,7 @@ function ClassWizard({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const orgZone = useOrgTimezone();
   const [step, setStep] = useState(1);
   const [classType, setClassType] = useState<ScheduleClassType>("BATCH");
   const [courseId, setCourseId] = useState("");
@@ -886,8 +901,9 @@ function ClassWizard({
   function applyGap(slot: { start: string; end: string }) {
     const s = new Date(slot.start);
     const e = new Date(slot.end);
-    setStartDate(format(s, "yyyy-MM-dd"));
-    setStartTime(format(s, "HH:mm"));
+    const fields = wizardFieldsInZone(s, orgZone);
+    setStartDate(fields.date);
+    setStartTime(fields.time);
     setDuration(Math.round((e.getTime() - s.getTime()) / 60000));
     setGaps(null);
   }
@@ -922,8 +938,7 @@ function ClassWizard({
       if (templateError) throw templateError;
 
       if (classType === "ONE_ON_ONE" || classType === "CRASH_COURSE") {
-        const start = new Date(startDate);
-        start.setHours(hours, minutes, 0, 0);
+        const start = wizardStartInstant(startDate, startTime, orgZone);
         const end = new Date(start.getTime() + duration * 60 * 1000);
         await ClassManager.createSession({
           organizationId: user.organizationId,

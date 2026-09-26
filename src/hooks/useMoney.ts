@@ -4,7 +4,6 @@ import { useAuth } from "../context/AuthContext";
 import { useRealtimeList } from "./useRealtimeList";
 import { debounce } from "../lib/debounce";
 import { rupeesToPaise } from "../../shared/money";
-import { DEFAULT_ORG_TIMEZONE } from "../../shared/timezone";
 import type { RealtimeMergeConfig } from "./realtimeMerge";
 import type { MoneyInvoice, MoneyWallet, MoneyPayment } from "../lib/money";
 
@@ -153,33 +152,6 @@ export function useMoneyPayments() {
     return (data || []).map(mapMoneyPaymentRow);
   }, [orgId]);
   return useRealtimeList<MoneyPaymentRow>("money", "payments", orgId, load, undefined, moneyPaymentMerge);
-}
-
-/** The active org's `organizations.timezone` (C-01), so Insights buckets months
- *  on the org's calendar rather than the viewer's browser zone. Falls back to
- *  the schema default until loaded or if the read fails. */
-export function useOrgTimezone(): string {
-  const { user } = useAuth();
-  const orgId = user?.organizationId;
-  const [zone, setZone] = useState(DEFAULT_ORG_TIMEZONE);
-
-  useEffect(() => {
-    if (!orgId) return;
-    let cancelled = false;
-    supabase
-      .from("organizations")
-      .select("timezone")
-      .eq("id", orgId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (!cancelled) setZone(data?.timezone || DEFAULT_ORG_TIMEZONE);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [orgId]);
-
-  return zone;
 }
 
 /** Average PER_SESSION template fee, in paise — the wallets segment's depletion estimate for currency-only balances. */

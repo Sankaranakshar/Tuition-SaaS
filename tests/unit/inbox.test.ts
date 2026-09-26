@@ -158,12 +158,12 @@ describe("sortInboxItems", () => {
 
 describe("describeAnchor", () => {
   it("describes a student anchor", () => {
-    const result = describeAnchor("student", { student: { id: "s1", name: "Riya" } }, NOW);
+    const result = describeAnchor("student", { student: { id: "s1", name: "Riya" } }, NOW, "UTC");
     expect(result.title).toBe("Riya");
   });
 
   it("describes a session anchor with its start time", () => {
-    const result = describeAnchor("session", { session: { id: "sess1", startTime: "2026-07-11T09:00:00Z" } }, NOW);
+    const result = describeAnchor("session", { session: { id: "sess1", startTime: "2026-07-11T09:00:00Z" } }, NOW, "UTC");
     expect(result.title).toBe("Session");
     expect(result.detail).toBeTruthy();
   });
@@ -174,7 +174,8 @@ describe("describeAnchor", () => {
       {
         invoice: { id: "i1", studentName: "Riya", status: "unpaid", dueDate: "2026-07-01", totalPaise: 300000, paidPaise: 0 },
       },
-      NOW
+      NOW,
+      "UTC"
     );
     expect(result.title).toContain("Invoice");
     expect(result.title).toContain("Riya");
@@ -186,7 +187,8 @@ describe("describeAnchor", () => {
     const result = describeAnchor(
       "homework",
       { homework: { id: "hw1", title: "Algebra worksheet", dueDate: "2026-07-15", status: "pending" } },
-      NOW
+      NOW,
+      "UTC"
     );
     expect(result.title).toBe("Algebra worksheet");
     expect(result.detail).toContain("pending");
@@ -197,7 +199,8 @@ describe("describeAnchor", () => {
     const result = describeAnchor(
       "homework",
       { homework: { id: "hw1", title: "Algebra worksheet", dueDate: "2026-07-01", status: "pending" } },
-      NOW
+      NOW,
+      "UTC"
     );
     expect(result.tone).toBe("warn");
   });

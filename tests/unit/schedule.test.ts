@@ -8,14 +8,16 @@ import {
   checkClientSideConflict,
   isOutsideAvailability,
   buildClassTemplatePayload,
+  wizardFieldsInZone,
+  wizardStartInstant,
   type ScheduleSession,
   type TutorAvailabilityWindow,
 } from "../../src/lib/schedule";
 
 describe("minutesSinceMidnight / snapMinutes", () => {
-  it("computes minutes elapsed since local midnight", () => {
-    expect(minutesSinceMidnight(new Date("2026-07-13T09:30:00"))).toBe(570);
-    expect(minutesSinceMidnight(new Date("2026-07-13T00:00:00"))).toBe(0);
+  it("computes minutes elapsed since midnight in the given zone", () => {
+    expect(minutesSinceMidnight(new Date("2026-07-13T09:30:00Z"), "UTC")).toBe(570);
+    expect(minutesSinceMidnight(new Date("2026-07-13T00:00:00Z"), "UTC")).toBe(0);
   });
 
   it("snaps to the nearest 15-minute increment by default", () => {
@@ -33,15 +35,15 @@ describe("minutesSinceMidnight / snapMinutes", () => {
 
 describe("pixelOffsetToTime / timeToPixelOffset", () => {
   it("round-trips a time through pixel offset and back, snapped", () => {
-    const dayStart = new Date("2026-07-13T00:00:00");
+    const dayStart = new Date("2026-07-13T00:00:00Z");
     const pxPerMinute = 2;
-    const time = pixelOffsetToTime(dayStart, 9 * 60 * pxPerMinute, pxPerMinute);
-    expect(minutesSinceMidnight(time)).toBe(9 * 60);
+    const time = pixelOffsetToTime(dayStart, 9 * 60 * pxPerMinute, pxPerMinute, "UTC");
+    expect(minutesSinceMidnight(time, "UTC")).toBe(9 * 60);
   });
 
   it("converts a time-of-day to a pixel offset", () => {
-    const t = new Date("2026-07-13T10:00:00");
-    expect(timeToPixelOffset(t, 2)).toBe(1200);
+    const t = new Date("2026-07-13T10:00:00Z");
+    expect(timeToPixelOffset(t, 2, "UTC")).toBe(1200);
   });
 });
 
@@ -133,26 +135,26 @@ describe("isOutsideAvailability", () => {
   const monday9to5: TutorAvailabilityWindow[] = [{ dayOfWeek: 1, startTime: "09:00", endTime: "17:00" }];
 
   it("treats a tutor with no declared availability as always available", () => {
-    expect(isOutsideAvailability({ startTime: "2026-07-13T20:00:00", endTime: "2026-07-13T21:00:00" }, [])).toBe(false);
+    expect(isOutsideAvailability({ startTime: "2026-07-13T20:00:00Z", endTime: "2026-07-13T21:00:00Z" }, [], "UTC")).toBe(false);
   });
 
   it("is not outside hours when fully inside a declared window", () => {
     // 2026-07-13 is a Monday.
     expect(
-      isOutsideAvailability({ startTime: "2026-07-13T10:00:00", endTime: "2026-07-13T11:00:00" }, monday9to5)
+      isOutsideAvailability({ startTime: "2026-07-13T10:00:00Z", endTime: "2026-07-13T11:00:00Z" }, monday9to5, "UTC")
     ).toBe(false);
   });
 
   it("is outside hours when the day has no declared window at all", () => {
     // 2026-07-12 is a Sunday, not covered by the Monday-only window.
     expect(
-      isOutsideAvailability({ startTime: "2026-07-12T10:00:00", endTime: "2026-07-12T11:00:00" }, monday9to5)
+      isOutsideAvailability({ startTime: "2026-07-12T10:00:00Z", endTime: "2026-07-12T11:00:00Z" }, monday9to5, "UTC")
     ).toBe(true);
   });
 
   it("is outside hours when the slot extends past the window end", () => {
     expect(
-      isOutsideAvailability({ startTime: "2026-07-13T16:30:00", endTime: "2026-07-13T17:30:00" }, monday9to5)
+      isOutsideAvailability({ startTime: "2026-07-13T16:30:00Z", endTime: "2026-07-13T17:30:00Z" }, monday9to5, "UTC")
     ).toBe(true);
   });
 });
@@ -202,5 +204,60 @@ describe("buildClassTemplatePayload", () => {
     expect(payload.name).toBe("BATCH");
     expect(payload.capacity).toBe(8);
     expect(payload.room_number).toBeNull();
+  });
+});
+
+// C-01 follow-up (2026-09-27): clock-time helpers take the zone explicitly.
+describe("zone-explicit schedule helpers (C-01)", () => {
+  const IST = "Asia/Kolkata";
+  const NY = "America/New_York";
+
+  it("minutesSinceMidnight reads the zone's clock, half-hour offset included", () => {
+    const t = new Date("2026-07-13T13:00:00Z");
+    expect(minutesSinceMidnight(t, IST)).toBe(18 * 60 + 30);
+    expect(minutesSinceMidnight(t, NY)).toBe(9 * 60);
+  });
+
+  it("minutesSinceMidnight at 00:15 IST is 15, not the previous evening", () => {
+    expect(minutesSinceMidnight(new Date("2026-07-12T18:45:00Z"), IST)).toBe(15);
+  });
+
+  it("pixelOffsetToTime counts from midnight in the zone", () => {
+    const dayStart = new Date("2026-07-13T12:00:00Z"); // 13 Jul in both zones
+    expect(pixelOffsetToTime(dayStart, 9 * 60 * 2, 2, IST).toISOString()).toBe("2026-07-13T03:30:00.000Z");
+    expect(pixelOffsetToTime(dayStart, 9 * 60 * 2, 2, NY).toISOString()).toBe("2026-07-13T13:00:00.000Z");
+  });
+
+  it("isOutsideAvailability reads the window on the org's clock", () => {
+    const monday9to5: TutorAvailabilityWindow[] = [{ dayOfWeek: 1, startTime: "09:00", endTime: "17:00" }];
+    const slot = { startTime: "2026-07-13T04:00:00Z", endTime: "2026-07-13T05:00:00Z" }; // Mon 09:30-10:30 IST
+    expect(isOutsideAvailability(slot, monday9to5, IST)).toBe(false);
+    expect(isOutsideAvailability(slot, monday9to5, NY)).toBe(true); // Mon 00:00-01:00 in New York
+  });
+
+  it("isOutsideAvailability reads the weekday on the org's clock just past midnight", () => {
+    const monday0to2: TutorAvailabilityWindow[] = [{ dayOfWeek: 1, startTime: "00:00", endTime: "02:00" }];
+    const slot = { startTime: "2026-07-12T18:45:00Z", endTime: "2026-07-12T19:15:00Z" }; // Mon 00:15-00:45 IST, Sun in UTC
+    expect(isOutsideAvailability(slot, monday0to2, IST)).toBe(false);
+  });
+
+  it("wizard fields show the org's wall clock and date", () => {
+    expect(wizardFieldsInZone(new Date("2026-07-13T13:00:00Z"), IST)).toEqual({ date: "2026-07-13", time: "18:30" });
+    expect(wizardFieldsInZone(new Date("2026-07-13T19:00:00Z"), IST)).toEqual({ date: "2026-07-14", time: "00:30" });
+    expect(wizardFieldsInZone(new Date("2026-07-14T03:30:00Z"), NY)).toEqual({ date: "2026-07-13", time: "23:30" });
+  });
+
+  it("a typed wizard time means the org's wall clock, even west of UTC in the evening", () => {
+    expect(wizardStartInstant("2026-07-13", "18:30", IST).toISOString()).toBe("2026-07-13T13:00:00.000Z");
+    // new Date("2026-07-13") is UTC midnight, so the old setHours() path put
+    // this on 12 Jul for any viewer west of UTC.
+    expect(wizardStartInstant("2026-07-13", "20:00", NY).toISOString()).toBe("2026-07-14T00:00:00.000Z");
+  });
+
+  it("wizard fields and the typed instant round-trip", () => {
+    const t = new Date("2026-11-01T06:30:00Z"); // 01:30 EST, the second of the two 01:30s on DST-end day
+    const f = wizardFieldsInZone(t, NY);
+    expect(f).toEqual({ date: "2026-11-01", time: "01:30" });
+    expect(wizardFieldsInZone(wizardStartInstant(f.date, f.time, NY), NY)).toEqual(f);
   });
 });

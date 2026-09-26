@@ -8,6 +8,9 @@ import {
   civilDateSentinelInZone,
   civilDateKey,
   monthKeyInZone,
+  minutesSinceMidnightInZone,
+  startOfDayInZone,
+  civilDaysBetween,
 } from "../../shared/timezone.ts";
 
 // C-01 (MASTER_PLAN.md §6.3, EXECUTION_PLAN.md Step 25). The whole point of
@@ -126,5 +129,34 @@ describe("civilDateSentinelInZone / civilDateKey", () => {
     // Advancing by exactly one calendar day never lands on a fractional
     // offset or skips/repeats a day — the sentinel is always UTC midnight.
     expect(next.getTime() - sentinel.getTime()).toBe(24 * 3600 * 1000);
+  });
+});
+
+describe("minutesSinceMidnightInZone", () => {
+  it("reads hour and minute on the zone's clock, including IST's half hour", () => {
+    const t = new Date(Date.UTC(2026, 6, 13, 18, 45)); // 00:15 IST 14 Jul, 14:45 New York
+    expect(minutesSinceMidnightInZone(t, "Asia/Kolkata")).toBe(15);
+    expect(minutesSinceMidnightInZone(t, "America/New_York")).toBe(14 * 60 + 45);
+    expect(minutesSinceMidnightInZone(t, "UTC")).toBe(18 * 60 + 45);
+  });
+});
+
+describe("startOfDayInZone", () => {
+  it("is the instant the calendar day begins in the zone", () => {
+    expect(startOfDayInZone("2026-07-14", "Asia/Kolkata").toISOString()).toBe("2026-07-13T18:30:00.000Z");
+    expect(startOfDayInZone("2026-07-14", "America/New_York").toISOString()).toBe("2026-07-14T04:00:00.000Z");
+    // After DST ends, New York midnight is 05:00 UTC.
+    expect(startOfDayInZone("2026-11-02", "America/New_York").toISOString()).toBe("2026-11-02T05:00:00.000Z");
+  });
+});
+
+describe("civilDaysBetween", () => {
+  it("counts calendar days, negative when the second date is earlier", () => {
+    expect(civilDaysBetween("2026-07-01", "2026-07-07")).toBe(6);
+    expect(civilDaysBetween("2026-07-07", "2026-07-01")).toBe(-6);
+    expect(civilDaysBetween("2026-12-31", "2027-01-01")).toBe(1);
+  });
+  it("is not skewed by a 25-hour DST day", () => {
+    expect(civilDaysBetween("2026-10-31", "2026-11-02")).toBe(2);
   });
 });

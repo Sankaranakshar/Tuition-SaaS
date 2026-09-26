@@ -51,12 +51,13 @@ export function rankStudentsByAttention(
   students: PeopleStudent[],
   invoices: TodayInvoice[],
   attendance: TodayAttendance[],
-  now: Date
+  now: Date,
+  zone: string
 ): RankedStudent[] {
   const overdueByStudent = new Map<string, number>();
   for (const inv of invoices) {
     if (!inv.studentId) continue;
-    const d = daysOverdue(inv, now);
+    const d = daysOverdue(inv, now, zone);
     if (d > 0) overdueByStudent.set(inv.studentId, Math.max(overdueByStudent.get(inv.studentId) ?? 0, d));
   }
   const streaksByStudent = new Map(

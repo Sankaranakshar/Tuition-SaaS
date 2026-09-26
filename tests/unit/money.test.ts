@@ -40,7 +40,7 @@ describe("groupOutstandingByPayer", () => {
       { id: "i3", studentId: "s2", status: "unpaid", dueDate: "2026-07-09", totalPaise: 2000, paidPaise: 0 }, // 1d overdue
       { id: "i4", studentId: "s2", status: "void", dueDate: "2026-06-01", totalPaise: 999, paidPaise: 0 },
     ];
-    const groups = groupOutstandingByPayer(invoices, students, NOW);
+    const groups = groupOutstandingByPayer(invoices, students, NOW, "UTC");
     expect(groups.map((g) => g.studentId)).toEqual(["s1", "s2"]); // s1 worse overdue first
     expect(groups[0].lines).toHaveLength(1);
     expect(groups[0].totalOutstandingPaise).toBe(1000);
@@ -53,7 +53,7 @@ describe("groupOutstandingByPayer", () => {
       { id: "i1", studentId: "s1", status: "unpaid", dueDate: "2026-07-05", totalPaise: 500, paidPaise: 0 },
       { id: "i2", studentId: "s2", status: "unpaid", dueDate: "2026-07-05", totalPaise: 5000, paidPaise: 0 },
     ];
-    const groups = groupOutstandingByPayer(invoices, students, NOW);
+    const groups = groupOutstandingByPayer(invoices, students, NOW, "UTC");
     expect(groups[0].studentId).toBe("s2");
   });
 });
@@ -64,7 +64,7 @@ describe("selectionTotal", () => {
       { id: "i1", studentId: "s1", status: "unpaid", dueDate: "2026-07-01", totalPaise: 1000, paidPaise: 0 },
       { id: "i2", studentId: "s2", status: "unpaid", dueDate: "2026-07-01", totalPaise: 2000, paidPaise: 500 },
     ];
-    const groups = groupOutstandingByPayer(invoices, students, NOW);
+    const groups = groupOutstandingByPayer(invoices, students, NOW, "UTC");
     const result = selectionTotal(groups, new Set(["i1", "i2"]));
     expect(result).toEqual({ count: 2, totalPaise: 1000 + 1500 });
   });

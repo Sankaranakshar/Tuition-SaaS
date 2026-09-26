@@ -12,6 +12,7 @@ import {
   absenceStreaks,
   scheduleConflicts,
   buildAttentionQueue,
+  sessionsForDay,
   type TodaySession,
   type TodayInvoice,
 } from "../../src/lib/today";
@@ -96,10 +97,10 @@ describe("invoice money helpers (paise-canonical, legacy tolerant)", () => {
 
 describe("daysOverdue", () => {
   it("counts whole days past the due date", () => {
-    expect(daysOverdue({ id: "1", dueDate: "2026-07-01" }, NOW)).toBe(6);
+    expect(daysOverdue({ id: "1", dueDate: "2026-07-01" }, NOW, "UTC")).toBe(6);
   });
   it("is zero or negative before the due date", () => {
-    expect(daysOverdue({ id: "1", dueDate: "2026-07-10" }, NOW)).toBeLessThanOrEqual(0);
+    expect(daysOverdue({ id: "1", dueDate: "2026-07-10" }, NOW, "UTC")).toBeLessThanOrEqual(0);
   });
 });
 
@@ -113,15 +114,15 @@ describe("the Pulse (E9.4)", () => {
   const sessions = [sess("a", -1 * 24 * 60), sess("b", -3 * 24 * 60), sess("c", -9 * 24 * 60, 60, { status: "cancelled" })];
 
   it("collects only this-month payments", () => {
-    const p = buildPulse(invoices, sessions, NOW);
+    const p = buildPulse(invoices, sessions, NOW, "UTC");
     expect(p.collectedPaise).toBe(300000 + 40000); // inv 1 + inv 4, not inv 2 (last month)
   });
   it("sums outstanding across open invoices", () => {
-    const p = buildPulse(invoices, sessions, NOW);
+    const p = buildPulse(invoices, sessions, NOW, "UTC");
     expect(p.outstandingPaise).toBe(150000 + 60000); // inv 3 full + inv 4 remainder
   });
   it("counts non-cancelled sessions in the week windows", () => {
-    const p = buildPulse(invoices, sessions, NOW);
+    const p = buildPulse(invoices, sessions, NOW, "UTC");
     expect(p.sessionsThisWeek).toBeGreaterThanOrEqual(1);
   });
 });
@@ -169,12 +170,89 @@ describe("attention queue assembly (E9.3)", () => {
     const invoices: TodayInvoice[] = [{ id: "i1", status: "unpaid", studentId: "s1", totalPaise: 300000, dueDate: "2026-07-01" }];
     const q = buildAttentionQueue(
       { invoices, sessions, leads: [{ id: "l1", status: "New", updatedAt: "2026-06-25T00:00:00Z" }], students: [{ id: "s1", name: "Riya", parentPhone: "999" }], attendance: [] },
-      NOW
+      NOW,
+      "UTC"
     );
     const kinds = q.map((i) => i.kind);
     expect(kinds[0]).toBe("schedule_conflict"); // most urgent
     expect(kinds).toContain("overdue_invoice");
     expect(kinds).toContain("unmarked_session");
     expect(kinds).toContain("quiet_lead");
+  });
+});
+
+// C-01 follow-up (2026-09-27): "which day / week / month" is the org's
+// calendar, not the process's (in the browser, the viewer's). Each instant
+// below sits minutes from midnight in IST or New York, so the old
+// getDate()/setHours() code gives the wrong answer in at least one of
+// npm run test:tz's three zones.
+describe("org-calendar boundaries near midnight (C-01)", () => {
+  const IST = "Asia/Kolkata";
+  const NY = "America/New_York";
+
+  it("daysOverdue counts the org's days: 00:30 IST is already a day late, 15:00 New York is not", () => {
+    const now = new Date("2026-07-07T19:00:00Z"); // 8 Jul 00:30 IST, 7 Jul 15:00 New York
+    const inv = { id: "1", dueDate: "2026-07-07" };
+    expect(daysOverdue(inv, now, IST)).toBe(1);
+    expect(daysOverdue(inv, now, NY)).toBe(0);
+  });
+
+  it("daysOverdue: 23:30 New York is still the due date there, while IST is a day past", () => {
+    const now = new Date("2026-07-08T03:30:00Z"); // 7 Jul 23:30 New York, 8 Jul 09:00 IST
+    const inv = { id: "1", dueDate: "2026-07-07" };
+    expect(daysOverdue(inv, now, NY)).toBe(0);
+    expect(daysOverdue(inv, now, IST)).toBe(1);
+  });
+
+  it("sessionsForDay puts a 00:15 IST session on the next IST day", () => {
+    const lateEvening = { id: "late", startTime: "2026-07-07T18:15:00Z", endTime: "2026-07-07T18:45:00Z" }; // 23:45 IST 7 Jul
+    const pastMidnight = { id: "after", startTime: "2026-07-07T18:45:00Z", endTime: "2026-07-07T19:15:00Z" }; // 00:15 IST 8 Jul
+    const day = new Date("2026-07-07T12:00:00Z");
+    expect(sessionsForDay([lateEvening, pastMidnight], day, IST).map((s) => s.id)).toEqual(["late"]);
+    // Both are the afternoon of 7 Jul in New York.
+    expect(sessionsForDay([lateEvening, pastMidnight], day, NY).map((s) => s.id)).toEqual(["late", "after"]);
+  });
+
+  it("the Pulse's month starts at midnight on the 1st in the org's zone", () => {
+    const now = new Date("2026-07-31T20:00:00Z"); // 1 Aug 01:30 IST, 31 Jul 16:00 New York
+    const invoices: TodayInvoice[] = [
+      { id: "aug-ist", status: "paid", totalPaise: 100000, paidPaise: 100000, lastPaymentAt: "2026-07-31T19:00:00Z" }, // 1 Aug 00:30 IST
+      { id: "mid-july", status: "paid", totalPaise: 50000, paidPaise: 50000, lastPaymentAt: "2026-07-15T12:00:00Z" },
+    ];
+    expect(buildPulse(invoices, [], now, IST).collectedPaise).toBe(100000); // August in IST: July's payment is last month
+    expect(buildPulse(invoices, [], now, NY).collectedPaise).toBe(150000); // still July in New York
+  });
+
+  it("the Pulse's week starts at Monday 00:00 in the org's zone", () => {
+    // 2026-07-13 is a Monday. now = Mon 00:30 IST, Sun 15:00 New York.
+    const now = new Date("2026-07-12T19:00:00Z");
+    const sundayNightIst = { id: "sun", startTime: "2026-07-12T18:00:00Z", endTime: "2026-07-12T18:20:00Z" }; // Sun 23:30 IST
+    const mondayIst = { id: "mon", startTime: "2026-07-12T18:40:00Z", endTime: "2026-07-12T19:00:00Z" }; // Mon 00:10 IST
+    const ist = buildPulse([], [sundayNightIst, mondayIst], now, IST);
+    expect([ist.sessionsThisWeek, ist.sessionsLastWeek]).toEqual([1, 1]);
+    // Both are Sunday afternoon in New York, inside the week that began Mon 6 Jul.
+    const ny = buildPulse([], [sundayNightIst, mondayIst], now, NY);
+    expect([ny.sessionsThisWeek, ny.sessionsLastWeek]).toEqual([2, 0]);
+  });
+
+  it("a New York week that ends daylight saving time is 7 days and 1 hour long", () => {
+    // US DST ends Sun 1 Nov 2026. Week: Mon 26 Oct 00:00 EDT to Mon 2 Nov 00:00 EST.
+    const now = new Date("2026-11-01T17:00:00Z"); // Sun 1 Nov 12:00 EST
+    const sundayLate = { id: "late", startTime: "2026-11-02T04:30:00Z", endTime: "2026-11-02T04:50:00Z" }; // Sun 23:30 EST
+    // Adding 7 × 24h to the week start stops at 23:00 EST and drops this session.
+    expect(buildPulse([], [sundayLate], now, NY).sessionsThisWeek).toBe(1);
+  });
+
+  it("the attention queue ages invoices on the org's calendar", () => {
+    const now = new Date("2026-07-07T19:00:00Z"); // 8 Jul 00:30 IST, 7 Jul 15:00 New York
+    const input = {
+      invoices: [{ id: "i1", status: "unpaid", studentId: "s1", totalPaise: 300000, dueDate: "2026-07-07" }],
+      sessions: [],
+      leads: [],
+      students: [{ id: "s1", name: "Riya" }],
+      attendance: [],
+    };
+    expect(buildAttentionQueue(input, now, IST).map((i) => i.kind)).toEqual(["overdue_invoice"]);
+    expect(buildAttentionQueue(input, now, NY)).toEqual([]);
   });
 });

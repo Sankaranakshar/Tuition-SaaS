@@ -3,6 +3,14 @@
 // explicit `now`/clock where relevant) so the whole grid-math/conflict/
 // layout core is unit-testable. src/pages/Schedule.tsx is the only place
 // these get wired to live pointer events and Realtime data.
+//
+// Clock-time helpers take the zone explicitly rather than reading the
+// browser's. The week grid passes the viewer's zone (it renders times the
+// way the rest of the app does, in the viewer's zone); anything checked
+// against an org-zone field (tutor availability, a template's start_hour)
+// passes the org's `organizations.timezone`.
+
+import { dayOfWeekInZone, localDateKeyInZone, minutesSinceMidnightInZone, startOfDayInZone, zonedTimeToUtc } from "../../shared/timezone";
 
 export interface ScheduleSession {
   id: string;
@@ -26,9 +34,9 @@ export interface TutorAvailabilityWindow {
 
 // ---- Week-grid time math ----------------------------------------------
 
-/** Minutes elapsed since local midnight of the same day as `date`. */
-export function minutesSinceMidnight(date: Date): number {
-  return date.getHours() * 60 + date.getMinutes();
+/** Minutes elapsed since midnight in `zone` of the same day as `date`. */
+export function minutesSinceMidnight(date: Date, zone: string): number {
+  return minutesSinceMidnightInZone(date, zone);
 }
 
 /** Snap a minute offset to the nearest `step`-minute increment (default 15). */
@@ -36,19 +44,38 @@ export function snapMinutes(minutes: number, step = 15): number {
   return Math.round(minutes / step) * step;
 }
 
-/** Convert a pixel offset within a day column into a Date, snapped to `step` minutes. */
-export function pixelOffsetToTime(dayStart: Date, offsetPx: number, pxPerMinute: number, step = 15): Date {
+/** Convert a pixel offset within a day column into a Date, snapped to `step`
+ *  minutes after midnight in `zone` of the day `dayStart` falls on there.
+ *  Counts elapsed minutes from that midnight, so on a DST day the grid's
+ *  offsets stay real durations. */
+export function pixelOffsetToTime(dayStart: Date, offsetPx: number, pxPerMinute: number, zone: string, step = 15): Date {
   const rawMinutes = offsetPx / pxPerMinute;
   const snapped = snapMinutes(rawMinutes, step);
-  const result = new Date(dayStart);
-  result.setHours(0, 0, 0, 0);
-  result.setMinutes(snapped);
-  return result;
+  const midnight = startOfDayInZone(localDateKeyInZone(dayStart, zone), zone);
+  return new Date(midnight.getTime() + snapped * 60_000);
 }
 
 /** Convert a time-of-day into a pixel offset within its day column. */
-export function timeToPixelOffset(date: Date, pxPerMinute: number): number {
-  return minutesSinceMidnight(date) * pxPerMinute;
+export function timeToPixelOffset(date: Date, pxPerMinute: number, zone: string): number {
+  return minutesSinceMidnight(date, zone) * pxPerMinute;
+}
+
+/** The wizard's date and time fields (`YYYY-MM-DD`, `HH:mm`) for `instant` as
+ *  a clock in `zone` reads it. The wizard's typed time is the org's wall
+ *  clock: a recurring class's `start_hour` is materialized in the org's zone
+ *  by the server, so a one-off must mean the same thing. */
+export function wizardFieldsInZone(instant: Date, zone: string): { date: string; time: string } {
+  const minutes = minutesSinceMidnightInZone(instant, zone);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return { date: localDateKeyInZone(instant, zone), time: `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}` };
+}
+
+/** The inverse of `wizardFieldsInZone`: the real instant the wizard's typed
+ *  date and time mean on a clock in `zone`. */
+export function wizardStartInstant(date: string, time: string, zone: string): Date {
+  const [y, m, d] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  return zonedTimeToUtc(y, m, d, hour, minute, zone);
 }
 
 // ---- Overlap layout (side-by-side columns for concurrent sessions) ----
@@ -140,24 +167,26 @@ export function checkClientSideConflict(
 
 /**
  * True when `slot` falls at least partly outside every availability window
- * declared for its day of week — used to trigger the one-time "Outside your
- * hours. Book anyway?" prompt (REDESIGN §6.1). No availability rows at all
+ * declared for its day of week, both read on a clock in `zone` (the org's:
+ * availability windows are wall-clock hours at the centre). Used to trigger
+ * the one-time "Outside your hours. Book anyway?" prompt (REDESIGN §6.1). No availability rows at all
  * for a tutor means "no stated hours", which is treated as always available
  * (nothing to dim against) rather than always outside.
  */
 export function isOutsideAvailability(
   slot: { startTime: string; endTime: string },
-  availability: TutorAvailabilityWindow[]
+  availability: TutorAvailabilityWindow[],
+  zone: string
 ): boolean {
   if (availability.length === 0) return false;
 
   const start = new Date(slot.startTime);
   const end = new Date(slot.endTime);
-  const dayWindows = availability.filter((a) => a.dayOfWeek === start.getDay());
+  const dayWindows = availability.filter((a) => a.dayOfWeek === dayOfWeekInZone(start, zone));
   if (dayWindows.length === 0) return true;
 
-  const startMinutes = minutesSinceMidnight(start);
-  const endMinutes = minutesSinceMidnight(end);
+  const startMinutes = minutesSinceMidnight(start, zone);
+  const endMinutes = minutesSinceMidnight(end, zone);
 
   return !dayWindows.some((w) => {
     const [wStartH, wStartM] = w.startTime.split(":").map(Number);

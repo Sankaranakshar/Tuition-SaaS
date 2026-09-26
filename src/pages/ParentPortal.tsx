@@ -8,6 +8,7 @@ import { EmptyState, Skeleton, SkeletonText, StatChip, StatusChip, Button, Field
 import StudentPaymentPermissions from "../components/StudentPaymentPermissions";
 import ProgressReportDownload from "../components/ProgressReportDownload";
 import { formatPaise, formatINR, formatDate, formatTime, formatRelativeDays } from "../lib/format";
+import { useOrgTimezone } from "../hooks/useOrgTimezone";
 import { rupeesToPaise } from "../../shared/money";
 import { cancellationCutoff, DEFAULT_CANCELLATION_POLICY, type CancellationPolicy } from "../../shared/cancellationPolicy";
 import { getOrgCancellationPolicy } from "../lib/cancellationPolicy";
@@ -84,6 +85,8 @@ export default function ParentPortal() {
   const [loadingChildren, setLoadingChildren] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
+  // "today" / "tomorrow" on the org's calendar (C-01), not the parent's browser zone.
+  const zone = useOrgTimezone();
 
   const [sessions, setSessions] = useState<UpcomingSession[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -337,7 +340,7 @@ export default function ParentPortal() {
       <div className="grid grid-cols-3 gap-2">
         <StatChip label={t("parentPortal.outstanding")} value={formatPaise(outstandingPaise)} tone={outstandingPaise > 0 ? "warn" : "positive"} />
         <StatChip label={t("parentPortal.credits")} value={wallet?.balanceCredits ?? 0} />
-        <StatChip label={t("parentPortal.nextClass")} value={sessions[0] ? formatRelativeDays(toDate(sessions[0].startTime)) : "—"} />
+        <StatChip label={t("parentPortal.nextClass")} value={sessions[0] ? formatRelativeDays(toDate(sessions[0].startTime), zone) : "—"} />
       </div>
 
       <div className="flex gap-1 rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] p-1">
@@ -374,7 +377,7 @@ export default function ParentPortal() {
                     <div className="flex items-center justify-between">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium text-[var(--cs-text)]">{s.title || t("parentPortal.classSession")}</p>
-                        <p className="text-xs text-[var(--cs-text-muted)]">{formatDate(toDate(s.startTime))} · {formatRelativeDays(toDate(s.startTime))}</p>
+                        <p className="text-xs text-[var(--cs-text-muted)]">{formatDate(toDate(s.startTime))} · {formatRelativeDays(toDate(s.startTime), zone)}</p>
                       </div>
                       <StatusChip label={s.isOnline ? t("parentPortal.online") : t("parentPortal.inPerson")} tone="neutral" />
                     </div>

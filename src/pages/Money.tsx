@@ -14,9 +14,10 @@ import {
 } from "../lib/api";
 import { useStudentsList, type StudentRow } from "../hooks/usePeople";
 import {
-  useMoneyInvoices, useMoneyWallets, useMoneyPayments, useAvgSessionFeePaise, useSelfMoney, useOrgTimezone,
+  useMoneyInvoices, useMoneyWallets, useMoneyPayments, useAvgSessionFeePaise, useSelfMoney,
   type MoneyInvoiceRow,
 } from "../hooks/useMoney";
+import { useOrgTimezone } from "../hooks/useOrgTimezone";
 import {
   groupOutstandingByPayer, selectionTotal, rankWalletsByDepletion,
   revenueTrend, collectionRate, revenueByLineItem,
@@ -169,7 +170,8 @@ function OutstandingSegment({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [reminderStatuses, setReminderStatuses] = useState<Record<string, { state: string; createdAt: string }>>({});
 
-  const groups = useMemo(() => groupOutstandingByPayer(invoices, students, new Date()), [invoices, students]);
+  const zone = useOrgTimezone();
+  const groups = useMemo(() => groupOutstandingByPayer(invoices, students, new Date(), zone), [invoices, students, zone]);
   const totals = useMemo(() => selectionTotal(groups, selected), [groups, selected]);
 
   // B-17 (EXECUTION_PLAN.md Step 27): "delivery and read state visible in

@@ -189,7 +189,7 @@ export interface AnchorDescription {
 }
 
 /** Formats an anchor's data into what `ContextCard` needs — the one place that turns "invoice #142, ₹3,000, overdue 6 days" into card copy. */
-export function describeAnchor(anchorType: AnchorType | null | undefined, ctx: AnchorContext, now: Date): AnchorDescription {
+export function describeAnchor(anchorType: AnchorType | null | undefined, ctx: AnchorContext, now: Date, zone: string): AnchorDescription {
   switch (anchorType) {
     case "student":
       return { title: ctx.student?.name ?? "Student", tone: "default" };
@@ -201,7 +201,7 @@ export function describeAnchor(anchorType: AnchorType | null | undefined, ctx: A
       };
     case "invoice": {
       if (!ctx.invoice) return { title: "Invoice", tone: "default" };
-      const overdue = daysOverdue(ctx.invoice, now);
+      const overdue = daysOverdue(ctx.invoice, now, zone);
       const outstanding = invoiceOutstandingPaise(ctx.invoice);
       const parts = [formatINR(outstanding / 100)];
       if (overdue > 0) parts.push(`overdue ${overdue}d`);
