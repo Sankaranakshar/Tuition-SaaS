@@ -1,5 +1,5 @@
 // server/app.ts
-import express19 from "express";
+import express20 from "express";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
@@ -384,6 +384,140 @@ async function writeAudit(organizationId, actor, action, entityType, entityId, s
   }
 }
 
+// shared/analyticsEvents.ts
+var uuid = { kind: "uuid" };
+var count = { kind: "int", min: 0, max: 1e6 };
+var paise = { kind: "int", min: 0, max: 1e10 };
+var PAYMENT_METHODS = ["cash", "upi", "bank_transfer", "cheque", "other"];
+var FEATURE_KEYS = [
+  "today",
+  "people",
+  "student_story",
+  "money",
+  "inbox",
+  "schedule",
+  "settings",
+  "audit_log",
+  "documents",
+  "courses",
+  "preferences",
+  "profile"
+];
+var EVENT_SPECS = {
+  // 1. Signup-to-activation funnel.
+  "onboarding.beat_viewed": {
+    client: true,
+    props: { beat: { kind: "int", min: 1, max: 3 }, mode: { kind: "enum", values: ["solo", "center"] } },
+    required: ["beat"]
+  },
+  "org.created": { props: {} },
+  "sessions.materialized": { props: { sessionsCreated: count }, required: ["sessionsCreated"] },
+  "org.activated": {
+    props: { sessionsAttended: count, collectedPaise: paise, daysToActivate: { kind: "int", min: 0, max: 14 } },
+    required: ["sessionsAttended", "collectedPaise", "daysToActivate"]
+  },
+  // 2. The weekly loop.
+  "attendance.marked": {
+    props: { sessionId: uuid, present: count, absent: count, billed: count, invoiced: count },
+    required: ["sessionId"]
+  },
+  "attendance.reversed": {
+    props: { sessionId: uuid, reason: { kind: "enum", values: ["cancellation", "no_show"] } },
+    required: ["sessionId"]
+  },
+  // Invoices raised by hand. Invoices accrued by marking attendance are
+  // counted on attendance.marked's `invoiced`; the weekly loop itself counts
+  // both from the invoices table.
+  "invoice.raised": { props: { invoiceId: uuid, totalPaise: paise }, required: ["invoiceId"] },
+  "payment.recorded": {
+    props: {
+      invoiceId: uuid,
+      amountPaise: paise,
+      channel: { kind: "enum", values: ["manual", "gateway"] },
+      method: { kind: "enum", values: PAYMENT_METHODS }
+    },
+    required: ["amountPaise", "channel"]
+  },
+  "wallet.topped_up": {
+    props: { amountPaise: paise, channel: { kind: "enum", values: ["manual", "gateway"] } },
+    required: ["amountPaise", "channel"]
+  },
+  // 4. Parent-side engagement.
+  "parent.portal_opened": { client: true, props: {} },
+  "parent.payment_started": { props: { invoiceId: uuid }, required: ["invoiceId"] },
+  // 5. Feature usage.
+  "feature.opened": {
+    client: true,
+    props: { feature: { kind: "enum", values: FEATURE_KEYS } },
+    required: ["feature"]
+  }
+};
+var CLIENT_EVENT_NAMES = Object.keys(EVENT_SPECS).filter(
+  (n) => EVENT_SPECS[n].client === true
+);
+var UUID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isProductEventName(name) {
+  return Object.prototype.hasOwnProperty.call(EVENT_SPECS, name);
+}
+function validateEventProperties(name, props) {
+  if (!isProductEventName(name)) return `unknown event "${name}"`;
+  if (props === null || typeof props !== "object" || Array.isArray(props)) return "properties must be an object";
+  const spec = EVENT_SPECS[name];
+  const entries = Object.entries(props);
+  for (const [key, value] of entries) {
+    const prop = spec.props[key];
+    if (!prop) return `"${key}" is not an allowed property of ${name}`;
+    switch (prop.kind) {
+      case "uuid":
+        if (typeof value !== "string" || !UUID_RE2.test(value)) return `"${key}" must be a record id`;
+        break;
+      case "int":
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) return `"${key}" must be an integer`;
+        if (value < (prop.min ?? 0) || prop.max !== void 0 && value > prop.max) return `"${key}" is out of range`;
+        break;
+      case "bool":
+        if (typeof value !== "boolean") return `"${key}" must be true or false`;
+        break;
+      case "enum":
+        if (typeof value !== "string" || !prop.values.includes(value)) return `"${key}" must be one of ${prop.values.join(", ")}`;
+        break;
+    }
+  }
+  for (const key of spec.required ?? []) {
+    if (!(key in props)) return `"${key}" is required for ${name}`;
+  }
+  return null;
+}
+
+// server/utils/analytics.ts
+async function trackEvent(input) {
+  const properties = input.properties ?? {};
+  const problem = validateEventProperties(input.name, properties);
+  if (problem) {
+    console.error(`product event ${input.name} refused by the payload rule: ${problem}`);
+    return "refused";
+  }
+  if (input.organizationId === null && !input.name.startsWith("onboarding.")) {
+    console.error(`product event ${input.name} refused: only onboarding events may be written without an org`);
+    return "refused";
+  }
+  try {
+    const res = await pool.query(
+      `insert into product_events (organization_id, actor_user_id, name, properties, dedupe_key, occurred_at)
+       values ($1, $2, $3, $4::jsonb, $5, coalesce($6::timestamptz, now()))
+       on conflict do nothing`,
+      [input.organizationId, input.actorUserId ?? null, input.name, JSON.stringify(properties), input.dedupeKey ?? null, input.occurredAt ?? null]
+    );
+    return (res.rowCount ?? 0) > 0 ? "recorded" : "duplicate";
+  } catch (error) {
+    console.error(`Failed to write product event ${input.name}`, error);
+    return "failed";
+  }
+}
+function utcDayKey(now = /* @__PURE__ */ new Date()) {
+  return now.toISOString().slice(0, 10);
+}
+
 // shared/schemas/members.ts
 import { z } from "zod";
 var ORG_ROLES = ["owner", "admin", "tutor", "frontdesk", "accountant", "parent", "student"];
@@ -425,6 +559,7 @@ router2.post("/bootstrap", authenticateToken, async (req, res, next) => {
     await setMembership(org.id, req.user.id, "owner", req.user.id);
     await setActiveOrganization(req.user.id, org.id);
     await writeAudit(org.id, req.user.id, "org.create", "organizations", org.id, { name: body.organizationName });
+    await trackEvent({ organizationId: org.id, actorUserId: req.user.id, name: "org.created", dedupeKey: `org.created:${org.id}` });
     res.status(201).json({ organizationId: org.id });
   } catch (err) {
     next(err);
@@ -680,8 +815,8 @@ import autoTable from "jspdf-autotable";
 function rupeesToPaise(rupees) {
   return Math.round(rupees * 100);
 }
-function paiseToRupees(paise3) {
-  return paise3 / 100;
+function paiseToRupees(paise4) {
+  return paise4 / 100;
 }
 
 // server/utils/invoicePdf.ts
@@ -689,7 +824,7 @@ var inrNumber = new Intl.NumberFormat("en-IN", {
   maximumFractionDigits: 2,
   minimumFractionDigits: 0
 });
-function paise(v) {
+function paise2(v) {
   return `Rs. ${inrNumber.format(paiseToRupees(v || 0))}`;
 }
 function readDate(d) {
@@ -781,7 +916,7 @@ function renderInvoicePdf(input) {
     body: items.map((i) => [
       i.description,
       String(i.quantity ?? 1),
-      paise(i.amountPaise * (i.quantity ?? 1))
+      paise2(i.amountPaise * (i.quantity ?? 1))
     ]),
     styles: { font: "helvetica", fontSize: 10, cellPadding: 6 },
     headStyles: { fillColor: [30, 41, 59], textColor: 255 },
@@ -802,18 +937,18 @@ function renderInvoicePdf(input) {
     doc.text(value, totalsX, totalsY, { align: "right" });
     totalsY += 14;
   };
-  row("Subtotal", paise(totals.subtotal));
-  if (totals.discount > 0) row("Discount", `\u2212 ${paise(totals.discount)}`);
-  if (totals.tax > 0) row("Tax", paise(totals.tax));
+  row("Subtotal", paise2(totals.subtotal));
+  if (totals.discount > 0) row("Discount", `\u2212 ${paise2(totals.discount)}`);
+  if (totals.tax > 0) row("Tax", paise2(totals.tax));
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
-  row("Total", paise(totals.total));
+  row("Total", paise2(totals.total));
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  if (totals.paid > 0) row("Paid", paise(totals.paid));
+  if (totals.paid > 0) row("Paid", paise2(totals.paid));
   if (totals.outstanding > 0 || totals.paid > 0) {
     doc.setFont("helvetica", "bold");
-    row("Outstanding", paise(totals.outstanding));
+    row("Outstanding", paise2(totals.outstanding));
     doc.setFont("helvetica", "normal");
   }
   totalsY += 30;
@@ -953,8 +1088,8 @@ function computeTdsPaise(grossPaise, tdsPercent) {
 }
 
 // server/utils/messaging/templates.ts
-function inr(paise3) {
-  return `\u20B9${(paise3 / 100).toLocaleString("en-IN")}`;
+function inr(paise4) {
+  return `\u20B9${(paise4 / 100).toLocaleString("en-IN")}`;
 }
 var TEMPLATES = {
   invoice_raised: {
@@ -1139,6 +1274,7 @@ router3.post("/invoices", requireRole(...CAN_MARK), async (req, res, next) => {
     }).select("id").single();
     if (error) throw error;
     await writeAudit(orgId, req.user.id, "invoice.create", "invoices", inv.id, { studentId: body.studentId, totalPaise });
+    await trackEvent({ organizationId: orgId, actorUserId: req.user.id, name: "invoice.raised", properties: { invoiceId: inv.id, totalPaise } });
     const studentRes = await pool.query(`select name from students where id = $1`, [body.studentId]);
     const studentName = studentRes.rows[0]?.name;
     if (studentName) {
@@ -1178,6 +1314,13 @@ router3.post("/wallets/topup", requireRole(...CAN_MONEY), async (req, res, next)
     });
     if (!outcome.duplicate) {
       await writeAudit(orgId, req.user.id, "wallet.topup", "wallets", body.studentId, { amountPaise: body.amountPaise, method: body.method });
+      await trackEvent({
+        organizationId: orgId,
+        actorUserId: req.user.id,
+        name: "wallet.topped_up",
+        properties: { amountPaise: body.amountPaise, channel: "manual" },
+        dedupeKey: `wallet.topped_up:${orgId}:${body.idempotencyKey}`
+      });
     }
     res.status(outcome.duplicate ? 200 : 201).json({ ok: true, duplicate: outcome.duplicate });
   } catch (err) {
@@ -1396,6 +1539,18 @@ router3.post("/attendance", requireRole(...CAN_MARK), async (req, res, next) => 
       records: records.map((r) => `${r.studentId}:${r.status}`),
       ...result
     });
+    await trackEvent({
+      organizationId: orgId,
+      actorUserId: actor,
+      name: "attendance.marked",
+      properties: {
+        sessionId,
+        present: records.filter((r) => r.status === "present" || r.status === "late").length,
+        absent: records.filter((r) => r.status === "absent").length,
+        billed: result.billed.length,
+        invoiced: result.invoiced.length
+      }
+    });
     res.json({ ok: true, ...result });
   } catch (err) {
     next(err);
@@ -1518,6 +1673,7 @@ router3.post("/attendance/reverse", requireRole(...CAN_MARK), async (req, res, n
       reason,
       ...result
     });
+    await trackEvent({ organizationId: orgId, actorUserId: actor, name: "attendance.reversed", properties: { sessionId, reason } });
     res.status(201).json({ ok: true, reversalPath: result.reversalPath, creditedCredits: result.creditedCredits, creditedPaise: result.creditedPaise });
   } catch (err) {
     next(err);
@@ -1597,6 +1753,13 @@ router3.post("/payments/manual", requireRole(...CAN_MONEY), async (req, res, nex
       await writeAudit(orgId, req.user.id, "payment.record_manual", "invoices", body.invoiceId, {
         amountPaise: body.amountPaise,
         method: body.method
+      });
+      await trackEvent({
+        organizationId: orgId,
+        actorUserId: req.user.id,
+        name: "payment.recorded",
+        properties: { invoiceId: body.invoiceId, amountPaise: body.amountPaise, channel: "manual", method: body.method },
+        dedupeKey: `payment.recorded:${orgId}:${body.idempotencyKey}`
       });
     }
     res.status(outcome.duplicate ? 200 : 201).json({ ok: true, invoiceStatus: outcome.status, duplicate: outcome.duplicate });
@@ -1818,6 +1981,7 @@ router3.post("/invoices/:invoiceId/pay", async (req, res, next) => {
         amountPaise: result.amountPaise
       });
     }
+    await trackEvent({ organizationId: orgId, actorUserId: req.user.id, name: "parent.payment_started", properties: { invoiceId: req.params.invoiceId } });
     res.json({ ok: true, shortUrl: result.shortUrl, reused: result.reused });
   } catch (err) {
     next(err);
@@ -2453,8 +2617,8 @@ async function eraseStudentTx(client, opts) {
   let walletWriteOff = null;
   if (wallet) {
     const credits = Number(wallet.balance_credits) || 0;
-    const paise3 = rupeesToPaise(Number(wallet.balance_currency) || 0);
-    if (credits !== 0 || paise3 !== 0) {
+    const paise4 = rupeesToPaise(Number(wallet.balance_currency) || 0);
+    if (credits !== 0 || paise4 !== 0) {
       if (walletPolicy === "block") {
         throw new ErasureError(
           409,
@@ -2472,14 +2636,14 @@ async function eraseStudentTx(client, opts) {
           `insert into wallet_ledger
              (organization_id, student_id, type, credits, paise, reason, by, idempotency_key, at)
            values ($1, $2, 'erasure_writeoff', $3, $4, 'erasure_writeoff', $5, $6, now())`,
-          [orgId, studentId, -credits, -paise3, actorId, key]
+          [orgId, studentId, -credits, -paise4, actorId, key]
         );
         await client.query(
           `update wallets set balance_credits = 0, balance_currency = 0 where id = $1`,
           [wallet.id]
         );
       }
-      walletWriteOff = { credits, paise: paise3 };
+      walletWriteOff = { credits, paise: paise4 };
     }
   }
   const docRows = await client.query(
@@ -3342,6 +3506,12 @@ async function handleEvent(orgId, event) {
       amountPaise,
       invoiceStatus: result.status
     });
+    await trackEvent({
+      organizationId: orgId,
+      name: "payment.recorded",
+      properties: { invoiceId, amountPaise, channel: "gateway", method: "upi" },
+      dedupeKey: `payment.recorded:${orgId}:${idempotencyKey}`
+    });
   }
   return result;
 }
@@ -3381,6 +3551,12 @@ async function handleWalletTopupPayment(orgId, studentId, paymentEntity) {
     await writeAudit(orgId, RAZORPAY_WEBHOOK, "wallet.topup.gateway_captured", "wallets", studentId, {
       gatewayPaymentId: paymentId,
       amountPaise
+    });
+    await trackEvent({
+      organizationId: orgId,
+      name: "wallet.topped_up",
+      properties: { amountPaise, channel: "gateway" },
+      dedupeKey: `wallet.topped_up:${orgId}:${idempotencyKey}`
     });
   }
   return { duplicate: result.duplicate ?? false };
@@ -3525,6 +3701,7 @@ var findGapsResponseSchema = z6.object({
 });
 
 // shared/timezone.ts
+var DEFAULT_ORG_TIMEZONE = "Asia/Kolkata";
 function offsetMinutesAt(zone, atUtc) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: zone,
@@ -3856,6 +4033,14 @@ router8.post("/materialize", requireRole(...CAN_SCHEDULE), async (req, res, next
       aggregate.created.push(...r.created);
       aggregate.conflicts.push(...r.conflicts);
     }
+    if (aggregate.created.length > 0) {
+      await trackEvent({
+        organizationId: orgId,
+        actorUserId: req.user.id,
+        name: "sessions.materialized",
+        properties: { sessionsCreated: aggregate.created.length }
+      });
+    }
     res.json({ ok: true, ...aggregate });
   } catch (err) {
     next(err);
@@ -4049,15 +4234,15 @@ function computeCreditExpiry(rows, windowDays, now) {
     nowMs,
     "credits"
   );
-  const paise3 = runDenom(
+  const paise4 = runDenom(
     sorted.map((r) => ({ id: r.id, amount: r.paise, at: new Date(r.at).getTime() })),
     windowMs,
     nowMs,
     "paise"
   );
   return {
-    expired: [...credits.expired, ...paise3.expired],
-    warnings: [...credits.warnings, ...paise3.warnings]
+    expired: [...credits.expired, ...paise4.expired],
+    warnings: [...credits.warnings, ...paise4.warnings]
   };
 }
 
@@ -4089,6 +4274,299 @@ function nextChannel(attempts, currentChannel) {
 }
 function isDeadLetter(attempts) {
   return attempts >= MAX_DELIVERY_ATTEMPTS;
+}
+
+// shared/analytics.ts
+var ACTIVATION = {
+  windowDays: 14,
+  minSessionsAttended: 10,
+  minCollectedPaise: 100
+};
+var DAY_MS2 = 24 * 60 * 60 * 1e3;
+var iso = (ms) => new Date(ms).toISOString();
+function computeActivation(input) {
+  const signupMs = new Date(input.signupAt).getTime();
+  const windowEndMs = signupMs + ACTIVATION.windowDays * DAY_MS2;
+  const inWindow = (ms) => ms <= windowEndMs;
+  const marks = input.sessionFirstMarkedAt.map((t) => new Date(t).getTime()).sort((a, b) => a - b);
+  const tenthMs = marks.length >= ACTIVATION.minSessionsAttended ? marks[ACTIVATION.minSessionsAttended - 1] : null;
+  const collections = [...input.collections].filter((c) => c.paise > 0).map((c) => ({ ms: new Date(c.at).getTime(), paise: c.paise, online: c.online })).sort((a, b) => a.ms - b.ms);
+  let running = 0;
+  let firstCollectedMs = null;
+  let collectedInWindow = 0;
+  let collectedOnlineInWindow = 0;
+  for (const c of collections) {
+    running += c.paise;
+    if (firstCollectedMs === null && running >= ACTIVATION.minCollectedPaise) firstCollectedMs = c.ms;
+    if (inWindow(c.ms)) {
+      collectedInWindow += c.paise;
+      if (c.online) collectedOnlineInWindow += c.paise;
+    }
+  }
+  const activated = tenthMs !== null && inWindow(tenthMs) && firstCollectedMs !== null && inWindow(firstCollectedMs);
+  return {
+    signupAt: iso(signupMs),
+    windowEndsAt: iso(windowEndMs),
+    firstClassAt: input.firstClassAt ? iso(new Date(input.firstClassAt).getTime()) : null,
+    firstAttendanceAt: marks.length ? iso(marks[0]) : null,
+    sessionsAttendedInWindow: marks.filter(inWindow).length,
+    tenthSessionAttendedAt: tenthMs !== null ? iso(tenthMs) : null,
+    firstCollectedAt: firstCollectedMs !== null ? iso(firstCollectedMs) : null,
+    collectedInWindowPaise: collectedInWindow,
+    collectedOnlineInWindowPaise: collectedOnlineInWindow,
+    activatedAt: activated ? iso(Math.max(tenthMs, firstCollectedMs)) : null
+  };
+}
+function daysToActivate(r) {
+  if (!r.activatedAt) return null;
+  return Math.floor((new Date(r.activatedAt).getTime() - new Date(r.signupAt).getTime()) / DAY_MS2);
+}
+var FUNNEL_STAGES = [
+  { stage: 1, key: "beat_1", label: "Started onboarding (beat 1: solo or centre)" },
+  { stage: 2, key: "beat_2", label: "Reached beat 2 (first class)" },
+  { stage: 3, key: "beat_3", label: "Reached beat 3 (add students)" },
+  { stage: 4, key: "org_created", label: "Finished onboarding (org created)" },
+  { stage: 5, key: "first_class", label: "First class scheduled" },
+  { stage: 6, key: "first_attendance", label: "First attendance marked" },
+  { stage: 7, key: "ten_sessions", label: "10 sessions with attendance, within 14 days" },
+  { stage: 8, key: "activated", label: "Activated: and at least \u20B91 collected, within 14 days" }
+];
+function orgStage(a) {
+  if (a.activatedAt) return 8;
+  if (a.sessionsAttendedInWindow >= ACTIVATION.minSessionsAttended) return 7;
+  if (a.firstAttendanceAt) return 6;
+  if (a.firstClassAt) return 5;
+  return 4;
+}
+function starterStage(s, activationByOrg) {
+  if (s.organizationId) {
+    const a = activationByOrg.get(s.organizationId);
+    return a ? orgStage(a) : 4;
+  }
+  return Math.max(1, Math.min(3, s.maxBeat));
+}
+function computeFunnel(stagesReached, fromStage = 1) {
+  const steps = FUNNEL_STAGES.filter((s) => s.stage >= fromStage);
+  let prev = null;
+  return steps.map((s) => {
+    const count2 = stagesReached.filter((r) => r >= s.stage).length;
+    const step = {
+      key: s.key,
+      label: s.label,
+      count: count2,
+      dropOff: prev === null ? 0 : prev - count2,
+      conversionFromPrevious: prev === null ? null : prev === 0 ? null : count2 / prev
+    };
+    prev = count2;
+    return step;
+  });
+}
+function addDaysToDateKey(dateKey, days) {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+function weekStartInZone(instant, zone) {
+  const key = localDateKeyInZone(instant, zone);
+  const [y, m, d] = key.split("-").map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return addDaysToDateKey(key, -((dow + 6) % 7));
+}
+function lastMonthKeys(now, n, zone) {
+  const [y, m] = localDateKeyInZone(now, zone).split("-").map(Number);
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(Date.UTC(y, m - 1 - i, 1));
+    out.push(d.toISOString().slice(0, 7));
+  }
+  return out;
+}
+function computeRetentionCohorts(orgs, weekly, currentWeek, maxOffset = 8) {
+  const active = new Set(weekly.filter((w) => w.sessionsAttended > 0).map((w) => `${w.organizationId}|${w.weekStart}`));
+  const byCohort = /* @__PURE__ */ new Map();
+  for (const o of orgs) {
+    const list = byCohort.get(o.signupWeek) ?? [];
+    list.push(o.organizationId);
+    byCohort.set(o.signupWeek, list);
+  }
+  return [...byCohort.entries()].sort(([a], [b]) => a < b ? 1 : a > b ? -1 : 0).map(([cohortWeek, ids]) => ({
+    cohortWeek,
+    size: ids.length,
+    retained: Array.from({ length: maxOffset + 1 }, (_, k) => {
+      const week = addDaysToDateKey(cohortWeek, 7 * k);
+      if (week > currentWeek) return null;
+      return ids.filter((id) => active.has(`${id}|${week}`)).length;
+    })
+  }));
+}
+function pivotMonthlyCollected(orgs, rows, months) {
+  const cell = new Map(rows.map((r) => [`${r.organizationId}|${r.month}`, r]));
+  return orgs.map((o) => {
+    const cells = months.map((month) => {
+      const r = cell.get(`${o.organizationId}|${month}`);
+      return { month, collectedPaise: r?.collectedPaise ?? 0, onlinePaise: r?.onlinePaise ?? 0 };
+    });
+    return { organizationId: o.organizationId, name: o.name, months: cells, totalPaise: cells.reduce((s, c) => s + c.collectedPaise, 0) };
+  }).sort((a, b) => b.totalPaise - a.totalPaise || a.name.localeCompare(b.name));
+}
+
+// server/utils/analyticsRollup.ts
+var COLLECTIONS_SQL = `
+  select at, amount_paise::bigint as paise, gateway is not null as online
+  from payments where organization_id = $1 and amount_paise > 0
+  union all
+  select at, paise::bigint as paise, gateway_payment_id is not null as online
+  from wallet_ledger
+  where organization_id = $1 and type = 'credit_currency' and reason = 'topup' and paise > 0`;
+var ALL_ORGS_COLLECTIONS_SINCE_SQL = `
+  select organization_id, at, amount_paise::bigint as paise, gateway is not null as online
+  from payments where amount_paise > 0 and at >= $1
+  union all
+  select organization_id, at, paise::bigint as paise, gateway_payment_id is not null as online
+  from wallet_ledger
+  where type = 'credit_currency' and reason = 'topup' and paise > 0 and at >= $1`;
+async function rollupWeeklyLoop(orgId) {
+  const res = await pool.query(
+    `with o as (
+       select created_at, timezone as tz from organizations where id = $1
+     ),
+     weeks as (
+       select generate_series(
+         date_trunc('week', (select created_at at time zone tz from o)),
+         date_trunc('week', (select now() at time zone tz from o)),
+         interval '7 days'
+       )::date as week_start
+     ),
+     sched as (
+       select date_trunc('week', start_time at time zone (select tz from o))::date as w, count(*) as n
+       from class_sessions where organization_id = $1 and status <> 'cancelled' group by 1
+     ),
+     att as (
+       select date_trunc('week', first_mark at time zone (select tz from o))::date as w,
+              count(*) as sessions, sum(marks) as marks
+       from (
+         select session_id, min(created_at) as first_mark, count(*) as marks
+         from attendance_records where organization_id = $1 and reversed_at is null
+         group by session_id
+       ) s group by 1
+     ),
+     inv as (
+       select date_trunc('week', created_at at time zone (select tz from o))::date as w, count(*) as n
+       from invoices where organization_id = $1 and status <> 'void' group by 1
+     ),
+     msg as (
+       select date_trunc('week', delivered_at at time zone (select tz from o))::date as w, count(*) as n
+       from message_outbox where organization_id = $1 and delivered_at is not null group by 1
+     ),
+     coll as (
+       select date_trunc('week', at at time zone (select tz from o))::date as w,
+              sum(paise) as total, coalesce(sum(paise) filter (where online), 0) as online
+       from (${COLLECTIONS_SQL}) c group by 1
+     ),
+     ev as (
+       select date_trunc('week', occurred_at at time zone (select tz from o))::date as w,
+              count(*) filter (where name = 'parent.portal_opened') as opens,
+              count(*) filter (where name = 'parent.payment_started') as pays
+       from product_events
+       where organization_id = $1 and name in ('parent.portal_opened', 'parent.payment_started')
+       group by 1
+     )
+     insert into org_weekly_loop (
+       organization_id, week_start, sessions_scheduled, sessions_attended, attendance_marked,
+       invoices_raised, messages_delivered, collected_paise, collected_online_paise,
+       parent_portal_opens, parent_payments_started, computed_at
+     )
+     select $1, weeks.week_start,
+            coalesce(sched.n, 0), coalesce(att.sessions, 0), coalesce(att.marks, 0),
+            coalesce(inv.n, 0), coalesce(msg.n, 0), coalesce(coll.total, 0), coalesce(coll.online, 0),
+            coalesce(ev.opens, 0), coalesce(ev.pays, 0), now()
+     from weeks
+     left join sched on sched.w = weeks.week_start
+     left join att on att.w = weeks.week_start
+     left join inv on inv.w = weeks.week_start
+     left join msg on msg.w = weeks.week_start
+     left join coll on coll.w = weeks.week_start
+     left join ev on ev.w = weeks.week_start
+     on conflict (organization_id, week_start) do update set
+       sessions_scheduled = excluded.sessions_scheduled,
+       sessions_attended = excluded.sessions_attended,
+       attendance_marked = excluded.attendance_marked,
+       invoices_raised = excluded.invoices_raised,
+       messages_delivered = excluded.messages_delivered,
+       collected_paise = excluded.collected_paise,
+       collected_online_paise = excluded.collected_online_paise,
+       parent_portal_opens = excluded.parent_portal_opens,
+       parent_payments_started = excluded.parent_payments_started,
+       computed_at = excluded.computed_at`,
+    [orgId]
+  );
+  return res.rowCount ?? 0;
+}
+async function rollupActivation(orgId) {
+  const [orgRes, classRes, marksRes, collRes] = await Promise.all([
+    pool.query(`select created_at from organizations where id = $1`, [orgId]),
+    pool.query(`select min(created_at) as first_class_at from class_sessions where organization_id = $1`, [orgId]),
+    pool.query(
+      `select min(created_at) as first_mark from attendance_records
+       where organization_id = $1 and reversed_at is null group by session_id`,
+      [orgId]
+    ),
+    pool.query(COLLECTIONS_SQL, [orgId])
+  ]);
+  const toIso = (v) => new Date(v).toISOString();
+  const result = computeActivation({
+    signupAt: toIso(orgRes.rows[0].created_at),
+    firstClassAt: classRes.rows[0]?.first_class_at ? toIso(classRes.rows[0].first_class_at) : null,
+    sessionFirstMarkedAt: marksRes.rows.map((r) => toIso(r.first_mark)),
+    collections: collRes.rows.map((r) => ({ at: toIso(r.at), paise: Number(r.paise), online: !!r.online }))
+  });
+  await pool.query(
+    `insert into org_activation (
+       organization_id, signup_at, window_ends_at, first_class_at, first_attendance_at,
+       sessions_attended_in_window, tenth_session_attended_at, first_collected_at,
+       collected_in_window_paise, collected_online_in_window_paise, activated_at, computed_at
+     ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
+     on conflict (organization_id) do update set
+       signup_at = excluded.signup_at,
+       window_ends_at = excluded.window_ends_at,
+       first_class_at = excluded.first_class_at,
+       first_attendance_at = excluded.first_attendance_at,
+       sessions_attended_in_window = excluded.sessions_attended_in_window,
+       tenth_session_attended_at = excluded.tenth_session_attended_at,
+       first_collected_at = excluded.first_collected_at,
+       collected_in_window_paise = excluded.collected_in_window_paise,
+       collected_online_in_window_paise = excluded.collected_online_in_window_paise,
+       activated_at = excluded.activated_at,
+       computed_at = excluded.computed_at`,
+    [
+      orgId,
+      result.signupAt,
+      result.windowEndsAt,
+      result.firstClassAt,
+      result.firstAttendanceAt,
+      result.sessionsAttendedInWindow,
+      result.tenthSessionAttendedAt,
+      result.firstCollectedAt,
+      result.collectedInWindowPaise,
+      result.collectedOnlineInWindowPaise,
+      result.activatedAt
+    ]
+  );
+  let newlyActivated = false;
+  if (result.activatedAt) {
+    const tracked = await trackEvent({
+      organizationId: orgId,
+      name: "org.activated",
+      properties: {
+        sessionsAttended: result.sessionsAttendedInWindow,
+        collectedPaise: result.collectedInWindowPaise,
+        daysToActivate: daysToActivate(result)
+      },
+      dedupeKey: `org.activated:${orgId}`,
+      occurredAt: result.activatedAt
+    });
+    newlyActivated = tracked === "recorded";
+  }
+  return { result, newlyActivated };
 }
 
 // server/routes/cron.ts
@@ -4316,15 +4794,15 @@ async function expireCreditsHandler(_req, res, next) {
                 );
                 if ((dup.rowCount ?? 0) > 0) continue;
                 const credits = lot.denom === "credits" ? -lot.amount : 0;
-                const paise3 = lot.denom === "paise" ? -lot.amount : 0;
+                const paise4 = lot.denom === "paise" ? -lot.amount : 0;
                 await client.query(
                   `insert into wallet_ledger
                      (organization_id, student_id, type, credits, paise, reason, by, idempotency_key, at)
                    values ($1, $2, 'credit_expiry', $3, $4, 'credit_expiry', 'credit_expiry_cron', $5, now())`,
-                  [org.id, wallet.student_id, credits, paise3, key]
+                  [org.id, wallet.student_id, credits, paise4, key]
                 );
                 dCredits += credits;
-                dPaise += paise3;
+                dPaise += paise4;
                 lotsExpired++;
                 if (lot.denom === "credits") creditsExpired += lot.amount;
                 else paiseExpired += lot.amount;
@@ -4543,6 +5021,33 @@ async function deliverySweepHandler(_req, res, next) {
   }
 }
 router9.route("/delivery-sweep").get(deliverySweepHandler).post(deliverySweepHandler);
+async function analyticsRollupHandler(_req, res, next) {
+  try {
+    const orgsRes = await pool.query(`select id from organizations where status = 'active' order by created_at`);
+    let orgsProcessed = 0;
+    let weekRows = 0;
+    let activated = 0;
+    let newlyActivated = 0;
+    const failures = [];
+    for (const org of orgsRes.rows) {
+      try {
+        weekRows += await rollupWeeklyLoop(org.id);
+        const a = await rollupActivation(org.id);
+        if (a.result.activatedAt) activated++;
+        if (a.newlyActivated) newlyActivated++;
+        orgsProcessed++;
+      } catch (err) {
+        const error = errorMessage(err);
+        failures.push({ organizationId: org.id, error });
+        await writeAudit(org.id, { system: "analytics_rollup_cron" }, "cron.analytics_rollup_failed", "organizations", org.id, { error });
+      }
+    }
+    res.json({ ok: failures.length === 0, orgsProcessed, weekRows, activated, newlyActivated, ...failures.length ? { failures } : {} });
+  } catch (err) {
+    next(err);
+  }
+}
+router9.route("/analytics-rollup").get(analyticsRollupHandler).post(analyticsRollupHandler);
 var cron_default = router9;
 
 // server/routes/documents.ts
@@ -4820,14 +5325,14 @@ router12.get("/", requireRole("owner", "admin"), async (req, res, next) => {
     const orgId = req.user.organizationId;
     const { data: sub, error } = await supabaseAdmin.from("subscriptions").select("plan, status, student_limit, price_paise, trial_ends_at, current_period_end").eq("organization_id", orgId).maybeSingle();
     if (error) throw error;
-    const { count, error: countErr } = await supabaseAdmin.from("students").select("id", { count: "exact", head: true }).eq("organization_id", orgId).eq("is_deleted", false).eq("status", "active");
+    const { count: count2, error: countErr } = await supabaseAdmin.from("students").select("id", { count: "exact", head: true }).eq("organization_id", orgId).eq("is_deleted", false).eq("status", "active");
     if (countErr) throw countErr;
     const plan = sub?.plan && isPlanId(sub.plan) ? sub.plan : "free";
     const body = {
       plan,
       status: sub?.status || "active",
       studentLimit: sub?.student_limit ?? PLAN_CATALOG[plan].studentLimit,
-      activeStudentCount: count || 0,
+      activeStudentCount: count2 || 0,
       pricePaise: sub?.price_paise ?? PLAN_CATALOG[plan].pricePaise,
       trialEndsAt: sub?.trial_ends_at ?? null,
       currentPeriodEnd: sub?.current_period_end ?? null,
@@ -4893,6 +5398,153 @@ async function writePlatformAudit(actorId, action, opts = {}) {
     payload: opts.payload ?? {}
   });
   if (error) console.error("Failed to write platform admin audit event", error);
+}
+
+// server/utils/analyticsReport.ts
+var MONTHS_SHOWN = 6;
+var COHORT_WEEKS = 8;
+var iso2 = (v) => v ? new Date(v).toISOString() : null;
+async function buildAnalyticsReport(now = /* @__PURE__ */ new Date()) {
+  const orgsRes = await pool.query(
+    `select o.id, o.name, o.status, o.created_at, o.timezone,
+            a.window_ends_at, a.first_class_at, a.first_attendance_at, a.sessions_attended_in_window,
+            a.first_collected_at, a.collected_in_window_paise, a.collected_online_in_window_paise,
+            a.activated_at, a.computed_at
+     from organizations o
+     left join org_activation a on a.organization_id = o.id
+     order by o.created_at desc`
+  );
+  const activation = orgsRes.rows.map((r) => {
+    const snapshot = {
+      firstClassAt: iso2(r.first_class_at),
+      firstAttendanceAt: iso2(r.first_attendance_at),
+      sessionsAttendedInWindow: Number(r.sessions_attended_in_window ?? 0),
+      activatedAt: iso2(r.activated_at)
+    };
+    return {
+      organizationId: r.id,
+      name: r.name,
+      status: r.status,
+      signupAt: iso2(r.created_at),
+      windowEndsAt: iso2(r.window_ends_at) ?? new Date(new Date(r.created_at).getTime() + ACTIVATION.windowDays * 864e5).toISOString(),
+      collectedInWindowPaise: Number(r.collected_in_window_paise ?? 0),
+      collectedOnlineInWindowPaise: Number(r.collected_online_in_window_paise ?? 0),
+      firstCollectedAt: iso2(r.first_collected_at),
+      ...snapshot,
+      stage: orgStage(snapshot)
+    };
+  });
+  const activationByOrg = new Map(activation.map((a) => [a.organizationId, a]));
+  const rolledUpAt = orgsRes.rows.reduce((max, r) => {
+    const t = iso2(r.computed_at);
+    return t && (!max || t > max) ? t : max;
+  }, null);
+  const startersRes = await pool.query(
+    `select b.actor_user_id, b.max_beat, b.first_seen, c.organization_id
+     from (
+       select actor_user_id, max((properties ->> 'beat')::int) as max_beat, min(occurred_at) as first_seen
+       from product_events
+       where name = 'onboarding.beat_viewed' and actor_user_id is not null
+       group by actor_user_id
+     ) b
+     left join lateral (
+       select organization_id from product_events
+       where name = 'org.created' and actor_user_id = b.actor_user_id
+       order by occurred_at limit 1
+     ) c on true`
+  );
+  const starterStages = startersRes.rows.map(
+    (r) => starterStage({ maxBeat: Number(r.max_beat), organizationId: r.organization_id ?? null }, activationByOrg)
+  );
+  const trackedSince = startersRes.rows.reduce((min, r) => {
+    const t = iso2(r.first_seen);
+    return t && (!min || t < min) ? t : min;
+  }, null);
+  const months = lastMonthKeys(now, MONTHS_SHOWN, DEFAULT_ORG_TIMEZONE);
+  const monthlyRes = await pool.query(
+    `select c.organization_id, to_char(c.at at time zone o.timezone, 'YYYY-MM') as month,
+            sum(c.paise) as total, coalesce(sum(c.paise) filter (where c.online), 0) as online
+     from (${ALL_ORGS_COLLECTIONS_SINCE_SQL}) c
+     join organizations o on o.id = c.organization_id
+     group by 1, 2`,
+    [new Date(now.getTime() - (MONTHS_SHOWN + 1) * 31 * 864e5).toISOString()]
+  );
+  const monthlyRows = monthlyRes.rows.map((r) => ({
+    organizationId: r.organization_id,
+    month: r.month,
+    collectedPaise: Number(r.total),
+    onlinePaise: Number(r.online)
+  }));
+  const currentWeek = weekStartInZone(now, DEFAULT_ORG_TIMEZONE);
+  const fromWeek = addDaysToDateKey(currentWeek, -21);
+  const weeklyRes = await pool.query(
+    `select organization_id, to_char(week_start, 'YYYY-MM-DD') as week_start,
+            sessions_scheduled, sessions_attended, attendance_marked, invoices_raised, messages_delivered,
+            collected_paise, collected_online_paise, parent_portal_opens, parent_payments_started
+     from org_weekly_loop`
+  );
+  const nameById = new Map(orgsRes.rows.map((r) => [r.id, r.name]));
+  const loopByOrg = /* @__PURE__ */ new Map();
+  for (const w of weeklyRes.rows) {
+    if (w.week_start < fromWeek || w.week_start > currentWeek) continue;
+    const t = loopByOrg.get(w.organization_id) ?? {
+      organizationId: w.organization_id,
+      name: nameById.get(w.organization_id) ?? "",
+      sessionsScheduled: 0,
+      sessionsAttended: 0,
+      attendanceMarked: 0,
+      invoicesRaised: 0,
+      messagesDelivered: 0,
+      collectedPaise: 0,
+      onlinePaise: 0,
+      parentPortalOpens: 0,
+      parentPaymentsStarted: 0
+    };
+    t.sessionsScheduled += Number(w.sessions_scheduled);
+    t.sessionsAttended += Number(w.sessions_attended);
+    t.attendanceMarked += Number(w.attendance_marked);
+    t.invoicesRaised += Number(w.invoices_raised);
+    t.messagesDelivered += Number(w.messages_delivered);
+    t.collectedPaise += Number(w.collected_paise);
+    t.onlinePaise += Number(w.collected_online_paise);
+    t.parentPortalOpens += Number(w.parent_portal_opens);
+    t.parentPaymentsStarted += Number(w.parent_payments_started);
+    loopByOrg.set(w.organization_id, t);
+  }
+  const cohortRows = computeRetentionCohorts(
+    orgsRes.rows.map((r) => ({
+      organizationId: r.id,
+      signupWeek: weekStartInZone(new Date(r.created_at), r.timezone || DEFAULT_ORG_TIMEZONE)
+    })),
+    weeklyRes.rows.map((w) => ({ organizationId: w.organization_id, weekStart: w.week_start, sessionsAttended: Number(w.sessions_attended) })),
+    currentWeek,
+    COHORT_WEEKS
+  );
+  const featureRes = await pool.query(
+    `select properties ->> 'feature' as feature, count(*) as opens, count(distinct organization_id) as orgs
+     from product_events
+     where name = 'feature.opened' and occurred_at >= now() - interval '28 days'
+     group by 1 order by 2 desc`
+  );
+  return {
+    generatedAt: now.toISOString(),
+    rolledUpAt,
+    activationDefinition: ACTIVATION,
+    onboardingFunnel: { trackedSince, steps: computeFunnel(starterStages, 1) },
+    orgFunnel: computeFunnel(activation.map((a) => a.stage), 4),
+    activation,
+    monthlyCollected: {
+      months,
+      orgs: pivotMonthlyCollected(orgsRes.rows.map((r) => ({ organizationId: r.id, name: r.name })), monthlyRows, months)
+    },
+    loopLastFourWeeks: {
+      fromWeek,
+      toWeek: currentWeek,
+      orgs: [...loopByOrg.values()].sort((a, b) => b.sessionsAttended - a.sessionsAttended || a.name.localeCompare(b.name))
+    },
+    cohorts: { currentWeek, rows: cohortRows },
+    featureUsage: featureRes.rows.map((r) => ({ feature: r.feature, opens: Number(r.opens), orgs: Number(r.orgs) }))
+  };
 }
 
 // shared/schemas/admin.ts
@@ -4962,6 +5614,13 @@ router13.get("/orgs", async (_req, res, next) => {
       }))
     };
     res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+router13.get("/analytics", async (_req, res, next) => {
+  try {
+    res.json(await buildAnalyticsReport());
   } catch (err) {
     next(err);
   }
@@ -5574,7 +6233,7 @@ var inrNumber2 = new Intl.NumberFormat("en-IN", {
   maximumFractionDigits: 2,
   minimumFractionDigits: 0
 });
-function paise2(v) {
+function paise3(v) {
   return `Rs. ${inrNumber2.format(paiseToRupees(v || 0))}`;
 }
 function formatDate3(d) {
@@ -5638,8 +6297,8 @@ function renderPayoutStatementPdf(input) {
     body: lines.map((l) => [
       formatDate3(l.sessionStart),
       `${l.durationMinutes} min`,
-      `${paise2(l.ratePaisePerHour)}/hr`,
-      paise2(l.amountPaise)
+      `${paise3(l.ratePaisePerHour)}/hr`,
+      paise3(l.amountPaise)
     ]),
     styles: { font: "helvetica", fontSize: 10, cellPadding: 6 },
     headStyles: { fillColor: [30, 41, 59], textColor: 255 },
@@ -5660,11 +6319,11 @@ function renderPayoutStatementPdf(input) {
     doc.text(value, totalsX, totalsY, { align: "right" });
     totalsY += 14;
   };
-  row("Gross", paise2(payout.grossPaise));
-  row(`TDS (${payout.tdsPercent}%)`, `\u2212 ${paise2(payout.tdsPaise)}`);
+  row("Gross", paise3(payout.grossPaise));
+  row(`TDS (${payout.tdsPercent}%)`, `\u2212 ${paise3(payout.tdsPaise)}`);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
-  row("Net payable", paise2(payout.netPaise));
+  row("Net payable", paise3(payout.netPaise));
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setFontSize(9);
@@ -6221,6 +6880,66 @@ router18.post("/:id/reassign", requireRole(...CAN_SCHEDULE2), async (req, res, n
 });
 var leave_default = router18;
 
+// server/routes/analytics.ts
+import express19 from "express";
+var router19 = express19.Router();
+router19.post("/events", authenticateToken, async (req, res, next) => {
+  try {
+    const body = req.body ?? {};
+    const name = typeof body.name === "string" ? body.name : "";
+    if (!CLIENT_EVENT_NAMES.includes(name)) {
+      return res.status(400).json({ error: { code: "unknown_event", message: "Not a client event" } });
+    }
+    const properties = body.properties ?? {};
+    const problem = validateEventProperties(name, properties);
+    if (problem) {
+      return res.status(400).json({ error: { code: "invalid_properties", message: problem } });
+    }
+    const userId = req.user.id;
+    const orgId = req.user.organizationStatus === "offboarded" ? null : req.user.organizationId ?? null;
+    const day = utcDayKey();
+    let recorded;
+    switch (name) {
+      case "onboarding.beat_viewed":
+        recorded = await trackEvent({
+          organizationId: null,
+          actorUserId: userId,
+          name: "onboarding.beat_viewed",
+          properties,
+          dedupeKey: `onboarding.beat_viewed:${userId}:${properties.beat}`
+        });
+        break;
+      case "parent.portal_opened":
+        if (!orgId || req.user.role !== "parent") {
+          return res.status(403).json({ error: { code: "forbidden", message: "Only a parent in an organization can open the parent portal" } });
+        }
+        recorded = await trackEvent({
+          organizationId: orgId,
+          actorUserId: userId,
+          name: "parent.portal_opened",
+          dedupeKey: `parent.portal_opened:${orgId}:${userId}:${day}`
+        });
+        break;
+      case "feature.opened":
+        if (!orgId) {
+          return res.status(403).json({ error: { code: "no_organization", message: "User does not belong to an organization" } });
+        }
+        recorded = await trackEvent({
+          organizationId: orgId,
+          actorUserId: userId,
+          name: "feature.opened",
+          properties,
+          dedupeKey: `feature.opened:${orgId}:${userId}:${properties.feature}:${day}`
+        });
+        break;
+    }
+    res.status(202).json({ ok: true, recorded: recorded === "recorded" });
+  } catch (err) {
+    next(err);
+  }
+});
+var analytics_default = router19;
+
 // server/app.ts
 function createApp() {
   if (process.env.SENTRY_DSN) {
@@ -6230,7 +6949,7 @@ function createApp() {
       tracesSampleRate: 0.1
     });
   }
-  const app2 = express19();
+  const app2 = express20();
   const isProd = process.env.NODE_ENV === "production";
   app2.use(pino({
     level: isProd ? "info" : "debug",
@@ -6251,7 +6970,7 @@ function createApp() {
     // header-based auth only; no cookies, no CSRF surface
   }));
   app2.set("trust proxy", 1);
-  app2.use("/api/webhooks", express19.raw({ type: "*/*", limit: "1mb" }), webhooks_default);
+  app2.use("/api/webhooks", express20.raw({ type: "*/*", limit: "1mb" }), webhooks_default);
   const apiLimiter = rateLimit({
     windowMs: 60 * 1e3,
     max: 120,
@@ -6261,7 +6980,7 @@ function createApp() {
     // (coaching centers share IPs). ipKeyGenerator handles IPv6 subnets.
     keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip || "")
   });
-  app2.use(express19.json({ limit: "1mb" }));
+  app2.use(express20.json({ limit: "1mb" }));
   app2.use("/api/", identifyUser, apiLimiter);
   app2.use("/api/v1/settings", settings_default);
   app2.use("/api/v1/members", members_default);
@@ -6279,6 +6998,7 @@ function createApp() {
   app2.use("/api/v1/audit-log", auditLog_default);
   app2.use("/api/v1/payouts", payouts_default);
   app2.use("/api/v1/leave", leave_default);
+  app2.use("/api/v1/analytics", analytics_default);
   app2.use("/api/cron", cron_default);
   app2.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });

@@ -7,9 +7,10 @@ Tuition management that collects your fees. Scheduling, attendance, billing, and
 ## Architecture
 
 - **Frontend:** React 19 + Vite + Tailwind 4 SPA, talking directly to Supabase (PostgREST) for reads, enforced by Postgres Row Level Security (RLS). Every privileged write goes through the Express API instead.
-- **API (Express, stateless):** privileged mutations only — org membership/roles (`/api/v1/members`), attendance + money (`/api/v1/billing`), scheduling, documents, subscriptions, super-admin, org export, audit log. Deployed both as a traditional Node server (`server.ts`) and as a Vercel serverless function (`server/vercelHandler.ts` → `api/index.js`).
+- **API (Express, stateless):** privileged mutations only — org membership/roles (`/api/v1/members`), attendance + money (`/api/v1/billing`), scheduling, documents, subscriptions, super-admin (including activation analytics), org export, audit log, and product-event recording (`/api/v1/analytics`). Deployed both as a traditional Node server (`server.ts`) and as a Vercel serverless function (`server/vercelHandler.ts` → `api/index.js`).
 - **Authorization:** `authenticateToken` verifies the Supabase JWT per request (JWKS, HS256 fallback), then does a fresh `organization_members` lookup for role/org. No custom claims and no token-revocation dance — a role change takes effect on the next API call. RLS is the authorization boundary for direct-to-Supabase reads.
 - **Money:** integer paise, server-authoritative, `FOR UPDATE` row locks and idempotency keys via a direct `pg` transaction (PostgREST can't hold a lock across a read-then-write). Razorpay per-org payment links, webhook-reconciled.
+- **Product analytics (Step 32, D-11):** our own append-only `product_events` table plus a nightly rollup, never a third-party service, because the data describes minors. Event payloads carry only record ids, counts, paise and fixed values; `shared/analyticsEvents.ts` states the rule and `server/utils/analytics.ts` enforces it. Platform admins see the activation funnel, cohorts and rupees collected per org per month under Platform admin → Analytics.
 - **The RBAC constitution:** the RLS test suite (`tests/integration/`) plus the route-contract suite (`tests/contract/`) encode the permission matrix. Any change to a migration's RLS policy or a privileged endpoint must keep both green.
 
 ## Development
@@ -51,7 +52,7 @@ CI (`.github/workflows/ci.yml`) runs all eight gates on every PR: typecheck, a r
 2. Money mutates only via `/api/v1/billing`, idempotency-keyed; every mutation writes an `audit_events` row. `invoices`, `payments`, `wallets`, `wallet_ledger`, and `refunds` have no client write policy at all.
 3. Attendance marking is one real transaction covering the attendance record, wallet debit, and invoice accrual.
 4. Money is integer paise (`*_paise` columns). The `total_amount`/`subtotal` rupee columns are legacy display mirrors, not sources of truth.
-5. Server-only tables (`google_tokens`, `audit_events`, `payment_gateways`, `refunds`, `platform_admins`, and others) have RLS enabled with no policy at all — default-deny for everything except `service_role`.
+5. Server-only tables (`google_tokens`, `audit_events`, `payment_gateways`, `refunds`, `platform_admins`, `message_outbox`, the analytics tables `product_events`/`org_activation`/`org_weekly_loop`, and others) have RLS enabled with no policy at all — default-deny for everything except `service_role`.
 6. Every webhook is HMAC-verified before its body is trusted. The raw-body mount in `server/app.ts` sits before JSON parsing and rate limiting — do not reorder it.
 
 See [HANDOFF.md](HANDOFF.md) for the full list and the traps this stack has already sprung.

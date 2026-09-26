@@ -11,7 +11,7 @@ import { formatPaise, formatINR, formatDate, formatTime, formatRelativeDays } fr
 import { rupeesToPaise } from "../../shared/money";
 import { cancellationCutoff, DEFAULT_CANCELLATION_POLICY, type CancellationPolicy } from "../../shared/cancellationPolicy";
 import { getOrgCancellationPolicy } from "../lib/cancellationPolicy";
-import { payInvoiceAsParent, downloadInvoicePdf, topUpWalletAsParent } from "../lib/api";
+import { payInvoiceAsParent, downloadInvoicePdf, topUpWalletAsParent, trackClientEvent } from "../lib/api";
 import { debounce } from "../lib/debounce";
 
 // Epic 10 (parent portal v1, mobile-web-first). One page, three tabs, no new
@@ -97,6 +97,12 @@ export default function ParentPortal() {
   // the coded defaults so the disclosure renders immediately, same pattern
   // as OrganizationSettings.tsx's initial state, then corrected on fetch.
   const [cancellationPolicy, setCancellationPolicy] = useState<CancellationPolicy>(DEFAULT_CANCELLATION_POLICY);
+
+  // C-07 (EXECUTION_PLAN.md Step 32): parent-side engagement. The server
+  // counts at most one portal open per parent per day.
+  useEffect(() => {
+    if (user?.organizationId) trackClientEvent("parent.portal_opened");
+  }, [user?.organizationId]);
 
   useEffect(() => {
     if (!user?.organizationId) return;

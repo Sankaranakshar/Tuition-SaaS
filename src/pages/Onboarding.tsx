@@ -6,7 +6,7 @@ import { supabase } from "../supabase";
 import { Users, Building2, UserRound, Upload } from "lucide-react";
 import {
   previewParentInvite, redeemParentInvite, previewStudentInvite, redeemStudentInvite,
-  previewStaffInvite, redeemStaffInvite, bootstrapOrganization, api,
+  previewStaffInvite, redeemStaffInvite, bootstrapOrganization, api, trackClientEvent,
   type InvitableStaffRole,
 } from "../lib/api";
 import { ClassManager } from "../services/ClassManager";
@@ -372,6 +372,17 @@ export default function Onboarding() {
 
   const [orgMode, setOrgMode] = useState<OrgMode | null>(null);
   const [orgName, setOrgName] = useState("");
+
+  // C-07 (EXECUTION_PLAN.md Step 32): per-beat drop-off. The beats are
+  // client-side until the final submit, so each one reports itself when it
+  // first shows (the server keeps one per person per beat; going Back and
+  // forward again records nothing new). Beat 2 onward carries the solo or
+  // centre choice made on beat 1.
+  useEffect(() => {
+    if (flow !== "tutor") return;
+    trackClientEvent("onboarding.beat_viewed", tutorBeat > 1 && orgMode ? { beat: tutorBeat, mode: orgMode } : { beat: tutorBeat });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flow, tutorBeat]);
 
   const [presetId, setPresetId] = useState(TEMPLATE_GALLERY[0].id);
   const preset = TEMPLATE_GALLERY.find(p => p.id === presetId)!;
