@@ -59,7 +59,7 @@
 | 28 | C-03 platform billing switch-on | R3 | Blocked on D-03 numbers + platform KYC |
 | 29 | C-04 Razorpay live rehearsal | R3 | Blocked on pilot-org KYC |
 | 30 | C-05 parent-visible tutor-student threads (+ parents can message tutors) | R4 | ✅ Complete 2026-09-26 ([PR #11](https://github.com/Sankaranakshar/Tuition-SaaS/pull/11), merged, live on production) |
-| 31 | C-06 Playwright golden journeys | R4 | 🟡 Built; CI green on [PR #13](https://github.com/Sankaranakshar/Tuition-SaaS/pull/13) 2026-09-26 after the founder added the four secrets. Open: the deliberate-failure check, then merge |
+| 31 | C-06 Playwright golden journeys | R4 | ✅ Complete 2026-09-26 ([PR #13](https://github.com/Sankaranakshar/Tuition-SaaS/pull/13), merged). CI green; the deliberate-failure check (PR #15) went red as intended |
 | 32 | C-07 activation analytics | R4 | 🟡 Built; migration applied to staging and walked live there 2026-09-26 ([PR #16](https://github.com/Sankaranakshar/Tuition-SaaS/pull/16) to `main`). Waiting on: merge, production migration |
 | 33 | C-08 operational floor | R4 | Not started |
 | 34 | C-09 onboarding friction pass | R4 | Not started |
@@ -344,11 +344,11 @@ Journeys touching a live Razorpay or phone OTP stay out of CI and are exercised 
 **Browser verification required.** By construction.
 
 **Definition of done.**
-- [ ] Five journeys green in CI against staging, on every PR. *(Five journeys plus a sixth for Step 30, seven tests, all green locally against `classstackr-staging` 2026-09-26, 37s. The CI job is written and wired; it cannot go green until the founder adds the four staging secrets below.)*
+- [x] Five journeys green in CI against staging, on every PR. *(Five journeys plus a sixth for Step 30, seven tests, all green locally against `classstackr-staging` 2026-09-26, 37s. The CI job is written and wired; it cannot go green until the founder adds the four staging secrets below.)* *CI green on PR #13 on 2026-09-26, once the four secrets existed.*
 - [x] Axe automated on the main surfaces. *(WCAG 2.1 A/AA, 25 audits across Login, Onboarding (tutor, parent-invite and staff-invite), Today, People and its invite modal, Schedule and the Add Class wizard, Money (settled, outstanding, new invoice), Student Story, Audit log, Settings (Team, Leave), Inbox (picker, staff thread, student thread, guardian view, parent picker), Student dashboard, Parent portal (overview, invoices). Light theme only; see "Not covered".)*
-- [ ] Deliberately break one assertion and confirm CI fails, so the gate is known to be real. (HANDOFF §5.10's discipline, applied to a new layer.) *(Waiting on the same secrets.)*
+- [x] Deliberately break one assertion and confirm CI fails, so the gate is known to be real. (HANDOFF §5.10's discipline, applied to a new layer.) *(Waiting on the same secrets.)* *Done 2026-09-26: throwaway PR #15 changed journey 2's expected Outstanding to ₹501; CI's e2e job failed on exactly that assertion (received ₹500), on the first attempt and on the retry, with every other check green. PR #15 was then closed, not merged.*
 - [x] Step 23's substitute-reassignment gap closed. *(Journey 5: a second tutor joins through the Settings → Team invite link, "Assign to all" is clicked, the session's `tutor_id` moves, a `session.reassign_tutor` audit row is written, and the substitute sees the class on their own tutor-role Schedule.)*
-- [ ] All eight gates green; README and HANDOFF updated to say eight. *(Docs updated; the eighth gate goes green in CI once the secrets exist.)*
+- [x] All eight gates green; README and HANDOFF updated to say eight. *(Docs updated; the eighth gate goes green in CI once the secrets exist.)*
 
 **Expected outcome.** The bug class that has cost the most time stops recurring silently.
 
@@ -380,7 +380,7 @@ Journeys touching a live Razorpay or phone OTP stay out of CI and are exercised 
 
 **Not covered, noted for later.** Dark theme is not audited (the suite runs light). `RoleSelection.tsx` is still never rendered: the plan listed a multi-role seed account under this step's files, but none of the five journeys needs one, and the fixtures live per run in `tests/e2e/support/` rather than in `scripts/seed.ts` so that concurrent runs never share them. The signup form itself (see Decisions). Live Razorpay and phone OTP stay out of CI by design, as this step's scope says. The Login page still opens on the Phone tab, which cannot work; every login in the suite clicks "Email" first. That default is Step 34's to fix and is deliberately left alone here.
 
-**Status: built on branch `feat/step-31-playwright`, green locally against staging; waiting on the founder to add the four GitHub secrets so CI can run it and the deliberate-failure check can be done.**
+**Status: ✅ complete 2026-09-26.** Merged to `main` via [PR #13](https://github.com/Sankaranakshar/Tuition-SaaS/pull/13) (`30d5993`), CI green, deliberate-failure check proven with PR #15 (closed). Earlier status: built on branch `feat/step-31-playwright`, green locally against staging; waiting on the founder to add the four GitHub secrets so CI can run it and the deliberate-failure check can be done.
 
 ---
 
