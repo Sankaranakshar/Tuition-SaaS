@@ -88,3 +88,83 @@ describe("POST /api/v1/inbox/class-channels/:templateId/ensure", () => {
     expect(count.rows[0].n).toBe(1);
   });
 });
+
+// D-06 / EXECUTION_PLAN.md Step 30: the student anchor is enforced by the
+// database for every writer, including this server's own service_role pool,
+// so no current or future route can create a tutor-student DM that the
+// student's parent can't read. (DMs are created client-side today; the
+// class-channel route above is the only server writer to conversations.)
+describe("conversations.student_id anchor, enforced for server-side writers too", () => {
+  async function seedStudent(name: string) {
+    const studentId = crypto.randomUUID();
+    const studentUserId = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [studentUserId]);
+    await db.query(`insert into students (id, organization_id, name, student_user_id) values ($1, $2, $3, $4)`, [
+      studentId,
+      ORG,
+      name,
+      studentUserId,
+    ]);
+    return { studentId, studentUserId };
+  }
+
+  it("a DM with a student participant and no anchor supplied cannot be left unanchored", async () => {
+    const { studentId, studentUserId } = await seedStudent("Anchor Kid");
+    const res = await db.query<any>(
+      `insert into conversations (organization_id, participant_ids, kind) values ($1, $2, 'dm') returning student_id`,
+      [ORG, [uids.tutor, studentUserId]]
+    );
+    expect(res.rows[0].student_id).toBe(studentId);
+
+    // Clearing it afterwards just re-derives it.
+    const cleared = await db.query<any>(
+      `update conversations set student_id = null where student_id = $1 returning student_id`,
+      [studentId]
+    );
+    expect(cleared.rows[0].student_id).toBe(studentId);
+  });
+
+  it("rejects a DM anchored to a student who isn't in it", async () => {
+    const { studentUserId } = await seedStudent("Real Kid");
+    const other = await seedStudent("Other Kid");
+    await expect(
+      db.query(`insert into conversations (organization_id, participant_ids, kind, student_id) values ($1, $2, 'dm', $3)`, [
+        ORG,
+        [uids.tutor, studentUserId],
+        other.studentId,
+      ])
+    ).rejects.toThrow(/student anchor does not match/);
+  });
+
+  it("rejects a DM between two students", async () => {
+    const a = await seedStudent("Kid A");
+    const b = await seedStudent("Kid B");
+    await expect(
+      db.query(`insert into conversations (organization_id, participant_ids, kind) values ($1, $2, 'dm')`, [
+        ORG,
+        [a.studentUserId, b.studentUserId],
+      ])
+    ).rejects.toThrow(/between two students/);
+  });
+
+  it("the class-channel route is unaffected: a channel with a rostered student carries no student anchor", async () => {
+    const templateId = crypto.randomUUID();
+    const { studentId } = await seedStudent("Channel Kid");
+    await db.query(
+      `insert into class_templates (id, organization_id, name, type, capacity, tutor_id, days_of_week)
+       values ($1, $2, 'Anchor Batch', 'BATCH', 10, $3, '{1}')`,
+      [templateId, ORG, uids.tutor]
+    );
+    await db.query(`insert into enrollments (organization_id, student_id, template_id, status) values ($1, $2, $3, 'active')`, [
+      ORG,
+      studentId,
+      templateId,
+    ]);
+    const res = await request(app)
+      .post(`/api/v1/inbox/class-channels/${templateId}/ensure`)
+      .set(...authHeader(uids.owner));
+    expectStatus(res, 200);
+    const row = await db.query<any>(`select student_id from conversations where id = $1`, [res.body.conversationId]);
+    expect(row.rows[0].student_id).toBeNull();
+  });
+});

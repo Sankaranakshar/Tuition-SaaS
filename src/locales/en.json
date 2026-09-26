@@ -439,6 +439,17 @@
     "snoozeWeek": "Next week",
     "waiting": "Waiting for reply",
     "recordPayment": "Record payment",
+    "guardian": {
+      "disclosureStaff": "{{name}}'s parent or guardian can read every message in this conversation.",
+      "disclosureStudent": "Your parent or guardian can read every message in this conversation.",
+      "disclosureGuardian": "You can read this conversation because it involves {{name}}. Parents can read tutor and student conversations, but can't reply in them.",
+      "readOnly": "Read only. Parents can see this conversation but can't reply here.",
+      "thisStudent": "This student",
+      "tutorLabel": "Tutor",
+      "rowVisible": "Parent or guardian can read this",
+      "rowGuardian": "Parent view",
+      "pickerHint": "Their parent or guardian can read these messages"
+    },
     "notificationType": {
       "invoice_overdue": "Invoice overdue",
       "payment_due": "Payment due",
