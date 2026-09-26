@@ -24,6 +24,12 @@ import OrgSwitcher from "./OrgSwitcher";
 import { BottomSheet } from "./kit";
 import { useNotificationsList } from "../hooks/useInbox";
 import { useIsPlatformAdmin } from "../hooks/usePlatformAdmin";
+import { trackClientEvent } from "../lib/api";
+import { featureForPath } from "../../shared/analyticsEvents";
+
+// Workspace opens already reported this page load, so moving between
+// workspaces doesn't re-send what the server would drop as a duplicate anyway.
+const reportedFeatureOpens = new Set<string>();
 
 // The shell (DEV_PLAN E5.2): a ~92px labelled rail with five workspaces plus
 // utility items, and a topbar whose search box is a real command palette
@@ -51,6 +57,17 @@ export default function Layout() {
   const { data: notifications } = useNotificationsList();
   const unreadCount = notifications.filter((n) => !n.read).length;
   const isPlatformAdmin = useIsPlatformAdmin();
+
+  // C-07 (EXECUTION_PLAN.md Step 32): feature usage, one per person per
+  // workspace per day (the server's dedupe; this set just saves the request).
+  useEffect(() => {
+    const feature = featureForPath(location.pathname);
+    if (!feature || !user?.organizationId) return;
+    const key = `${user.organizationId}:${feature}:${new Date().toISOString().slice(0, 10)}`;
+    if (reportedFeatureOpens.has(key)) return;
+    reportedFeatureOpens.add(key);
+    trackClientEvent("feature.opened", { feature });
+  }, [location.pathname, user?.organizationId]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {

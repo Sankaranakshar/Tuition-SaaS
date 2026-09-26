@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { admin, createOrgWithOwner, createCourse, createStudent, type TestOrg } from "./support/admin";
 import { sessionFor, callApiAsPage, expectAccessible, istDate } from "./support/ui";
+import { whenAnalyticsMigrated, productEvents } from "./support/analytics";
 
 // Journeys 2 and 3 (EXECUTION_PLAN.md Step 31), one serial file because 3
 // reverses exactly what 2 created.
@@ -132,6 +133,20 @@ test("journey 2: recurring class, attendance, invoice, Outstanding moves", async
   await expectOutstanding(STUDENT, "₹500");
   await expectAccessible(page, "Money (outstanding)");
 
+  // Step 32 (C-07): the weekly loop's events. Creating the class filled its
+  // sessions; marking attendance recorded counts (one present, one invoice
+  // accrued), with no student id or name in the payload.
+  await whenAnalyticsMigrated("journey 2 product events", async () => {
+    const materialized = await productEvents({ organizationId: org.id, name: "sessions.materialized" });
+    expect(materialized.length).toBeGreaterThanOrEqual(1);
+    const marked = await productEvents({ organizationId: org.id, name: "attendance.marked" });
+    expect(marked).toHaveLength(1);
+    expect(marked[0].actor_user_id).toBe(org.owner.id);
+    expect(marked[0].properties).toEqual({ sessionId, present: 1, absent: 0, billed: 0, invoiced: 1 });
+    expect(JSON.stringify(marked)).not.toContain(studentId);
+    expect(JSON.stringify(marked)).not.toContain(STUDENT);
+  });
+
   // The student's story shows the class they just attended.
   await page.goto(`/app/students/${studentId}`);
   await expect(page.getByRole("heading", { name: STUDENT })).toBeVisible();
@@ -180,4 +195,10 @@ test("journey 3: reverse attendance; wallet, invoice and ledger agree; second re
   });
   expect(second.status).toBe(409);
   expect(second.body.error.code).toBe("already_reversed");
+
+  // Step 32: one reversal event (the refused second reverse records nothing).
+  await whenAnalyticsMigrated("journey 3 product events", async () => {
+    const reversed = await productEvents({ organizationId: org.id, name: "attendance.reversed" });
+    expect(reversed.map((r) => r.properties)).toEqual([{ sessionId, reason: "cancellation" }]);
+  });
 });

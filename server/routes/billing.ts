@@ -4,6 +4,7 @@ import { pool, withTransaction } from "../db.ts";
 import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { authenticateToken, requireRole, requireOrg, type AuthRequest } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
+import { trackEvent } from "../utils/analytics.ts";
 import { applyPayment, type InvoiceStatus } from "../utils/invoiceStatus.ts";
 import { allocateInvoiceNumber } from "../utils/invoiceNumber.ts";
 import { getGatewayCreds, createPaymentLink, fetchPaymentLink } from "../utils/razorpay.ts";
@@ -114,6 +115,7 @@ router.post("/invoices", requireRole(...CAN_MARK), async (req: AuthRequest, res,
     if (error) throw error;
 
     await writeAudit(orgId, req.user!.id, "invoice.create", "invoices", inv.id, { studentId: body.studentId, totalPaise });
+    await trackEvent({ organizationId: orgId, actorUserId: req.user!.id, name: "invoice.raised", properties: { invoiceId: inv.id, totalPaise } });
 
     const studentRes = await pool.query(`select name from students where id = $1`, [body.studentId]);
     const studentName = studentRes.rows[0]?.name as string | undefined;
@@ -166,6 +168,11 @@ router.post("/wallets/topup", requireRole(...CAN_MONEY), async (req: AuthRequest
 
     if (!outcome.duplicate) {
       await writeAudit(orgId, req.user!.id, "wallet.topup", "wallets", body.studentId, { amountPaise: body.amountPaise, method: body.method });
+      await trackEvent({
+        organizationId: orgId, actorUserId: req.user!.id, name: "wallet.topped_up",
+        properties: { amountPaise: body.amountPaise, channel: "manual" },
+        dedupeKey: `wallet.topped_up:${orgId}:${body.idempotencyKey}`,
+      });
     }
     res.status(outcome.duplicate ? 200 : 201).json({ ok: true, duplicate: outcome.duplicate });
   } catch (err) { next(err); }
@@ -418,6 +425,18 @@ router.post("/attendance", requireRole(...CAN_MARK), async (req: AuthRequest, re
       records: records.map((r) => `${r.studentId}:${r.status}`),
       ...result,
     });
+    // Counts only, never the student ids the audit row above carries: see
+    // the payload rule in shared/analyticsEvents.ts.
+    await trackEvent({
+      organizationId: orgId, actorUserId: actor, name: "attendance.marked",
+      properties: {
+        sessionId,
+        present: records.filter((r) => r.status === "present" || r.status === "late").length,
+        absent: records.filter((r) => r.status === "absent").length,
+        billed: result.billed.length,
+        invoiced: result.invoiced.length,
+      },
+    });
     res.json({ ok: true, ...result });
   } catch (err) { next(err); }
 });
@@ -570,6 +589,7 @@ router.post("/attendance/reverse", requireRole(...CAN_MARK), async (req: AuthReq
     await writeAudit(orgId, actor, "attendance.reverse", "attendance_records", sessionId, {
       studentId, reason, ...result,
     });
+    await trackEvent({ organizationId: orgId, actorUserId: actor, name: "attendance.reversed", properties: { sessionId, reason } });
     res.status(201).json({ ok: true, reversalPath: result.reversalPath, creditedCredits: result.creditedCredits, creditedPaise: result.creditedPaise });
   } catch (err) { next(err); }
 });
@@ -661,6 +681,11 @@ router.post("/payments/manual", requireRole(...CAN_MONEY), async (req: AuthReque
     if (!outcome.duplicate) {
       await writeAudit(orgId, req.user!.id, "payment.record_manual", "invoices", body.invoiceId, {
         amountPaise: body.amountPaise, method: body.method,
+      });
+      await trackEvent({
+        organizationId: orgId, actorUserId: req.user!.id, name: "payment.recorded",
+        properties: { invoiceId: body.invoiceId, amountPaise: body.amountPaise, channel: "manual", method: body.method },
+        dedupeKey: `payment.recorded:${orgId}:${body.idempotencyKey}`,
       });
     }
     res.status(outcome.duplicate ? 200 : 201).json({ ok: true, invoiceStatus: outcome.status, duplicate: outcome.duplicate });
@@ -917,6 +942,7 @@ router.post("/invoices/:invoiceId/pay", async (req: AuthRequest, res, next) => {
         linkId: result.linkId, amountPaise: result.amountPaise,
       });
     }
+    await trackEvent({ organizationId: orgId, actorUserId: req.user!.id, name: "parent.payment_started", properties: { invoiceId: req.params.invoiceId } });
     res.json({ ok: true, shortUrl: result.shortUrl, reused: result.reused });
   } catch (err) { next(err); }
 });

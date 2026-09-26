@@ -4,6 +4,7 @@ import { supabaseAdmin } from "../supabaseAdmin.ts";
 import { withTransaction, pool } from "../db.ts";
 import { authenticateToken, requireRole, requireOrg, invalidateMembership, type AuthRequest, type Role } from "../middleware/auth.ts";
 import { writeAudit } from "../utils/audit.ts";
+import { trackEvent } from "../utils/analytics.ts";
 import {
   setMemberRoleRequestSchema, bootstrapOrgRequestSchema,
   createStaffInviteRequestSchema, staffRedeemRequestSchema,
@@ -71,6 +72,7 @@ router.post("/bootstrap", authenticateToken, async (req: AuthRequest, res, next)
     await setMembership(org.id, req.user!.id, "owner", req.user!.id);
     await setActiveOrganization(req.user!.id, org.id);
     await writeAudit(org.id, req.user!.id, "org.create", "organizations", org.id, { name: body.organizationName });
+    await trackEvent({ organizationId: org.id, actorUserId: req.user!.id, name: "org.created", dedupeKey: `org.created:${org.id}` });
 
     res.status(201).json({ organizationId: org.id });
   } catch (err) { next(err); }

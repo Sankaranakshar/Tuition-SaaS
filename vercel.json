@@ -13,6 +13,7 @@
     { "path": "/api/cron/reporting-daily", "schedule": "5 20 * * *" },
     { "path": "/api/cron/reconcile-wallets", "schedule": "10 20 * * *" },
     { "path": "/api/cron/expire-credits", "schedule": "15 20 * * *" },
-    { "path": "/api/cron/delivery-sweep", "schedule": "20 20 * * *" }
+    { "path": "/api/cron/delivery-sweep", "schedule": "20 20 * * *" },
+    { "path": "/api/cron/analytics-rollup", "schedule": "25 20 * * *" }
   ]
 }
