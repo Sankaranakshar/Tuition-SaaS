@@ -102,3 +102,9 @@ export function civilDateSentinelInZone(zone: string, now: Date = new Date()): D
 export function civilDateKey(sentinel: Date): string {
   return `${sentinel.getUTCFullYear()}-${String(sentinel.getUTCMonth() + 1).padStart(2, "0")}-${String(sentinel.getUTCDate()).padStart(2, "0")}`;
 }
+
+/** `YYYY-MM` for `instant` as a clock in `zone` would read it: the
+ *  zone-correct replacement for `getFullYear()/getMonth()` month bucketing. */
+export function monthKeyInZone(instant: Date, zone: string): string {
+  return localDateKeyInZone(instant, zone).slice(0, 7);
+}

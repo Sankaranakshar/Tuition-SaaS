@@ -33,8 +33,10 @@ jobs:
         run: npm audit --audit-level=high
         continue-on-error: true
 
-      - name: Unit tests
-        run: npm test
+      # Whole unit suite under UTC, Asia/Kolkata and America/New_York: C-01
+      # requires it to pass identically under any process timezone.
+      - name: Unit tests (three timezones)
+        run: npm run test:tz
 
       - name: RLS/RBAC tests
         run: npm run test:rls

@@ -5,6 +5,7 @@
 // injectable. Reuses today.ts's paise/overdue math rather than re-deriving it.
 
 import { daysOverdue, invoiceOutstandingPaise, invoicePaidPaise, type TodayInvoice } from "./today";
+import { monthKeyInZone } from "../../shared/timezone";
 
 export interface MoneyInvoice extends TodayInvoice {
   items?: { description: string }[];
@@ -154,21 +155,23 @@ export interface MonthlyRevenue {
   totalPaise: number;
 }
 
-function monthKey(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-/** Collected revenue per calendar month, oldest first, for a trailing window. */
-export function revenueTrend(payments: MoneyPayment[], now: Date, months = 6): MonthlyRevenue[] {
+/**
+ * Collected revenue per calendar month in `zone` (the org's timezone), oldest
+ * first, for a trailing window. Month boundaries are the org's, not the
+ * viewer's browser's or the test runner's: a payment at 00:00 UTC on 1 July
+ * is still 30 June in New York, and 05:30 on 1 July in Kolkata.
+ */
+export function revenueTrend(payments: MoneyPayment[], now: Date, zone: string, months = 6): MonthlyRevenue[] {
+  const [year, month] = monthKeyInZone(now, zone).split("-").map(Number);
   const buckets: MonthlyRevenue[] = [];
   for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    buckets.push({ month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, totalPaise: 0 });
+    // UTC-only civil month arithmetic: reads no ambient zone.
+    const d = new Date(Date.UTC(year, month - 1 - i, 1));
+    buckets.push({ month: `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`, totalPaise: 0 });
   }
   const byMonth = new Map(buckets.map((b) => [b.month, b]));
   for (const p of payments) {
-    const bucket = byMonth.get(monthKey(p.at));
+    const bucket = byMonth.get(monthKeyInZone(new Date(p.at), zone));
     if (bucket) bucket.totalPaise += p.amountPaise;
   }
   return buckets;

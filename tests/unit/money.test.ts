@@ -107,11 +107,47 @@ describe("revenueTrend", () => {
       { amountPaise: 2000, at: "2026-07-01T00:00:00Z" },
       { amountPaise: 500, at: "2026-07-09T00:00:00Z" },
     ];
-    const trend = revenueTrend(payments, NOW, 3);
+    const trend = revenueTrend(payments, NOW, "UTC", 3);
     expect(trend.map((t) => t.month)).toEqual(["2026-05", "2026-06", "2026-07"]);
     expect(trend[0].totalPaise).toBe(1000);
     expect(trend[1].totalPaise).toBe(0);
     expect(trend[2].totalPaise).toBe(2500);
+  });
+
+  // The payment instants near a month boundary land in whichever month the
+  // org's own clock shows, never the process's (C-01). These assertions hold
+  // identically under any TZ the test runner happens to have.
+  const boundaryPayments = [
+    { amountPaise: 2000, at: "2026-07-01T00:00:00Z" }, // 05:30 1 Jul IST; 20:00 30 Jun EDT
+    { amountPaise: 300, at: "2026-06-30T20:00:00Z" }, // 01:30 1 Jul IST; 16:00 30 Jun EDT
+  ];
+
+  it("uses the org's zone for month boundaries: Asia/Kolkata", () => {
+    const trend = revenueTrend(boundaryPayments, NOW, "Asia/Kolkata", 2);
+    expect(trend).toEqual([
+      { month: "2026-06", totalPaise: 0 },
+      { month: "2026-07", totalPaise: 2300 },
+    ]);
+  });
+
+  it("uses the org's zone for month boundaries: America/New_York", () => {
+    const trend = revenueTrend(boundaryPayments, NOW, "America/New_York", 2);
+    expect(trend).toEqual([
+      { month: "2026-06", totalPaise: 2300 },
+      { month: "2026-07", totalPaise: 0 },
+    ]);
+  });
+
+  it("anchors the trailing window on the org's current month, not the process's", () => {
+    // 20:00 UTC on 31 Jul is already 1 Aug in Kolkata, still 31 Jul in New York.
+    const lateJuly = new Date("2026-07-31T20:00:00Z");
+    expect(revenueTrend([], lateJuly, "Asia/Kolkata", 2).map((t) => t.month)).toEqual(["2026-07", "2026-08"]);
+    expect(revenueTrend([], lateJuly, "America/New_York", 2).map((t) => t.month)).toEqual(["2026-06", "2026-07"]);
+  });
+
+  it("walks back across a year boundary", () => {
+    const jan = new Date("2027-01-15T12:00:00Z");
+    expect(revenueTrend([], jan, "UTC", 3).map((t) => t.month)).toEqual(["2026-11", "2026-12", "2027-01"]);
   });
 });
 

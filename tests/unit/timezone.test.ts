@@ -7,6 +7,7 @@ import {
   dayOfWeekInZone,
   civilDateSentinelInZone,
   civilDateKey,
+  monthKeyInZone,
 } from "../../shared/timezone.ts";
 
 // C-01 (MASTER_PLAN.md §6.3, EXECUTION_PLAN.md Step 25). The whole point of
@@ -71,6 +72,16 @@ describe("localDateKeyInZone", () => {
   it("agrees with zonedTimeToUtc's own construction (round-trip)", () => {
     const instant = zonedTimeToUtc(2026, 12, 25, 18, 30, "Asia/Kolkata");
     expect(localDateKeyInZone(instant, "Asia/Kolkata")).toBe("2026-12-25");
+  });
+});
+
+describe("monthKeyInZone", () => {
+  it("reads the month a clock in the zone would show, on both sides of UTC", () => {
+    // 00:00 UTC on 1 Jul is 05:30 1 Jul IST but 20:00 30 Jun EDT.
+    const instant = new Date("2026-07-01T00:00:00.000Z");
+    expect(monthKeyInZone(instant, "Asia/Kolkata")).toBe("2026-07");
+    expect(monthKeyInZone(instant, "UTC")).toBe("2026-07");
+    expect(monthKeyInZone(instant, "America/New_York")).toBe("2026-06");
   });
 });
 
