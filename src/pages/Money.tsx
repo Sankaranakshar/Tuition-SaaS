@@ -14,7 +14,7 @@ import {
 } from "../lib/api";
 import { useStudentsList, type StudentRow } from "../hooks/usePeople";
 import {
-  useMoneyInvoices, useMoneyWallets, useMoneyPayments, useAvgSessionFeePaise, useSelfMoney,
+  useMoneyInvoices, useMoneyWallets, useMoneyPayments, useAvgSessionFeePaise, useSelfMoney, useOrgTimezone,
   type MoneyInvoiceRow,
 } from "../hooks/useMoney";
 import {
@@ -546,8 +546,8 @@ function TopUpForm({ studentId, onDone }: { studentId: string; onDone: () => voi
 
 function InsightsSegment({ invoices, payments }: any) {
   const { t } = useTranslation();
-  const now = new Date();
-  const trend = useMemo(() => revenueTrend(payments, now, 6), [payments]);
+  const zone = useOrgTimezone();
+  const trend = useMemo(() => revenueTrend(payments, new Date(), zone, 6), [payments, zone]);
   const rate = useMemo(() => collectionRate(invoices), [invoices]);
   const byItem = useMemo(() => revenueByLineItem(invoices).slice(0, 8), [invoices]);
   const maxTrend = Math.max(1, ...trend.map((m) => m.totalPaise));
