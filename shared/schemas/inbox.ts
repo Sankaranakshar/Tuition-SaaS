@@ -14,3 +14,20 @@ export const ensureClassChannelResponseSchema = z.object({
   participantCount: z.number().int().nonnegative(),
 });
 export type EnsureClassChannelResponse = z.infer<typeof ensureClassChannelResponseSchema>;
+
+// D-06 follow-up (EXECUTION_PLAN.md Step 30): the tutors a parent may start
+// a DM with, i.e. staff who actually teach one of their children. Resolved
+// server-side because a parent can't read staff names under profiles /
+// tutor_profiles RLS, and loosening that would expose every staff name in
+// the org rather than just their own child's tutors.
+export const tutorContactSchema = z.object({
+  userId: z.string().min(1),
+  name: z.string(),
+  studentId: z.string().min(1),
+  studentName: z.string(),
+});
+export const tutorContactsResponseSchema = z.object({
+  ok: z.literal(true),
+  tutors: z.array(tutorContactSchema),
+});
+export type TutorContactsResponse = z.infer<typeof tutorContactsResponseSchema>;

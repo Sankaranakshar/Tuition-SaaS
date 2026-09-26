@@ -3,7 +3,7 @@ import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { useRealtimeList } from "./useRealtimeList";
 import type { RealtimeMergeConfig } from "./realtimeMerge";
-import { ensureClassChannel as ensureClassChannelApi } from "../lib/api";
+import { ensureClassChannel as ensureClassChannelApi, getTutorContacts } from "../lib/api";
 import type { InboxConversation, InboxMessage, InboxNotification, InboxTriageState, AnchorContext, AnchorType } from "../lib/inbox";
 
 // Per-entity Inbox data hooks (DEV_PLAN §2a Stage 2 item 4, REDESIGN §6.5),
@@ -293,7 +293,7 @@ export const ensureClassChannel = ensureClassChannelApi;
 export interface InboxContact {
   userId: string;
   name: string;
-  role: "student" | "parent";
+  role: "student" | "parent" | "tutor";
   subtitle?: string;
   studentId?: string;
 }
@@ -364,8 +364,33 @@ export function useMessageableContacts() {
         studentId: row.student_id,
       }));
 
+      // A parent can't read staff names under RLS, so their child's tutors
+      // come from the server (Step 30 follow-up). One row per tutor, listing
+      // every child of theirs that tutor teaches.
+      let tutorContacts: InboxContact[] = [];
+      if (user.organizationRole === "parent") {
+        try {
+          const { tutors } = await getTutorContacts();
+          const byTutor = new Map<string, { name: string; students: string[] }>();
+          for (const tutor of tutors) {
+            const entry = byTutor.get(tutor.userId) ?? { name: tutor.name, students: [] };
+            if (!entry.students.includes(tutor.studentName)) entry.students.push(tutor.studentName);
+            byTutor.set(tutor.userId, entry);
+          }
+          tutorContacts = Array.from(byTutor, ([userId, entry]) => ({
+            userId,
+            name: entry.name,
+            role: "tutor" as const,
+            subtitle: `Tutor · ${entry.students.join(", ")}`,
+          }));
+        } catch {
+          // Leave the rest of the picker usable if this lookup fails.
+        }
+      }
+      if (cancelled) return;
+
       if (!cancelled) {
-        setContacts([...studentContacts, ...parentContacts]);
+        setContacts([...tutorContacts, ...studentContacts, ...parentContacts]);
         setLoading(false);
       }
     })();

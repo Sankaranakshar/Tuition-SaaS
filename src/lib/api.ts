@@ -18,7 +18,7 @@ import type {
   RemindInvoiceResponse,
   ReminderStatusResponse,
 } from "../../shared/schemas/billing";
-import type { EnsureClassChannelResponse } from "../../shared/schemas/inbox";
+import type { EnsureClassChannelResponse, TutorContactsResponse } from "../../shared/schemas/inbox";
 import type {
   RescheduleSessionResponse,
   UpdateTemplateScopeRequest,
@@ -435,6 +435,11 @@ export function topUpWalletAsParent(studentId: string, amountPaise: number) {
 /** Ensures a class channel conversation exists for this batch and refreshes it to the current enrolled roster (server-side — needs the student/parent-link lookup RLS doesn't grant clients). */
 export function ensureClassChannel(templateId: string) {
   return api<EnsureClassChannelResponse>(`/inbox/class-channels/${templateId}/ensure`, { method: "POST" });
+}
+
+/** The tutors a parent can start a DM with: staff who teach one of their children (D-06 follow-up, Step 30). */
+export function getTutorContacts() {
+  return api<TutorContactsResponse>(`/inbox/tutor-contacts`);
 }
 
 // D-05 (EXECUTION_PLAN.md Step 19): a parent's per-student payment
