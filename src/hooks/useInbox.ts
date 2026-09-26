@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { useRealtimeList } from "./useRealtimeList";
 import type { RealtimeMergeConfig } from "./realtimeMerge";
-import { ensureClassChannel as ensureClassChannelApi } from "../lib/api";
+import { ensureClassChannel as ensureClassChannelApi, getTutorContacts } from "../lib/api";
 import type { InboxConversation, InboxMessage, InboxNotification, InboxTriageState, AnchorContext, AnchorType } from "../lib/inbox";
 
 // Per-entity Inbox data hooks (DEV_PLAN §2a Stage 2 item 4, REDESIGN §6.5),
@@ -20,6 +20,7 @@ export function mapConversationRow(row: any): InboxConversation {
     kind: row.kind,
     anchorType: row.anchor_type,
     anchorId: row.anchor_id,
+    studentId: row.student_id ?? null,
     createdAt: row.created_at,
   };
 }
@@ -27,28 +28,46 @@ export function mapConversationRow(row: any): InboxConversation {
 export function useConversationsList() {
   const { user } = useAuth();
   const orgId = user?.organizationId;
+  // D-06 (EXECUTION_PLAN.md Step 30): a parent also sees every DM anchored
+  // to one of their children, without being a participant of it.
+  // conversations_select already grants exactly that; these are the ids the
+  // query and the Realtime filter below need to ask for it explicitly.
+  const guardianStudentIdsRef = useRef<Set<string>>(new Set());
   const load = useCallback(async (): Promise<InboxConversation[]> => {
     if (!orgId || !user) return [];
-    const { data, error } = await supabase
-      .from("conversations")
-      .select("id, organization_id, participant_ids, kind, anchor_type, anchor_id, created_at")
+    const { data: links, error: linksErr } = await supabase
+      .from("parent_links")
+      .select("student_id")
       .eq("organization_id", orgId)
-      .contains("participant_ids", [user.id])
-      .order("created_at", { ascending: false })
-      .limit(300);
+      .eq("parent_user_id", user.id)
+      .limit(50);
+    if (linksErr) throw linksErr;
+    const childIds = (links || []).map((l: any) => l.student_id as string);
+    guardianStudentIdsRef.current = new Set(childIds);
+
+    let query = supabase
+      .from("conversations")
+      .select("id, organization_id, participant_ids, kind, anchor_type, anchor_id, student_id, created_at")
+      .eq("organization_id", orgId);
+    query = childIds.length
+      ? query.or(`participant_ids.cs.{${user.id}},student_id.in.(${childIds.join(",")})`)
+      : query.contains("participant_ids", [user.id]);
+    const { data, error } = await query.order("created_at", { ascending: false }).limit(300);
     if (error) throw error;
     return (data || []).map(mapConversationRow);
   }, [orgId, user]);
   // Broad org-scoped subscription (postgres_changes filters can't express
-  // array-contains), so belongsToView re-applies the same participant check
-  // load() does — otherwise every conversation in the org, not just this
-  // user's, would get merged into `data`.
+  // array-contains), so belongsToView re-applies the same participant-or-
+  // guardian check load() does — otherwise every conversation in the org,
+  // not just this user's, would get merged into `data`.
   const userId = user?.id;
   const merge: RealtimeMergeConfig<InboxConversation> = useMemo(
     () => ({
       mapRow: mapConversationRow,
       getId: (row) => row.id,
-      belongsToView: (raw: any) => !!userId && (raw.participant_ids ?? []).includes(userId),
+      belongsToView: (raw: any) =>
+        !!userId &&
+        ((raw.participant_ids ?? []).includes(userId) || (!!raw.student_id && guardianStudentIdsRef.current.has(raw.student_id))),
       compare: (a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") * -1,
     }),
     [userId]
@@ -274,7 +293,7 @@ export const ensureClassChannel = ensureClassChannelApi;
 export interface InboxContact {
   userId: string;
   name: string;
-  role: "student" | "parent";
+  role: "student" | "parent" | "tutor";
   subtitle?: string;
   studentId?: string;
 }
@@ -345,8 +364,33 @@ export function useMessageableContacts() {
         studentId: row.student_id,
       }));
 
+      // A parent can't read staff names under RLS, so their child's tutors
+      // come from the server (Step 30 follow-up). One row per tutor, listing
+      // every child of theirs that tutor teaches.
+      let tutorContacts: InboxContact[] = [];
+      if (user.organizationRole === "parent") {
+        try {
+          const { tutors } = await getTutorContacts();
+          const byTutor = new Map<string, { name: string; students: string[] }>();
+          for (const tutor of tutors) {
+            const entry = byTutor.get(tutor.userId) ?? { name: tutor.name, students: [] };
+            if (!entry.students.includes(tutor.studentName)) entry.students.push(tutor.studentName);
+            byTutor.set(tutor.userId, entry);
+          }
+          tutorContacts = Array.from(byTutor, ([userId, entry]) => ({
+            userId,
+            name: entry.name,
+            role: "tutor" as const,
+            subtitle: `Tutor · ${entry.students.join(", ")}`,
+          }));
+        } catch {
+          // Leave the rest of the picker usable if this lookup fails.
+        }
+      }
+      if (cancelled) return;
+
       if (!cancelled) {
-        setContacts([...studentContacts, ...parentContacts]);
+        setContacts([...tutorContacts, ...studentContacts, ...parentContacts]);
         setLoading(false);
       }
     })();
@@ -356,6 +400,36 @@ export function useMessageableContacts() {
   }, [user]);
 
   return { contacts, loading };
+}
+
+// ---- D-06 thread student ----------------------------------------------------
+
+/**
+ * The student a DM is anchored to (conversations.student_id), for the
+ * guardian-visibility disclosure. Staff, the student themselves and their
+ * parent can all read this row under students_select.
+ */
+export function useThreadStudent(studentId: string | null | undefined) {
+  const [student, setStudent] = useState<{ id: string; name: string; studentUserId: string | null } | null>(null);
+  useEffect(() => {
+    if (!studentId) {
+      setStudent(null);
+      return;
+    }
+    let cancelled = false;
+    supabase
+      .from("students")
+      .select("id, name, student_user_id")
+      .eq("id", studentId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setStudent(data ? { id: data.id, name: data.name, studentUserId: data.student_user_id } : null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [studentId]);
+  return student;
 }
 
 // ---- Anchor context resolution ----------------------------------------------

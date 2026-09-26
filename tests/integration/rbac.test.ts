@@ -1134,3 +1134,247 @@ describe("tutor_leave_requests: is_staff() visibility, no client write path", ()
     })
   );
 });
+
+// ===================================================================
+// D-06 / EXECUTION_PLAN.md Step 30 (C-05): a tutor-student DM is readable
+// by that student's parent, never by anyone else's, and read-only for them.
+// 20260926120000_guardian_thread_visibility.sql.
+// ===================================================================
+describe("D-06: guardian-visible tutor-student threads", () => {
+  const otherStudentUid = "10000000-0000-0000-0000-0000000000b1";
+  const otherParentUid = "10000000-0000-0000-0000-0000000000b2";
+  const otherStudentId = "20000000-0000-0000-0000-0000000000b1";
+
+  /** A second, unrelated family in the same org: Arjun and his parent. Seeded as service_role. */
+  async function seedOtherFamily(tx: PGlite, as: As) {
+    await as(null, "service_role");
+    await tx.query(`insert into auth.users (id) values ($1), ($2)`, [otherStudentUid, otherParentUid]);
+    await tx.query(
+      `insert into organization_members (organization_id, user_id, role) values ($1, $2, 'student'), ($1, $3, 'parent')`,
+      [ORG, otherStudentUid, otherParentUid]
+    );
+    await tx.query(`insert into students (id, organization_id, student_user_id, name) values ($1, $2, $3, 'Arjun')`, [
+      otherStudentId,
+      ORG,
+      otherStudentUid,
+    ]);
+    await tx.query(`insert into parent_links (parent_user_id, student_id, organization_id) values ($1, $2, $3)`, [
+      otherParentUid,
+      otherStudentId,
+      ORG,
+    ]);
+  }
+
+  /** The real client path: a tutor inserts the DM under RLS, then sends one message. */
+  async function tutorDmsStudent(tx: PGlite, as: As, studentUid: string) {
+    await as(uids.tutor, "authenticated");
+    const conv = await tx.query<{ id: string; student_id: string | null }>(
+      `insert into conversations (organization_id, participant_ids, kind) values ($1, $2, 'dm') returning id, student_id`,
+      [ORG, [uids.tutor, studentUid]]
+    );
+    const conversationId = conv.rows[0].id;
+    const msg = await tx.query<{ id: string }>(
+      `insert into messages (organization_id, conversation_id, sender_id, receiver_id, body)
+       values ($1, $2, $3, $4, 'see you at 5') returning id`,
+      [ORG, conversationId, uids.tutor, studentUid]
+    );
+    return { conversationId, studentId: conv.rows[0].student_id, messageId: msg.rows[0].id };
+  }
+
+  it(
+    "the database anchors a tutor-student DM to the student's row without the caller supplying it",
+    withFixtures(async (tx, as) => {
+      const { studentId } = await tutorDmsStudent(tx, as, uids.student);
+      expect(studentId).toBe(ids.stu1);
+    })
+  );
+
+  it(
+    "a parent can read a tutor-student conversation and its messages for their own child",
+    withFixtures(async (tx, as) => {
+      const { conversationId, messageId } = await tutorDmsStudent(tx, as, uids.student);
+
+      await as(uids.parent, "authenticated");
+      expect((await tx.query(`select id from conversations where id = $1`, [conversationId])).rows.length).toBe(1);
+      expect((await tx.query(`select id from messages where id = $1`, [messageId])).rows.length).toBe(1);
+    })
+  );
+
+  it(
+    "visibility follows the parent link live: a parent linked after the thread started still sees all of it",
+    withFixtures(async (tx, as) => {
+      await seedOtherFamily(tx, as);
+      const lateParent = "10000000-0000-0000-0000-0000000000b3";
+      await tx.query(`insert into auth.users (id) values ($1)`, [lateParent]);
+      const { conversationId, messageId } = await tutorDmsStudent(tx, as, otherStudentUid);
+
+      await as(lateParent, "authenticated");
+      expect((await tx.query(`select id from messages where id = $1`, [messageId])).rows.length).toBe(0);
+
+      await as(null, "service_role");
+      await tx.query(`insert into parent_links (parent_user_id, student_id, organization_id) values ($1, $2, $3)`, [
+        lateParent,
+        otherStudentId,
+        ORG,
+      ]);
+      await as(lateParent, "authenticated");
+      expect((await tx.query(`select id from conversations where id = $1`, [conversationId])).rows.length).toBe(1);
+      expect((await tx.query(`select id from messages where id = $1`, [messageId])).rows.length).toBe(1);
+    })
+  );
+
+  it(
+    "a parent cannot read a tutor-student conversation for a child who is not theirs",
+    withFixtures(async (tx, as) => {
+      await seedOtherFamily(tx, as);
+      const { conversationId, messageId } = await tutorDmsStudent(tx, as, otherStudentUid);
+
+      await as(uids.parent, "authenticated"); // Riya's parent, not Arjun's
+      expect((await tx.query(`select id from conversations where id = $1`, [conversationId])).rows.length).toBe(0);
+      expect((await tx.query(`select id from messages where id = $1`, [messageId])).rows.length).toBe(0);
+
+      // And the reverse: Arjun's parent can't see Riya's thread.
+      const riya = await tutorDmsStudent(tx, as, uids.student);
+      await as(otherParentUid, "authenticated");
+      expect((await tx.query(`select id from conversations where id = $1`, [riya.conversationId])).rows.length).toBe(0);
+      expect((await tx.query(`select id from messages where id = $1`, [riya.messageId])).rows.length).toBe(0);
+    })
+  );
+
+  it(
+    "an unrelated org member (staff or outsider) still cannot read it",
+    withFixtures(async (tx, as) => {
+      const { conversationId, messageId } = await tutorDmsStudent(tx, as, uids.student);
+      for (const uid of [uids.tutor2, uids.frontdesk, uids.owner, uids.outsider]) {
+        await as(uid, "authenticated");
+        expect((await tx.query(`select id from conversations where id = $1`, [conversationId])).rows.length).toBe(0);
+        expect((await tx.query(`select id from messages where id = $1`, [messageId])).rows.length).toBe(0);
+      }
+    })
+  );
+
+  it(
+    "a guardian can read but not post into the thread (read-only, D-06 reply decision)",
+    withFixtures(async (tx, as) => {
+      const { conversationId } = await tutorDmsStudent(tx, as, uids.student);
+      await as(uids.parent, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `insert into messages (organization_id, conversation_id, sender_id, receiver_id, body) values ($1, $2, $3, $4, 'hi')`,
+        [ORG, conversationId, uids.parent, uids.tutor]
+      ));
+      await expectDenied(tx, () => tx.query(
+        `insert into messages (organization_id, conversation_id, sender_id, body) values ($1, $2, $3, 'hi')`,
+        [ORG, conversationId, uids.parent]
+      ));
+    })
+  );
+
+  it(
+    "the student participant can still reply in their own thread",
+    withFixtures(async (tx, as) => {
+      const { conversationId } = await tutorDmsStudent(tx, as, uids.student);
+      await as(uids.student, "authenticated");
+      const res = await tx.query(
+        `insert into messages (organization_id, conversation_id, sender_id, receiver_id, body) values ($1, $2, $3, $4, 'ok') returning id`,
+        [ORG, conversationId, uids.student, uids.tutor]
+      );
+      expect(res.rows.length).toBe(1);
+    })
+  );
+
+  it(
+    "nobody can post into a conversation they are not a participant of, or address a non-participant",
+    withFixtures(async (tx, as) => {
+      await as(uids.tutor2, "authenticated"); // conv1 is tutor <-> parent
+      await expectDenied(tx, () => tx.query(
+        `insert into messages (organization_id, conversation_id, sender_id, receiver_id, body) values ($1, $2, $3, $4, 'x')`,
+        [ORG, ids.conv1, uids.tutor2, uids.parent]
+      ));
+      // A message with no conversation at all, aimed at any user, used to be allowed.
+      await expectDenied(tx, () => tx.query(
+        `insert into messages (organization_id, sender_id, receiver_id, body) values ($1, $2, $3, 'x')`,
+        [ORG, uids.tutor2, uids.student]
+      ));
+
+      await as(uids.tutor, "authenticated"); // a participant, but naming an outside receiver
+      await expectDenied(tx, () => tx.query(
+        `insert into messages (organization_id, conversation_id, sender_id, receiver_id, body) values ($1, $2, $3, $4, 'x')`,
+        [ORG, ids.conv1, uids.tutor, uids.student]
+      ));
+      // A participant, but claiming the conversation lives in another org.
+      await expectDenied(tx, () => tx.query(
+        `insert into messages (organization_id, conversation_id, sender_id, receiver_id, body) values ($1, $2, $3, $4, 'x')`,
+        [OTHER_ORG, ids.conv1, uids.tutor, uids.parent]
+      ));
+    })
+  );
+
+  it(
+    "a caller cannot point the anchor at a different child, or anchor a class channel",
+    withFixtures(async (tx, as) => {
+      await seedOtherFamily(tx, as);
+      await as(uids.tutor, "authenticated");
+      // Would expose a Riya thread to Arjun's parent if accepted.
+      await expectDenied(tx, () => tx.query(
+        `insert into conversations (organization_id, participant_ids, kind, student_id) values ($1, $2, 'dm', $3)`,
+        [ORG, [uids.tutor, uids.student], otherStudentId]
+      ));
+      // A tutor <-> parent DM involves no student; it can't be given one.
+      await expectDenied(tx, () => tx.query(
+        `insert into conversations (organization_id, participant_ids, kind, student_id) values ($1, $2, 'dm', $3)`,
+        [ORG, [uids.tutor, uids.parent], ids.stu1]
+      ));
+      await expectDenied(tx, () => tx.query(
+        `insert into conversations (organization_id, participant_ids, kind, anchor_type, anchor_id, student_id)
+         values ($1, $2, 'class_channel', 'class', $3, $3)`,
+        [ORG, [uids.tutor, uids.student], ids.stu1]
+      ));
+    })
+  );
+
+  it(
+    "a DM between two students is rejected (no single guardian anchor exists for it)",
+    withFixtures(async (tx, as) => {
+      await seedOtherFamily(tx, as);
+      await as(uids.student, "authenticated");
+      await expectDenied(tx, () => tx.query(
+        `insert into conversations (organization_id, participant_ids, kind) values ($1, $2, 'dm')`,
+        [ORG, [uids.student, otherStudentUid]]
+      ));
+    })
+  );
+
+  it(
+    "a tutor <-> parent DM stays participant-only (no student anchor, other parents can't see it)",
+    withFixtures(async (tx, as) => {
+      await seedOtherFamily(tx, as);
+      await as(null, "service_role");
+      expect((await tx.query<{ student_id: string | null }>(`select student_id from conversations where id = $1`, [ids.conv1])).rows[0].student_id).toBeNull();
+      await as(otherParentUid, "authenticated");
+      expect((await tx.query(`select id from conversations where id = $1`, [ids.conv1])).rows.length).toBe(0);
+      expect((await tx.query(`select id from messages where id = $1`, [ids.msg1])).rows.length).toBe(0);
+    })
+  );
+
+  it(
+    "every participant of a class channel can read its broadcasts (receiver_id is null there)",
+    withFixtures(async (tx, as) => {
+      await as(uids.tutor, "authenticated");
+      const { rows } = await tx.query<{ id: string }>(
+        `insert into conversations (organization_id, participant_ids, kind, anchor_type, anchor_id)
+         values ($1, $2, 'class_channel', 'class', $3) returning id`,
+        [ORG, [uids.tutor, uids.student, uids.parent], ids.stu1]
+      );
+      const msg = await tx.query<{ id: string }>(
+        `insert into messages (organization_id, conversation_id, sender_id, body) values ($1, $2, $3, 'no class Friday') returning id`,
+        [ORG, rows[0].id, uids.tutor]
+      );
+      for (const uid of [uids.student, uids.parent]) {
+        await as(uid, "authenticated");
+        expect((await tx.query(`select id from messages where id = $1`, [msg.rows[0].id])).rows.length).toBe(1);
+      }
+      await as(uids.tutor2, "authenticated");
+      expect((await tx.query(`select id from messages where id = $1`, [msg.rows[0].id])).rows.length).toBe(0);
+    })
+  );
+});

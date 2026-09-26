@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Send, Archive, Clock, Radio, MessageSquare, Inbox as InboxIcon, Plus, X, ArrowLeft } from "lucide-react";
+import { Send, Archive, Clock, Radio, MessageSquare, Inbox as InboxIcon, Plus, X, ArrowLeft, Eye } from "lucide-react";
 import { supabase } from "../supabase";
 import { useAuth } from "../context/AuthContext";
 import { EmptyState, SkeletonRow, ContextCard, Popover, Modal, Button, Input, Field } from "../components/kit";
@@ -13,6 +13,7 @@ import {
   sortInboxItems,
   describeAnchor,
   mapNotificationToAction,
+  guardianThreadRole,
   type InboxItem,
   type InboxMessage,
   type InboxConversation,
@@ -24,6 +25,7 @@ import {
   useInboxStateMap,
   useAnchorContext,
   useMessageableContacts,
+  useThreadStudent,
   sendMessage,
   archiveConversation,
   unarchiveConversation,
@@ -239,6 +241,7 @@ export default function Inbox() {
                   <ThreadRow
                     key={item.conversation.id}
                     item={item}
+                    currentUserId={user.id}
                     active={item.conversation.id === selectedId}
                     onClick={() => setSelectedId(item.conversation.id)}
                   />
@@ -285,16 +288,19 @@ export default function Inbox() {
 
 function ThreadRow({
   item,
+  currentUserId,
   active,
   onClick,
 }: {
   item: Extract<InboxItem, { kind: "thread" }>;
+  currentUserId: string;
   active: boolean;
   onClick: () => void;
 }) {
   const { t } = useTranslation();
   const { conversation, lastMessage, unread, waitingForReply } = item;
   const otherName = conversation.kind === "class_channel" ? t("inbox.classChannel") : t("inbox.directMessage");
+  const guardianRole = guardianThreadRole(conversation, currentUserId);
   return (
     <button
       onClick={onClick}
@@ -306,6 +312,17 @@ function ThreadRow({
         <span className={`flex items-center gap-1.5 truncate text-sm ${unread ? "font-semibold text-[var(--cs-text)]" : "text-[var(--cs-text)]"}`}>
           {conversation.kind === "class_channel" && <Radio className="h-3.5 w-3.5 shrink-0 text-[var(--cs-text-muted)]" />}
           {otherName}
+          {guardianRole !== "none" && (
+            <Eye
+              className="h-3.5 w-3.5 shrink-0 text-[var(--cs-text-muted)]"
+              aria-label={guardianRole === "guardian" ? t("inbox.guardian.rowGuardian") : t("inbox.guardian.rowVisible")}
+            />
+          )}
+          {guardianRole === "guardian" && (
+            <span className="shrink-0 rounded-full bg-[var(--cs-surface-2)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--cs-text-muted)]">
+              {t("inbox.guardian.rowGuardian")}
+            </span>
+          )}
         </span>
         {lastMessage && <span className="shrink-0 text-[11px] text-[var(--cs-text-muted)]">{formatDate(lastMessage.createdAt)}</span>}
       </div>
@@ -365,6 +382,12 @@ function ThreadView({
   const { t } = useTranslation();
   const { data: messages } = useMessagesForConversation(thread.id);
   const { context } = useAnchorContext(thread.anchorType, thread.anchorId);
+  // D-06 (EXECUTION_PLAN.md Step 30): a thread with a student in it is
+  // readable by that student's parent. Say so to everyone in it, and make
+  // the parent's own view read-only (the database refuses their posts too).
+  const threadStudent = useThreadStudent(thread.studentId);
+  const guardianRole = guardianThreadRole(thread, currentUserId, threadStudent?.studentUserId);
+  const studentName = threadStudent?.name ?? t("inbox.guardian.thisStudent");
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -418,6 +441,21 @@ function ThreadView({
             <ArchiveButton conversationId={thread.id} currentUserId={currentUserId} />
           </div>
         </div>
+        {guardianRole !== "none" && (
+          <div
+            role="note"
+            className="mt-2 flex items-start gap-2 rounded-[var(--cs-radius-control)] bg-[var(--cs-surface-2)] px-2.5 py-2 text-xs text-[var(--cs-text-muted)]"
+          >
+            <Eye className="mt-px h-3.5 w-3.5 shrink-0" />
+            <span>
+              {guardianRole === "guardian"
+                ? t("inbox.guardian.disclosureGuardian", { name: studentName })
+                : guardianRole === "student"
+                  ? t("inbox.guardian.disclosureStudent")
+                  : t("inbox.guardian.disclosureStaff", { name: studentName })}
+            </span>
+          </div>
+        )}
         {anchorDescription && (
           <div className="mt-2">
             <AnchorAction anchorType={thread.anchorType} description={anchorDescription} context={context} />
@@ -433,6 +471,11 @@ function ThreadView({
                 m.senderId === currentUserId ? "bg-[var(--cs-accent)] text-[var(--cs-accent-contrast)]" : "bg-[var(--cs-surface)] text-[var(--cs-text)]"
               }`}
             >
+              {guardianRole === "guardian" && (
+                <div className="mb-0.5 text-[10px] font-medium text-[var(--cs-text-muted)]">
+                  {threadStudent?.studentUserId && m.senderId === threadStudent.studentUserId ? studentName : t("inbox.guardian.tutorLabel")}
+                </div>
+              )}
               <div>{m.body}</div>
               <div className={`mt-0.5 text-[10px] ${m.senderId === currentUserId ? "text-[var(--cs-accent-contrast)]/70" : "text-[var(--cs-text-muted)]"}`}>
                 {formatTime(m.createdAt)}
@@ -443,22 +486,28 @@ function ThreadView({
         <div ref={bottomRef} />
       </div>
 
-      <form onSubmit={submit} className="flex items-center gap-2 border-t border-[var(--cs-border)] p-3">
-        <Input
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder={t("inbox.messagePlaceholder")}
-          className="flex-1"
-        />
-        <Button
-          type="submit"
-          disabled={sending || !body.trim()}
-          className="h-9 w-9 shrink-0 px-0"
-          aria-label={t("inbox.send")}
-        >
-          <Send className="h-4 w-4" />
-        </Button>
-      </form>
+      {guardianRole === "guardian" ? (
+        <div className="border-t border-[var(--cs-border)] p-3 text-center text-xs text-[var(--cs-text-muted)]">
+          {t("inbox.guardian.readOnly")}
+        </div>
+      ) : (
+        <form onSubmit={submit} className="flex items-center gap-2 border-t border-[var(--cs-border)] p-3">
+          <Input
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder={t("inbox.messagePlaceholder")}
+            className="flex-1"
+          />
+          <Button
+            type="submit"
+            disabled={sending || !body.trim()}
+            className="h-9 w-9 shrink-0 px-0"
+            aria-label={t("inbox.send")}
+          >
+            <Send className="h-4 w-4" />
+          </Button>
+        </form>
+      )}
     </div>
   );
 }
@@ -675,7 +724,8 @@ function NewMessageDialog({
           ) : contacts.length === 0 ? (
             <div className="px-2 py-4 text-sm text-[var(--cs-text-muted)]">{t("inbox.noContacts")}</div>
           ) : (
-            contacts.map((c) => (
+            // Never offer yourself (a student's own row used to appear here).
+            contacts.filter((c) => c.userId !== currentUserId).map((c) => (
               <button
                 key={c.userId}
                 disabled={creating}
@@ -684,6 +734,11 @@ function NewMessageDialog({
               >
                 <span className="text-sm text-[var(--cs-text)]">{c.name}</span>
                 {c.subtitle && <span className="text-xs text-[var(--cs-text-muted)]">{c.subtitle}</span>}
+                {c.role === "student" && (
+                  <span className="flex items-center gap-1 text-xs text-[var(--cs-text-muted)]">
+                    <Eye className="h-3 w-3" /> {t("inbox.guardian.pickerHint")}
+                  </span>
+                )}
               </button>
             ))
           )}

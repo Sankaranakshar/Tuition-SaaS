@@ -6,6 +6,7 @@ import {
   isSnoozed,
   describeAnchor,
   mapNotificationToAction,
+  guardianThreadRole,
   type InboxConversation,
   type InboxMessage,
   type InboxNotification,
@@ -211,5 +212,29 @@ describe("mapNotificationToAction", () => {
   it("falls back to a view action for unknown types", () => {
     const n: InboxNotification = { id: "n1", type: "something_new", payload: {}, read: false, createdAt: "2026-07-11T00:00:00Z" };
     expect(mapNotificationToAction(n).kind).toBe("view_student");
+  });
+});
+
+describe("guardianThreadRole (D-06)", () => {
+  const STUDENT = "user-student";
+  const dm = conversation({ kind: "dm", participantIds: [ME, STUDENT], studentId: "stu-1" });
+
+  it("is none for a thread with no student anchor", () => {
+    expect(guardianThreadRole(conversation({ participantIds: [ME, PARENT], studentId: null }), ME, null)).toBe("none");
+    expect(guardianThreadRole(conversation({ participantIds: [ME, PARENT] }), PARENT)).toBe("none");
+  });
+
+  it("is guardian for a viewer who can see the thread but isn't in it", () => {
+    expect(guardianThreadRole(dm, PARENT, STUDENT)).toBe("guardian");
+    expect(guardianThreadRole(dm, PARENT)).toBe("guardian");
+  });
+
+  it("is student for the anchored student themselves", () => {
+    expect(guardianThreadRole(dm, STUDENT, STUDENT)).toBe("student");
+  });
+
+  it("is staff for the other participant, and falls back to staff while the student's uid is still loading", () => {
+    expect(guardianThreadRole(dm, ME, STUDENT)).toBe("staff");
+    expect(guardianThreadRole(dm, ME, undefined)).toBe("staff");
   });
 });

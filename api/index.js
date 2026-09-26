@@ -4672,6 +4672,16 @@ var ensureClassChannelResponseSchema = z8.object({
   conversationId: z8.string().uuid(),
   participantCount: z8.number().int().nonnegative()
 });
+var tutorContactSchema = z8.object({
+  userId: z8.string().min(1),
+  name: z8.string(),
+  studentId: z8.string().min(1),
+  studentName: z8.string()
+});
+var tutorContactsResponseSchema = z8.object({
+  ok: z8.literal(true),
+  tutors: z8.array(tutorContactSchema)
+});
 
 // server/routes/inbox.ts
 var router11 = express11.Router();
@@ -4724,6 +4734,55 @@ router11.post("/class-channels/:templateId/ensure", async (req, res, next) => {
       return { conversationId: upsertRes.rows[0].id, participantCount: participantIds.length };
     });
     res.json(ensureClassChannelResponseSchema.parse({ ok: true, ...result }));
+  } catch (err) {
+    next(err);
+  }
+});
+router11.get("/tutor-contacts", async (req, res, next) => {
+  try {
+    const orgId = req.user.organizationId;
+    const { rows } = await pool.query(
+      `with kids as (
+         select s.id, s.name, s.tutor_id
+           from parent_links pl
+           join students s on s.id = pl.student_id
+          where pl.parent_user_id = $1 and pl.organization_id = $2
+            and s.organization_id = $2 and not s.is_deleted
+       ),
+       teaching as (
+         select k.id as student_id, k.name as student_name, k.tutor_id
+           from kids k where k.tutor_id is not null
+         union
+         select k.id, k.name, ct.tutor_id
+           from kids k
+           join enrollments e on e.student_id = k.id and e.status = 'active'
+           join class_templates ct on ct.id = e.template_id and ct.organization_id = $2
+          where ct.tutor_id is not null
+         union
+         select k.id, k.name, cs.tutor_id
+           from kids k
+           join class_sessions cs on cs.organization_id = $2 and k.id = any(cs.student_ids)
+          where cs.tutor_id is not null and cs.status <> 'cancelled'
+            and cs.start_time > now() - interval '30 days'
+       )
+       select t.tutor_id as user_id, t.student_id, t.student_name,
+              coalesce(nullif(tp.full_name, ''), nullif(p.name, ''), 'Tutor') as name
+         from teaching t
+         join organization_members om
+           on om.organization_id = $2 and om.user_id = t.tutor_id and om.role in ('owner', 'admin', 'tutor')
+         left join tutor_profiles tp on tp.user_id = t.tutor_id and tp.organization_id = $2
+         left join profiles p on p.id = t.tutor_id
+        where t.tutor_id <> $1
+        order by name, t.student_name
+        limit 50`,
+      [req.user.id, orgId]
+    );
+    res.json(
+      tutorContactsResponseSchema.parse({
+        ok: true,
+        tutors: rows.map((r) => ({ userId: r.user_id, name: r.name, studentId: r.student_id, studentName: r.student_name }))
+      })
+    );
   } catch (err) {
     next(err);
   }

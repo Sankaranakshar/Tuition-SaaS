@@ -27,6 +27,8 @@ export interface InboxConversation {
   kind: ConversationKind;
   anchorType?: AnchorType | null;
   anchorId?: string | null;
+  /** D-06: the student row a DM involves, set by the database (never the client). Null for channels and adult-only DMs. */
+  studentId?: string | null;
   createdAt: string;
 }
 
@@ -145,6 +147,29 @@ export function sortInboxItems(input: SortInboxItemsInput, now: Date): InboxItem
     if (unreadDiff !== 0) return unreadDiff;
     return new Date(itemCreatedAt(b)).getTime() - new Date(itemCreatedAt(a)).getTime();
   });
+}
+
+// ---- D-06 guardian visibility (EXECUTION_PLAN.md Step 30) -----------------
+
+/**
+ * How the current viewer relates to a thread's guardian-visibility rule:
+ *   none      no student in the thread (a channel, or an adult-only DM)
+ *   student   the viewer is the student; their parent can read it
+ *   staff     the viewer is the other participant; the student's parent can read it
+ *   guardian  the viewer isn't a participant and sees it only as the student's
+ *             parent: read-only, they can never post into it
+ * `studentUserId` is the anchored student's auth uid, when the caller has it.
+ */
+export type GuardianThreadRole = "none" | "student" | "staff" | "guardian";
+
+export function guardianThreadRole(
+  conversation: Pick<InboxConversation, "participantIds" | "studentId">,
+  currentUserId: string,
+  studentUserId?: string | null
+): GuardianThreadRole {
+  if (!conversation.studentId) return "none";
+  if (!conversation.participantIds.includes(currentUserId)) return "guardian";
+  return studentUserId && studentUserId === currentUserId ? "student" : "staff";
 }
 
 // ---- Anchor / context-card description (REDESIGN §6.5's anchor cards) -----
