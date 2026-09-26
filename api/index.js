@@ -5997,10 +5997,12 @@ function isValidLeaveRange(startDate, endDate) {
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
   return end.getTime() >= start.getTime();
 }
-function leaveDateRangeToTimestampBounds(startDate, endDate) {
-  const start = /* @__PURE__ */ new Date(`${startDate}T00:00:00.000Z`);
-  const end = /* @__PURE__ */ new Date(`${endDate}T00:00:00.000Z`);
-  end.setUTCDate(end.getUTCDate() + 1);
+function leaveDateRangeToTimestampBounds(startDate, endDate, zone) {
+  const [sy, sm, sd] = startDate.split("-").map(Number);
+  const dayAfterEnd = /* @__PURE__ */ new Date(`${endDate}T00:00:00.000Z`);
+  dayAfterEnd.setUTCDate(dayAfterEnd.getUTCDate() + 1);
+  const start = zonedTimeToUtc(sy, sm, sd, 0, 0, zone);
+  const end = zonedTimeToUtc(dayAfterEnd.getUTCFullYear(), dayAfterEnd.getUTCMonth() + 1, dayAfterEnd.getUTCDate(), 0, 0, zone);
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
@@ -6039,8 +6041,12 @@ async function loadLeave(orgId, leaveId) {
     // Cast the two date columns to text -- node-postgres's default type
     // parser turns a `date` column into a local-midnight JS Date object, not
     // the "YYYY-MM-DD" string every caller here (leaveDateRangeToTimestampBounds,
-    // the reassign/affected-sessions routes) expects.
-    `select id, organization_id, tutor_id, start_date::text, end_date::text, status from tutor_leave_requests where id = $1`,
+    // the reassign/affected-sessions routes) expects. Joins organizations for
+    // the org's timezone: leave dates are that zone's calendar days (C-01).
+    `select l.id, l.organization_id, l.tutor_id, l.start_date::text, l.end_date::text, l.status,
+            o.timezone as organization_timezone
+       from tutor_leave_requests l join organizations o on o.id = l.organization_id
+      where l.id = $1`,
     [leaveId]
   );
   if (res.rowCount === 0 || res.rows[0].organization_id !== orgId) {
@@ -6141,7 +6147,7 @@ router18.get("/:id/affected-sessions", requireRole(...CAN_SCHEDULE2), async (req
   try {
     const orgId = req.user.organizationId;
     const leave = await loadLeave(orgId, req.params.id);
-    const bounds = leaveDateRangeToTimestampBounds(leave.start_date, leave.end_date);
+    const bounds = leaveDateRangeToTimestampBounds(leave.start_date, leave.end_date, leave.organization_timezone);
     const result = await pool.query(
       `select id, start_time, end_time, student_ids from class_sessions
        where tutor_id = $1 and status = 'scheduled'
@@ -6175,7 +6181,7 @@ router18.post("/:id/reassign", requireRole(...CAN_SCHEDULE2), async (req, res, n
     await assertOrgMember(orgId, body.substituteTutorId, "Substitute is not a member of this organization");
     let sessionIds = body.sessionIds;
     if (!sessionIds) {
-      const bounds = leaveDateRangeToTimestampBounds(leave.start_date, leave.end_date);
+      const bounds = leaveDateRangeToTimestampBounds(leave.start_date, leave.end_date, leave.organization_timezone);
       const affected = await pool.query(
         `select id from class_sessions where tutor_id = $1 and status = 'scheduled'
            and start_time < $3::timestamptz and end_time > $2::timestamptz`,
