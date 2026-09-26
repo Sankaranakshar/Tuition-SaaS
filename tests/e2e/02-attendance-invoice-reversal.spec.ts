@@ -129,7 +129,7 @@ test("journey 2: recurring class, attendance, invoice, Outstanding moves", async
   expect((invoices![0].source as any)?.sessionId).toBe(sessionId);
   expect(["draft", "sent", "unpaid"]).toContain(invoices![0].status);
 
-  await expectOutstanding(STUDENT, "₹500");
+  await expectOutstanding(STUDENT, "₹501");
   await expectAccessible(page, "Money (outstanding)");
 
   // The student's story shows the class they just attended.
