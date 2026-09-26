@@ -25,7 +25,14 @@ function Section({ id, title, description, children }: { id: string; title: stri
         <h2 id={id} className="text-[15px] font-semibold text-[var(--cs-text)]">{title}</h2>
         <p className="text-sm text-[var(--cs-text-muted)]">{description}</p>
       </div>
-      <div className="overflow-x-auto rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)]">
+      {/* Focusable so a keyboard user can scroll a table wider than the
+          screen (axe's scrollable-region-focusable, found on staging data). */}
+      <div
+        tabIndex={0}
+        role="region"
+        aria-labelledby={id}
+        className="overflow-x-auto rounded-[var(--cs-radius-container)] border border-[var(--cs-border)] bg-[var(--cs-surface)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cs-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--cs-bg)]"
+      >
         {children}
       </div>
     </section>
