@@ -169,6 +169,56 @@ describe("GET /api/v1/leave/:id/affected-sessions", () => {
     expectStatus(res, 200);
     expect(res.body.sessions).toEqual([]);
   });
+
+  it("uses the org's IST calendar day, not the UTC day, for the leave window (C-01)", async () => {
+    // A dedicated tutor so no other test's sessions land in this window. The
+    // fixture org has the column default timezone, Asia/Kolkata.
+    const tzTutor = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [tzTutor]);
+    await db.query(`insert into organization_members (organization_id, user_id, role) values ($1, $2, 'tutor')`, [ORG, tzTutor]);
+    const onLeaveDay = crypto.randomUUID(); // 00:30-01:30 IST on 2026-08-10
+    const dayAfter = crypto.randomUUID(); // 00:30-01:30 IST on 2026-08-11
+    await db.query(
+      `insert into class_sessions (id, organization_id, tutor_id, student_ids, start_time, end_time, status) values
+         ($1, $3, $4, '{}', '2026-08-09T19:00:00Z', '2026-08-09T20:00:00Z', 'scheduled'),
+         ($2, $3, $4, '{}', '2026-08-10T19:00:00Z', '2026-08-10T20:00:00Z', 'scheduled')`,
+      [onLeaveDay, dayAfter, ORG, tzTutor]
+    );
+
+    const created = await createLeave(uids.owner, tzTutor, "2026-08-10", "2026-08-10");
+    expectStatus(created, 200);
+    const res = await request(app).get(`/api/v1/leave/${created.body.id}/affected-sessions`).set(...authHeader(uids.owner));
+    expectStatus(res, 200);
+    expect(res.body.sessions.map((s: any) => s.id)).toEqual([onLeaveDay]);
+
+    // The default-set reassign path computes the same window.
+    await request(app).patch(`/api/v1/leave/${created.body.id}`).set(...authHeader(uids.owner)).send({ action: "approve" });
+    const reassigned = await request(app).post(`/api/v1/leave/${created.body.id}/reassign`).set(...authHeader(uids.owner)).send({ substituteTutorId: bodySubstituteId });
+    expectStatus(reassigned, 200);
+    expect(reassigned.body.results).toEqual([{ sessionId: onLeaveDay, ok: true }]);
+    expect((await db.query<any>(`select tutor_id from class_sessions where id = $1`, [dayAfter])).rows[0].tutor_id).toBe(tzTutor);
+  });
+
+  it("follows the org's configured timezone rather than assuming IST", async () => {
+    const utcTutor = crypto.randomUUID();
+    await db.query(`insert into auth.users (id) values ($1)`, [utcTutor]);
+    await db.query(`insert into organization_members (organization_id, user_id, role) values ($1, $2, 'tutor')`, [ORG, utcTutor]);
+    const lateUtc = crypto.randomUUID(); // 23:00-23:30 UTC on 2026-08-20 (04:30 IST on the 21st)
+    await db.query(
+      `insert into class_sessions (id, organization_id, tutor_id, student_ids, start_time, end_time, status)
+       values ($1, $2, $3, '{}', '2026-08-20T23:00:00Z', '2026-08-20T23:30:00Z', 'scheduled')`,
+      [lateUtc, ORG, utcTutor]
+    );
+    await db.query(`update organizations set timezone = 'UTC' where id = $1`, [ORG]);
+    try {
+      const created = await createLeave(uids.owner, utcTutor, "2026-08-20", "2026-08-20");
+      const res = await request(app).get(`/api/v1/leave/${created.body.id}/affected-sessions`).set(...authHeader(uids.owner));
+      expectStatus(res, 200);
+      expect(res.body.sessions.map((s: any) => s.id)).toEqual([lateUtc]);
+    } finally {
+      await db.query(`update organizations set timezone = 'Asia/Kolkata' where id = $1`, [ORG]);
+    }
+  });
 });
 
 describe("POST /api/v1/leave/:id/reassign", () => {

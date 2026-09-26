@@ -44,6 +44,7 @@ interface LeaveRow {
   start_date: string;
   end_date: string;
   status: string;
+  organization_timezone: string;
 }
 
 async function loadLeave(orgId: string, leaveId: string): Promise<LeaveRow> {
@@ -51,8 +52,12 @@ async function loadLeave(orgId: string, leaveId: string): Promise<LeaveRow> {
     // Cast the two date columns to text -- node-postgres's default type
     // parser turns a `date` column into a local-midnight JS Date object, not
     // the "YYYY-MM-DD" string every caller here (leaveDateRangeToTimestampBounds,
-    // the reassign/affected-sessions routes) expects.
-    `select id, organization_id, tutor_id, start_date::text, end_date::text, status from tutor_leave_requests where id = $1`,
+    // the reassign/affected-sessions routes) expects. Joins organizations for
+    // the org's timezone: leave dates are that zone's calendar days (C-01).
+    `select l.id, l.organization_id, l.tutor_id, l.start_date::text, l.end_date::text, l.status,
+            o.timezone as organization_timezone
+       from tutor_leave_requests l join organizations o on o.id = l.organization_id
+      where l.id = $1`,
     [leaveId]
   );
   if (res.rowCount === 0 || res.rows[0].organization_id !== orgId) {
@@ -160,7 +165,7 @@ router.get("/:id/affected-sessions", requireRole(...CAN_SCHEDULE), async (req: A
   try {
     const orgId = req.user!.organizationId!;
     const leave = await loadLeave(orgId, req.params.id);
-    const bounds = leaveDateRangeToTimestampBounds(leave.start_date, leave.end_date);
+    const bounds = leaveDateRangeToTimestampBounds(leave.start_date, leave.end_date, leave.organization_timezone);
 
     const result = await pool.query(
       `select id, start_time, end_time, student_ids from class_sessions
@@ -200,7 +205,7 @@ router.post("/:id/reassign", requireRole(...CAN_SCHEDULE), async (req: AuthReque
 
     let sessionIds = body.sessionIds;
     if (!sessionIds) {
-      const bounds = leaveDateRangeToTimestampBounds(leave.start_date, leave.end_date);
+      const bounds = leaveDateRangeToTimestampBounds(leave.start_date, leave.end_date, leave.organization_timezone);
       const affected = await pool.query(
         `select id from class_sessions where tutor_id = $1 and status = 'scheduled'
            and start_time < $3::timestamptz and end_time > $2::timestamptz`,
